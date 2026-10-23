@@ -50,7 +50,9 @@ def check(site, limit=PAGES_LIMIT):
                 base = root
                 m = BASE_HREF.search(text)
                 if m:
-                    base = os.path.normpath(os.path.join(root, m.group(1).split("#")[0].split("?")[0] or "."))
+                    href = m.group(1).split("#")[0].split("?")[0] or "."
+                    # root-absolute base: a page Pages serves at any depth (404.html)
+                    base = os.path.normpath(os.path.join(site, href.lstrip("/")) if href.startswith("/") else os.path.join(root, href))
                 for ref in HTML_REF.findall(text):
                     ref = ref.split("#")[0].split("?")[0]
                     if not ref or re.match(r"^[a-z]+:|^//|^/", ref, re.I):
@@ -101,6 +103,7 @@ def selftest():
         "dev": "dev file staged",
         "big": "over the",
         "nostats": "without analytics.js",
+        "rm img.png via /": "img.png missing",
     }
     for case, want in cases.items():
         with tempfile.TemporaryDirectory() as site:
@@ -119,8 +122,12 @@ def selftest():
                 "m/disks/hdd.img.gz": "",
                 # Shared entry under a subdir: assets resolve via <base href="../">.
                 "m/sub/index.html": '<base href="../"><script src="app.js"></script><link href="s.css">',
+                "404.html": '<base href="/"><img src="img.png"><link href="m/s.css">',
             }
-            if case.startswith("rm "):
+            if case == "rm img.png via /":
+                del files["img.png"]
+                files["index.html"] = ""
+            elif case.startswith("rm "):
                 del files[case[3:]]
             elif case == "fast":
                 files["m/app.js"] += ' q.get("fast");'

@@ -1,0 +1,58 @@
+name: Kill switch
+
+# Replaces the whole Pages site with maintenance.html (as index.html and 404.html).
+# Every emulator path 404s to the same page. Deploy site skips its deploy while
+# the SITE_DOWN repo variable is "true" (`make site-down` / `make site-up`).
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: Sign text (blank keeps "Out of Order")
+        required: false
+        default: ""
+      message:
+        description: Line under the sign (blank keeps the default)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-kill-switch
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Warn if Deploy site isn't latched off
+        if: vars.SITE_DOWN != 'true'
+        run: echo "::warning::SITE_DOWN isn't set, so the next push to main redeploys the full site. Run 'make site-down' or set the repo variable."
+
+      - name: Stage the maintenance page
+        env:
+          TITLE: ${{ inputs.title }}
+          MESSAGE: ${{ inputs.message }}
+        run: python3 stage_maintenance.py _down --title "$TITLE" --message "$MESSAGE"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _down
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

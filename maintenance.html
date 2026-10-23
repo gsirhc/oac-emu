@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en" data-no-help>
+<head>
+<meta charset="utf-8">
+<base href="/">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>OAC Emulators</title>
+<link rel="icon" href="assets/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="stylesheet" href="shared/theme.css">
+<link rel="stylesheet" href="shared/pagebar.css">
+<link rel="stylesheet" href="shared/footer.css">
+<link rel="stylesheet" href="shared/catalog.css">
+<style>
+  .down {
+    margin: 28px 0 8px;
+    text-align: center;
+  }
+  .down-sign {
+    display: inline-block;
+    margin: 0 0 18px;
+    padding: 10px 28px;
+    background: #9a1c1c;
+    color: #fff;
+    font: 700 28px/1.2 Arial, Helvetica, sans-serif;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    transform: rotate(-3deg);
+    box-shadow: 0 2px 8px rgba(0,0,0,.45);
+  }
+  .down-text {
+    margin: 0 auto;
+    max-width: 460px;
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--dim);
+  }
+</style>
+</head>
+<body>
+<script>try{var r=document.documentElement,t=localStorage.getItem("retro8080.theme")||"subtle",m=localStorage.getItem("retro8080.mode")||"light";if(t!="win"&&t!="winxp"&&t!="web94"&&t!="subtle"&&t!="aurora")t="subtle";if(m!="light"&&m!="dark"&&m!="system")m="light";var dark=m=="dark"||(m=="system"&&matchMedia("(prefers-color-scheme: dark)").matches);r.dataset.theme=t;if(dark)r.dataset.mode="dark";else delete r.dataset.mode;}catch(e){}</script>
+
+<div class="page">
+  <header class="pagebar">
+    <span class="pb-title"><img class="pb-icon" src="assets/favicon-32.png" alt="" aria-hidden="true"> OAC Emulators</span>
+    <span class="pb-tools">
+      <label class="pb-theme">Theme
+        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Subtle</button>
+      </label>
+      <span class="pb-winbtns"><button type="button" class="pb-min" title="Minimize" aria-label="Minimize" aria-pressed="false">_</button><button type="button" class="pb-max" title="Maximize" aria-label="Maximize" disabled>&#9633;</button><span class="pb-close is-disabled" aria-disabled="true" title="Close unavailable">&times;</span></span>
+    </span>
+  </header>
+
+  <div class="inner">
+    <header>
+      <div class="brand">
+        <img class="site-icon" src="assets/icon-512.png" width="56" height="56" decoding="async" alt="">
+        <div class="brand-text">
+          <h1>OAC Emulators</h1>
+          <p class="tagline">Vintage machines, running entirely in your browser.</p>
+        </div>
+      </div>
+    </header>
+
+    <div class="down">
+      <p class="down-sign" id="downTitle">Out of Order</p>
+      <p class="down-text" id="downText">The machines are being worked on. Check back soon.</p>
+    </div>
+  </div>
+</div>
+
+<script src="shared/theme-picker.js"></script>
+<script>initThemePicker();</script>
+<script src="shared/winbtns.js"></script>
+<script src="shared/analytics.js"></script>
+<script src="shared/footer.js"></script>
+</body>
+</html>

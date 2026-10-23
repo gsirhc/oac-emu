@@ -115,6 +115,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, must-revalidate")
         super().end_headers()
 
+    def send_error(self, code, message=None, explain=None):
+        # Pages serves a site's 404.html for any missing path
+        page = os.path.join(DIR, "404.html")
+        if code != 404 or self.command != "GET" or not os.path.isfile(page):
+            return super().send_error(code, message, explain)
+        body = open(page, "rb").read()
+        self.send_response(404)
+        self.send_header("Content-type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         if WATCH and self.path.split("?", 1)[0] == "/__livereload":
             self._sse_livereload()

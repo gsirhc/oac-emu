@@ -547,7 +547,8 @@ jobs:
         battlezone-test,
         battlezone-web-test,
       ]
-    if: github.event_name != 'pull_request'
+    # SITE_DOWN latches the kill switch (kill-switch.yml) so a push can't undo it
+    if: github.event_name != 'pull_request' && vars.SITE_DOWN != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -694,7 +695,7 @@ jobs:
 
   deploy:
     needs: build
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && vars.SITE_DOWN != 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
