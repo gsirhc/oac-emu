@@ -1,7 +1,7 @@
 # news_info.html
 
-`news_info.html` is the public About & News page. Chris edits
-the entries and the About section on that page. Agents must not rewrite
+`news_info.html` is the public About & News page. The current
+developer edits the entries and the About section on that page. Agents must not rewrite
 that prose.
 
 `about.html` stays the Help page. The public site does not link
@@ -23,4 +23,4 @@ That page follows [about.md](about.md).
 - "While we're here" cleanup of the prose.
 
 If a task would need a content change on this page, leave the file alone
-and tell Chris — he edits the entries himself.
+and tell the current developer. They edit the entries themselves.

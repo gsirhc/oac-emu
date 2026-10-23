@@ -1,6 +1,6 @@
 # about.html
 
-`about.html` is Chris's page. Agents must not rewrite its prose.
+`about.html` is the current developer's page. Agents must not rewrite its prose.
 
 ## Allowed
 
@@ -17,4 +17,4 @@
 - "While we're here" cleanup of the prose.
 
 If a task would need a content change on this page, leave the file alone
-and tell Chris — he edits the wording himself.
+and tell the current developer. They edit the wording themselves.

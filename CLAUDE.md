@@ -28,15 +28,36 @@ Planned features that haven't been started are listed in
 
 Everything here is built from scratch. **Never copy, port, or translate
 another emulator's code**: routines, formulas, address calculations, and
-control flow. That covers MAME, SIMH, Altirra, Nuked-OPL3, DOSBox, Bochs,
-86Box, PCem, QEMU, MiSTer/FPGA cores, and the rest, and it applies to
-subagents too: don't open emulator source while writing code here, and
-tell any agent you delegate to the same.
+control flow. That covers MAME, SIMH, Altirra, Nuked-OPL3, ymfm, DOSBox,
+DOSBox-X, Bochs, 86Box, PCem, QEMU, FBNeo, VICE, MiSTer/FPGA cores, and
+every other emulator, in any language. This is a hard rule with no
+exceptions beyond the ones listed below. It is not a preference.
+
+All of these count as copying, and none are allowed:
+
+- Pasting, porting, or translating emulator code into C++, JavaScript, or
+  anything else, however much it is renamed, reordered, or restyled.
+- Writing code from your own memory of an emulator's source. If you
+  recognise how an emulator does it, that is not a primary source. Close
+  that path and work from the datasheet or schematic.
+- Opening emulator source "just to check" a value, a decode, or a bug,
+  including in a scratch folder, a web search result, or a code viewer.
+  Don't fetch, clone, or search emulator repositories while working here.
+- Following a wiki page, forum post, or blog that restates an emulator's
+  code. Treat it as the emulator.
+- Matching an emulator's structure: its state machine, its table layout,
+  its special cases, its order of operations.
+
+This applies to subagents too. Tell every agent you delegate to, in its
+prompt, that it must not open emulator source and must work from primary
+sources only. If you find code in this repo that looks emulator-derived,
+stop and tell the current developer before changing anything else.
 
 Single values are different from code. One value (an address, a constant,
-a bit, a timing) may come from an emulator when no primary source has it;
-mark it unsourced. A few related facts, like one filter's part values or a
-chip's interrupt vectors, still count as single values. Tables, arrays and
+a bit, a timing) may come from an emulator when no primary source has it,
+but only after you've searched the primary sources. Verify that specific
+value with the current developer. A few related facts, like one filter's
+part values or a chip's interrupt vectors, still count as single values. Tables, arrays and
 curves never come from an emulator: take them from a primary source
 (datasheet, schematic, ROM dump) or derive them yourself. Do not cite the
 emulator for a value, and do not describe it as hardware until a
@@ -191,11 +212,12 @@ That includes the hwtest help screen after the diagnostic patterns (copyright /
 load-your-own copy), not only the self-test picture.
 
 `about.html` follows [`.claude/about.md`](.claude/about.md): agents
-may change navigation, header, and footer chrome only. Chris owns the body
-copy — do not edit content sections. The public page does not link it.
+may change navigation, header, and footer chrome only. The current developer
+owns the body copy — do not edit content sections. The public page does not link it.
 Help on `super_secret.html` and on the machine pages still opens it.
 `news_info.html` is the public About & News page. It follows
-[`.claude/blog.md`](.claude/blog.md). Chris owns the entries.
+[`.claude/blog.md`](.claude/blog.md). The current developer owns the
+entries.
 
 ## Wiring a machine into the site
 
@@ -375,7 +397,7 @@ deploy-critical case there; put exhaustive control coverage in the other
 Altair/assembler/ibmpc-at/pc486/z80 omit the long exercisers listed above
 (`make check` still runs them for nightly/local).
 
-**Self-hosted runner** (`retro-mini`, Chris's Mac mini): only nightly jobs
+**Self-hosted runner** (`retro-mini`, a Mac mini): only nightly jobs
 whose specs need the host to hold real guest speed (today `pc486-web-test`
 and `ibmpcat-web-test`), routed through `nightly-full.yml`'s `pick-runner`
 with an ubuntu fallback that sets `SLOW_HOST=1`. Never put smoke or any
@@ -451,25 +473,25 @@ load-bearing before repeating it — run the test yourself, `ls` the file it
 says is missing, read the diff it says it made. Subagents in this repo have
 confidently reported a build blocker that wasn't real and "matching" style
 that didn't match. Correct what's wrong, say plainly what you verified
-versus what you're relaying, and never pass a subagent's summary to Chris as
-if it were a fact you'd checked.
+versus what you're relaying, and never pass a subagent's summary to the current
+developer as if it were a fact you'd checked.
 
 ## Conventions
 
 - `*.bin` and `*.dsk` are git-ignored — binary media (BASIC images, disk images)
   are fetched at build time by the `fetch-*.sh` scripts, not committed.
 - Commit messages: no AI attribution, no `Co-Authored-By` trailer.
-- **One working copy.** Always work in `/Users/chrisgall/code/oac-emu` (the git
+- **One working copy.** Always work in your one clone of `oac-emu` (the git
   root). Never `git worktree add`, never create sibling folders
   (`oac-emu-about`, `oac-emu-arcade-hiscore`, …). Point Cursor at that path.
-- **Ask where new work goes.** Default is `main`. Before starting, ask Chris
-  whether to stay on `main` or work on a branch — do not create a branch
-  unless he says so. Do not open pull requests unless asked.
+- **Ask where new work goes.** Default is `main`. Before starting, ask the
+  current developer whether to stay on `main` or work on a branch — do not
+  create a branch unless they say so. Do not open pull requests unless asked.
 
 ## Visitor-facing copy
 
 UI text on machine pages (status lines, boot notices, panel blurbs, tooltips,
-footers, button help) is Chris's voice, not generic "AI speak".
+footers, button help) is the current developer's voice, not generic "AI speak".
 `about.html` is the reference for tone.
 
 - **Direct and conversational.** Short sentences. Contractions are fine.

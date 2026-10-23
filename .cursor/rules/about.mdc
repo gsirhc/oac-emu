@@ -10,4 +10,4 @@ Follow [`.claude/about.md`](../../.claude/about.md). Do not contradict
 [`CLAUDE.md`](../../CLAUDE.md).
 
 Agents may change navigation, header, and footer chrome only. Never edit
-the page's body copy or content sections — leave those for Chris.
+the page's body copy or content sections — leave those for the current developer.
