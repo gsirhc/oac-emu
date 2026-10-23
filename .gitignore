@@ -26,6 +26,7 @@ tmp-run-*.sh
 # deployed-site staging (built by CI, previewed locally)
 _site/
 _site.new/
+_down/
 # local TLS cert for `make preview` (see Makefile's preview-cert)
 .preview-tls/
 .tools/
@@ -252,3 +253,4 @@ pc486/web/shared/
 ibmpc-at/disks/library/
 pc486/disks/library/
 *.profraw
+third_party_sources/

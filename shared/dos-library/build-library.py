@@ -3,8 +3,10 @@
 
 import argparse
 import hashlib
+import io
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -21,6 +23,9 @@ FORMATS = {
 }
 ROOT_ENTRIES = {360: 112, 1200: 224, 1440: 224}
 SKIP_TOP = {"SOURCE", "APPINFO", "LINKS", "BATLINKS"}
+LICENSE_NAME = re.compile(r"^(licen[cs]e|copying|gpl)(\.(txt|gpl|doc|md))?$", re.I)
+FD13_LIVECD = "https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.3/official/FD13-LiveCD.zip"
+SOURCES_MIRROR = "https://github.com/gsirhc/oac-emu/releases/tag/third-party-sources"
 
 
 def run(*cmd, **kw):
@@ -145,7 +150,27 @@ def package_files(zpath, dirname, drop):
             if any(rel.upper() == d.upper() or rel.upper().startswith(d.upper() + "/") for d in drop):
                 continue
             out.append((f"{dirname}/{rel}", zf.read(zi), zi.date_time))
+        if not any(LICENSE_NAME.match(path.rsplit("/", 1)[-1]) for path, _, _ in out):
+            out += source_licenses(zf, dirname)
     return out, info
+
+
+def source_licenses(zf, dirname):
+    """A package's license text from the top of its own SOURCE zip, when only the source carries it."""
+    found = []
+    for n in zf.namelist():
+        if not (n.upper().startswith("SOURCE/") and n.upper().endswith(".ZIP")):
+            continue
+        with zipfile.ZipFile(io.BytesIO(zf.read(n))) as src:
+            for zi in src.infolist():
+                if "/" not in zi.filename and LICENSE_NAME.match(zi.filename):
+                    found.append((f"{dirname}/{zi.filename.upper()}", src.read(zi), zi.date_time))
+    return found
+
+
+def gpl2_text(iso, workdir):
+    with zipfile.ZipFile(iso_package(iso, "kernel", workdir)) as zf:
+        return zf.read("DOC/KERNEL/COPYING")
 
 
 def make_image(path, fmt, label, tree):
@@ -211,6 +236,11 @@ def readme(entry, programs, n, count):
             out.append(f"  {p['dir']:<9} {p['title']}{ver}. {p['license']}")
         out.append("")
         out.append("These come from the FreeDOS 1.3 LiveCD's package set, unchanged.")
+        out.append("Each program's license text, where it has one, is in its own folder.")
+        out.append("")
+        out.append("Source code: every program's source is in its package on that CD,")
+        out.append(f"  {FD13_LIVECD}")
+        out.append(f"  mirrored at {SOURCES_MIRROR}")
     return "\n".join(out) + "\n"
 
 
@@ -228,6 +258,10 @@ def build_packages(entry, iso, outdir):
             files, info = package_files(iso_package(iso, name, work), dirname, spec.get("drop", []))
             if not files:
                 die(f"package {name}: nothing to copy")
+            policy = info.get("copying-policy", "")
+            if ("General Public License" in policy and "Version 1" not in policy and "Lesser" not in policy
+                    and not any(LICENSE_NAME.match(p.rsplit("/", 1)[-1]) for p, _, _ in files)):
+                files.append((f"{dirname}/COPYING", gpl2_text(iso, work), None))
             programs.append({
                 "dir": dirname,
                 "title": info.get("title", name),

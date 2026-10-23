@@ -21,6 +21,10 @@
 #                    editing the source run `make site` to refresh what it serves
 #                    (or use `make watch` / `make watch-bg` instead)
 #   make preview-uninstall  remove that agent
+#   make down-preview  stage the kill-switch page into _down/ and serve it on :8000
+#   make site-down   take the live site down: set SITE_DOWN and run the Kill switch
+#                    workflow (TITLE="..." MESSAGE="..." override the sign; needs gh)
+#   make site-up     clear SITE_DOWN and run Deploy site to bring everything back
 #   make clean       remove _site/
 #   make lint        ESLint, HTMLHint, tsc, cppcheck, and actionlint.
 #                    JS/HTML need `npm ci` here (the lint target installs
@@ -29,7 +33,7 @@
 #                    or a native test build that already fetched them).
 
 .PHONY: help site _stage preview preview-bg watch watch-bg preview-stop preview-status \
-        preview-install preview-uninstall preview-cert clean lint lint-js lint-html lint-ts lint-cpp lint-staging lint-actions
+        preview-install preview-uninstall preview-cert down-preview site-down site-up clean lint lint-js lint-html lint-ts lint-cpp lint-staging lint-actions
 
 PREVIEW_PORT  ?= 8000
 PREVIEW_PID   := /tmp/oac-emu-preview.pid
@@ -64,7 +68,7 @@ site:
 	cp shared/theme.css shared/pagebar.css shared/footer.css shared/catalog.css \
 	   shared/footer.js shared/theme-picker.js shared/winbtns.js shared/thumb-art.js shared/analytics.js \
 	   $(SITE).new/shared/
-	cp shared/vendor/fonts/inter-*.woff2 $(SITE).new/shared/vendor/fonts/
+	cp shared/vendor/fonts/inter-*.woff2 shared/vendor/fonts/Inter-OFL.txt $(SITE).new/shared/vendor/fonts/
 	for m in $(MACHINES); do \
 	  $(MAKE) --no-print-directory -C $$m/web stage DEST=$(abspath $(SITE).new)/$$m || exit 1; \
 	done
@@ -231,7 +235,7 @@ preview-uninstall:
 	@echo "  agent removed"
 
 clean:
-	rm -rf _site _site.new
+	rm -rf _site _site.new _down
 
 # Source only: not _site, vendored xterm, copied web/shared, or test build trees.
 lint: lint-js lint-html lint-ts lint-cpp lint-staging lint-actions
@@ -245,6 +249,7 @@ lint-staging:
 	python3 check_site.py --selftest
 	python3 check_emulator_refs.py --selftest
 	python3 strip_fast_flag.py --check ibmpc-at/web/app.js pc486/web/app.js
+	python3 stage_maintenance.py --selftest
 
 lint-js:
 	@test -x node_modules/.bin/eslint || npm ci
@@ -260,3 +265,16 @@ lint-cpp:
 lint-actions:
 	@sh fetch-actionlint.sh >/dev/null
 	.tools/actionlint-1.7.12/actionlint
+
+# --- kill switch (.github/workflows/kill-switch.yml) ---
+down-preview:
+	python3 stage_maintenance.py _down $(if $(TITLE),--title "$(TITLE)",) $(if $(MESSAGE),--message "$(MESSAGE)",)
+	python3 serve_nocache.py $(PREVIEW_PORT) _down 127.0.0.1
+
+site-down:
+	gh variable set SITE_DOWN --body true
+	gh workflow run kill-switch.yml -f title="$(TITLE)" -f message="$(MESSAGE)"
+
+site-up:
+	gh variable delete SITE_DOWN
+	gh workflow run deploy-emulator.yml --ref main

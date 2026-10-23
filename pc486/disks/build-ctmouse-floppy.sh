@@ -45,6 +45,8 @@ trap 'rm -rf "$tmp"' EXIT
 mtype -i "$HDD@@$PART_OFFSET" "$BIN_DIR/CTMOUSE.EXE"   > "$tmp/CTMOUSE.EXE"
 mtype -i "$HDD@@$PART_OFFSET" "$TOOL_DIR/MOUSETST.COM" > "$tmp/MOUSETST.COM"
 mtype -i "$HDD@@$PART_OFFSET" "$TOOL_DIR/PROTOCOL.COM" > "$tmp/PROTOCOL.COM"
+# the ctmouse package carries no license file; the kernel's GPL v2 text is the same license
+mtype -i "$HDD@@$PART_OFFSET" "::/FREEDOS/DOC/KERNEL/COPYING" > "$tmp/COPYING.TXT"
 
 got=$(shasum -a 256 "$tmp/CTMOUSE.EXE" | cut -d' ' -f1)
 if [ "$got" != "$CTMOUSE_SHA" ]; then
@@ -55,12 +57,12 @@ if [ "$got" != "$CTMOUSE_SHA" ]; then
 fi
 
 # CRLF: DOS's own TYPE renders a bare LF as one unbroken line.
-printf 'CuteMouse 2.1b4 -- DOS mouse driver (INT 33h) for this machine'\''s PS/2 mouse.\r\n\r\nA DOS program reaches the mouse through INT 33h, which is a driver, not\r\nfirmware -- and POST leaves the AUX port disabled, exactly as a real 486\r\ndoes. So nothing sees the mouse until this is loaded.\r\n\r\n  A:\\CTMOUSE /P      load it; /P skips the serial-port probe\r\n  A:\\MOUSETST        confirm the driver sees movement\r\n  A:\\PROTOCOL        report which protocol was detected\r\n  A:\\CTMOUSE /U      unload\r\n\r\nTo load it at every boot, copy CTMOUSE.EXE to C: and add a CTMOUSE /P\r\nline to AUTOEXEC.BAT.\r\n\r\nIn the emulator: tick "Capture mouse", then CLICK the screen to take\r\npointer lock -- without lock the page sends no movement at all. Your own\r\nEsc key releases the lock instead of reaching DOS, so use the Esc button\r\nin the Function & extended keys panel.\r\n\r\nCuteMouse is GPL software, taken from the FreeDOS distribution this\r\nmachine already ships.\r\n' > "$tmp/README.TXT"
+printf 'CuteMouse 2.1b4 -- DOS mouse driver (INT 33h) for this machine'\''s PS/2 mouse.\r\n\r\nA DOS program reaches the mouse through INT 33h, which is a driver, not\r\nfirmware -- and POST leaves the AUX port disabled, exactly as a real 486\r\ndoes. So nothing sees the mouse until this is loaded.\r\n\r\n  A:\\CTMOUSE /P      load it; /P skips the serial-port probe\r\n  A:\\MOUSETST        confirm the driver sees movement\r\n  A:\\PROTOCOL        report which protocol was detected\r\n  A:\\CTMOUSE /U      unload\r\n\r\nTo load it at every boot, copy CTMOUSE.EXE to C: and add a CTMOUSE /P\r\nline to AUTOEXEC.BAT.\r\n\r\nIn the emulator: tick "Capture mouse", then CLICK the screen to take\r\npointer lock -- without lock the page sends no movement at all. Your own\r\nEsc key releases the lock instead of reaching DOS, so use the Esc button\r\nin the Function & extended keys panel.\r\n\r\nCuteMouse is GPL software, taken from the FreeDOS distribution this\r\nmachine already ships. COPYING.TXT has the license. Its source code is in\r\nthe ctmouse package on the FreeDOS 1.3 LiveCD,\r\n  https://www.ibiblio.org/pub/micro/pc-stuff/freedos/files/distributions/1.3/official/FD13-LiveCD.zip\r\n  mirrored at https://github.com/gsirhc/oac-emu/releases/tag/third-party-sources\r\n' > "$tmp/README.TXT"
 
 rm -f "$OUT"
 dd if=/dev/zero of="$OUT" bs=512 count=2880 status=none
 mformat -i "$OUT" -f 1440 -v CTMOUSE ::
-for f in CTMOUSE.EXE MOUSETST.COM PROTOCOL.COM README.TXT; do
+for f in CTMOUSE.EXE MOUSETST.COM PROTOCOL.COM README.TXT COPYING.TXT; do
     mcopy -i "$OUT" "$tmp/$f" "::$f"
 done
 

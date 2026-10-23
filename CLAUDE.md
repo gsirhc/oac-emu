@@ -495,8 +495,20 @@ What the project uses outside this repo. Never put account details,
 logins, or keys here or anywhere in the repo.
 
 - **Hosting:** GitHub Pages, deployed by `deploy-emulator.yml`.
+- **Kill switch:** `make site-down` sets the `SITE_DOWN` repo variable and
+  runs `kill-switch.yml`, which replaces the whole site with
+  `maintenance.html` (as `index.html` and `404.html`, so every emulator path
+  shows it). Deploy site skips build and deploy while `SITE_DOWN` is `true`.
+  `make site-up` clears it and redeploys. `make down-preview` serves the page
+  locally. `stage_maintenance.py` stages it.
 - **Domain:** `oac-emu.dev`, registered with Porkbun.
 - **Email:** Zoho Mail, on the project domain.
+- **Third-party sources:** the `third-party-sources` GitHub release holds
+  the source for what the PCs ship (FreeDOS 1.3 LiveCD, Bochs BIOS, LGPL
+  VGABIOS, the fntcol16 fonts). `publish_sources.sh` builds it, and
+  `--upload` publishes it. When a pinned BIOS, FreeDOS release or font
+  changes, rerun it and update the PC's System specs notice rows in the same
+  change (`notices.spec.ts` checks the pins).
 - **Visit stats:** GoatCounter (`oac-emu.goatcounter.com`), via
   `shared/analytics.js`.
 - **Nightly runner:** a self-hosted Mac mini, label `retro-mini`.
@@ -580,7 +592,7 @@ else. There is no formatter in the repo (no Prettier, no clang-format).
   `initFullscreen`, `initFocusHint`) stay `function` declarations so they
   are globals on the page. Use `===`.
 - **Theme bootstrap.** `shared/theme-init.js` and the one-line copy inlined
-  in `index.html`, `super_secret.html`, `about.html`, `news_info.html`, and `arcade/index.html` stay in sync and
+  in `index.html`, `super_secret.html`, `about.html`, `news_info.html`, `maintenance.html`, and `arcade/index.html` stay in sync and
   stay compact (`var`, `==`, a single `catch`). That snippet runs before
   anything else paints.
 - **HTML.** Lowercase tags, double-quoted attributes. Keep `<!DOCTYPE html>`

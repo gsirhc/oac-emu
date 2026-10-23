@@ -19,7 +19,7 @@ write_deps = $(EMCC) -std=c++17 -MM -MP -MT $@ $(1) > $(basename $@).d
 shared:
 	mkdir -p shared/vendor/fonts
 	cp -R $(addprefix $(SHARED)/,$(SHARED_BASE) $(SHARED_EXTRA)) shared/
-	cp $(SHARED)/vendor/fonts/inter-*.woff2 shared/vendor/fonts/
+	cp $(SHARED)/vendor/fonts/inter-*.woff2 $(SHARED)/vendor/fonts/Inter-OFL.txt shared/vendor/fonts/
 ifneq ($(SHARED_TESTS),)
 	rm -rf tests/shared
 	mkdir -p tests/shared

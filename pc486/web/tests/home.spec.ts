@@ -138,3 +138,19 @@ test.describe("landing page", () => {
   });
 
 });
+
+test.describe("kill switch page", () => {
+  test("renders styled at a dead emulator path, with the theme picker working", async ({ page }) => {
+    const body = await (await page.request.get(HOME + "maintenance.html")).text();
+    await page.route("**/pc486/full/", (route) => route.fulfill({ status: 404, contentType: "text/html", body }));
+    await page.goto("http://localhost:8410/pc486/full/");
+    await expect(page.locator("#downTitle")).toHaveText("Out of Order");
+    expect(await page.locator("#downTitle").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgb(154, 28, 28)");
+    await expect(page.locator(".site-icon")).toHaveJSProperty("naturalWidth", 512);
+    await expect(page.locator("a.machine-card, a[href*='pc486'], a[href*='arcade']")).toHaveCount(0);
+    await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
+    await chooseTheme(page, "win");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "win");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("win");
+  });
+});
