@@ -38,11 +38,6 @@ test.describe("\"Barebones FreeDOS\" boot notice", () => {
     expect(await page.evaluate(() => localStorage.getItem("retro8080.ibmpcatBootNoticeDismissed"))).toBeNull();
   });
 
-  test("does not show over the Keen preset C:", async ({ page }) => {
-    await boot(page, { params: "disk=keen1", expectScreen: null });
-    expect(await noticeVisible(page)).toBe(false);
-  });
-
   test("does not show over a C: other than the factory one", async ({ page }) => {
     await boot(page, { expectScreen: null });
     await setPowerSwitch(page, false);

@@ -118,7 +118,7 @@ def selftest():
                 "m/d/x.dsk": "",
                 "m/disks/hdd.img.gz": "",
                 # Shared entry under a subdir: assets resolve via <base href="../">.
-                "m/Doom/index.html": '<base href="../"><script src="app.js"></script><link href="s.css">',
+                "m/sub/index.html": '<base href="../"><script src="app.js"></script><link href="s.css">',
             }
             if case.startswith("rm "):
                 del files[case[3:]]

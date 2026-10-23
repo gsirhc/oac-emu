@@ -7110,137 +7110,12 @@ modifiers, function and navigation keys. `pckeyboard.spec.ts` covers the
 show/hide state, typing, latching, the Caps Lock lamp, map mode, and
 mapped clicks.
 
-## 50. Preset hard disks (`?disk=doom`, `?disk=wolf3d`, `?disk=duke3d`, `?disk=rott`, `?disk=pinball`, `?disk=tyrian`)
+## 50. No preset hard disks
 
-The landing page's **Ready to Play** cards open a machine with a ready-made
-C: in place of the factory FreeDOS one: `pc486/?disk=doom`,
-`pc486/?disk=wolf3d`, `pc486/?disk=duke3d`, `pc486/?disk=rott`,
-`pc486/?disk=pinball` and `pc486/?disk=tyrian`.
-
-- **Bare FreeDOS base.** `disks/build-preset-hdd.sh <preset>` keeps the
-  factory image's MBR and FreeDOS boot sector, formats a fresh FAT16 over
-  the same partition, and copies only `KERNEL.SYS`, `COMMAND.COM`,
-  `C:\DOS\HIMEMX.EXE` and `C:\DOS\CTMOUSE.EXE`, with a plain
-  `CONFIG.SYS`/`AUTOEXEC.BAT`. `disks/build_preset_hdd.cpp <preset>` then
-  boots it on this emulator and runs the game's own installer from the
-  library floppies. Afterwards the script appends the game's directory and
-  command to `AUTOEXEC.BAT`, and `disks/zero-free-clusters.py` zeroes the
-  clusters the deleted self-extractor left. `make preset-hdds` builds all
-  six.
-- **DOOM** (`\DOOMS`, about 2.8MB gzipped, about 75 s natively). Types
-  `A:` / `INSTALL`, answers DEICE (drive C, `\DOOMS`, create it), swapping
-  disk 2 in and disk 1 back as DEICE asks. `INSTALL.BAT` runs
-  `DOOMS_19.EXE`, deletes it, and runs id's SETUP, which the harness drives
-  to keyboard + mouse, Sound Blaster music and effects at 220h / IRQ 5 /
-  DMA 1 (this machine's `BLASTER` line), 8 channels, then "Save parameters
-  and launch DOOM". In DOOM the harness presses `=` once and quits with
-  F10, Y, so DOOM's own save writes `screenblocks 10`: full width over the
-  status bar, one step up from the default bordered view.
-- **Wolfenstein 3-D** (`\WOLF1`, about 1.1MB gzipped, about 45 s
-  natively). One disk; the same DEICE answers, then `INSTALL.BAT` runs
-  `WOLF3D1.EXE -y` and deletes it. There is no SETUP: on first run Wolf3D
-  detects the AdLib and Sound Blaster itself (AdLib effects and music,
-  Sound Blaster digitized sound). The harness runs `WOLF3D`, keys past the
-  sign-on, PC-13 and title screens, opens the menu (its cursor starts on
-  Read This! on a first run, one below Change View; Save Game is skipped
-  with no game running), grows Change View to its limit, then Quit, Y.
-  Wolf3D's own save writes `CONFIG.WL1` with `viewsize` 19, the widest the
-  menu allows (304 pixels over the status bar). The sign-on screen still
-  waits for a key on every boot, as it did on real machines.
-- **Duke Nukem 3D 1.3D shareware** (`\DUKE3D`, about 6.2MB gzipped,
-  about 52 s natively). 3D Realms' own download, `3dduke13.zip`
-  (`INSTALL.EXE`, `DN3DSW13.SHR`, `LICENSE.TXT`, `FILE_ID.DIZ`; pinned in
-  `shared/dos-library/`). The set is about 5.8MB, too big for a library
-  floppy, so the script unzips it into a scratch `C:\3DDUKE13`, the way
-  a downloader would, and deletes that directory after the run. The
-  harness runs `INSTALL`, takes its defaults (the one episode, `C:\DUKE3D`),
-  and the installer leaves DOS in `C:\DUKE3D`. It then runs 3D Realms'
-  SETUP: Sound FX Sound Blaster, where SETUP reads 220h / IRQ 5 / DMA 1 /
-  HDMA 5 / type "Sound Blaster 16 or AWE32" from `BLASTER`; 8 voices,
-  16-bit, stereo, 22kHz; music Sound Blaster (the OPL3); screen 320x200;
-  controller already Keyboard and Mouse, since CuteMouse is loaded. Esc
-  and Yes save `DUKE3D.CFG` without launching, so the game's "You have
-  run Duke Nukem 3D 1 times" counter starts with the visitor. The
-  `DUKE3D.GRP` is the 11,035,779-byte shareware one. Duke depends on the
-  Input Status 1 and CRTC timing fixes from 22fafe9 (`ega_test.cpp`).
-- **Rise of the Triad 1.3 shareware** (`\ROTT`, about 4.0MB gzipped,
-  about 85 s natively). Apogee's own download, `1rott13.zip`
-  (`INSTALL.EXE`, `ROTTSW13.SHR`, `FILE_ID.DIZ`; pinned in
-  `shared/dos-library/`), installed the same way as Duke: unzipped into a
-  scratch `C:\1ROTT13`, the same Apogee installer with its defaults
-  (`C:\ROTT`), scratch directory deleted after. ROTT's text-mode SETUP
-  draws its bar in 1Fh, the same attribute as its title row, so `@PICK=`
-  matches the title plus the entry ("Rise of the Triad Setup Configure
-  Sounds"). Configure Sounds runs `SNDSETUP.EXE`, which is drawn in VGA
-  graphics, so the harness keys it blind like Tyrian's: Sound FX Sound
-  Blaster > Custom Setup > "Sound Blaster 16 or AWE32" (SNDSETUP's own
-  pick), 220h, DMA 1, HDMA 5 and IRQ 5 as preselected, 8 voices, stereo,
-  16-bit; music Sound Blaster (the OPL3); Quit, Yes. "Use Current
-  Settings" would save type "Sound Blaster or compatible", so it takes the
-  custom path. Back in SETUP, Quit Setup. `SOUND.ROT` holds the result;
-  `SETUP.ROT`, `CONFIG.ROT`, `BATTLE.ROT` and `SCORES.ROT` are SETUP's
-  defaults. The game isn't launched. The `HUNTBGIN.WAD` is the
-  6,436,871-byte shareware one. Arrow counts in SETUP's text menu proved
-  unreliable from one build to the next, which is why it uses `@PICK=`.
-- **Epic Pinball 2.1 shareware** (`\PINBALL`, about 1.2MB gzipped, about
-  20 s natively). Epic MegaGames' own release, `epicpn21.zip` (PKZIP 2.0,
-  56 files, the Super Android table; pinned in `shared/dos-library/`).
-  Epic shipped it as the playable directory with no installer, so the
-  script unzips it straight onto `C:\PINBALL` like Tyrian. The zip has no
-  `CONFIG.PIN`, `HISCORE.PIN` or `SOUNDCRD.INF`, so it's untouched by
-  anyone's SETUP; the archive.org `epinball.ZIP` and the v1.1 `pinball.zip`
-  both carry an uploader's saved config and aren't used. The harness runs
-  Epic's text-mode SETUP (the MASI sound system): Select Sound Card >
-  "Sound Blaster 16 (Stereo)", Yes to "BLASTER settings are ok", SETUP's
-  own preselected playback quality (High, 486-33, 20100 Hz), Exit and
-  Save. SETUP's bar is attribute 70h, the same as its title and footer
-  rows, so it goes by arrow counts in fixed lists. SETUP patches the
-  220h port, IRQ, DMA and rate into `MDRV004R.MUS` and writes
-  `SOUNDCRD.INF` naming it. The game isn't launched, so no `CONFIG.PIN`
-  or high-score table is saved. The 2.1 menu goes straight to the table's
-  attract demo; in play the split screen (Line Compare 441 in its
-  320x240 mode X) shows the "BALL 1 PLAYER 1" strip under the table.
-- **Tyrian 2.1** (`\TYRIAN`). Freeware, shipped as an installed
-  directory (`tyrian21.zip`, provenance and license caveat in
-  `shared/dos-library/README.md`), so the script unzips it straight onto
-  C: with its names uppercased (mtools would otherwise store the zip's
-  lowercase names as long-name entries). The harness then runs Tyrian's
-  own SETUP, which is drawn in VGA graphics, so it keys it blind: Music >
-  FM Sound (the SB16's OPL3), Sound Effects > SoundBlaster > DMA 1, EXIT
-  and SAVE. Port and IRQ come from `BLASTER`. SETUP writes the 28-byte
-  `TYRIAN.CFG` and `TYRIAN.SAV`. SETUP has no volume controls and
-  defaults to music 240, effects 128, so the script then sets music 192
-  and effects 200 (16 bars each in the in-game menu; the u16s at offsets
-  14 and 16 per OpenTyrian's `config.c`). `TYRIAN.EXE` is a loader that runs
-  `FILE0001.EXE` under Borland's RTM and `DPMI16BI`. With FM and SB both
-  on, the game needs the DMA fix in §51.
-- **Harness quirks.** SETUP ignores the grey arrow keys (the `E0`-prefixed
-  ones, which INT 16h returns with AL=E0h), so the harness sends keypad
-  arrows. SETUP's selection bar is attribute 7Fh; `@PICK=` arrows until
-  the bar holds exactly the wanted entry ("Sound Blaster" and "Sound
-  Blaster AWE32" are both in the music list). Duke's SETUP draws its bar
-  in F1h, so `@HL=F1` switches the match; its popup lists leave the
-  F1h entry of the menu underneath on screen, so those go by arrow
-  counts instead of `@PICK=`. Each key is held about
-  120ms: Wolf3D's menus poll the key-state table once a frame and miss a
-  4ms tap. A step answers a screen once it differs from the screen the
-  previous step answered, since a held key lets DOS print the next prompt
-  before the keys finish.
-- **Separate save.** `hdd-worker.js` opens IndexedDB `pc486-hdd-<preset>`
-  instead of `pc486-hdd`, so a visitor's own C: is never opened from a
-  preset page and plain `pc486/` never sees a preset's save. Everything
-  else (64KB chunks, the factory fingerprint that replaces an untouched
-  copy of an older image) works as for the factory C:. The Hard disk panel
-  relabels Reset ("Reset to original DOOM disk", "Reset to original
-  Wolfenstein disk", "Reset to original Duke Nukem disk", "Reset to
-  original Rise of the Triad disk", "Reset to original Epic Pinball
-  disk", "Reset to original Tyrian disk"),
-  hides Upload and
-  Mount blank, and downloads as
-  `pc486-<preset>-hdd.img`. An unknown `?disk=` mounts the visitor's own C:.
-- **Tests.** `preset.spec.ts` checks each image's FAT16 layout, files,
-  `AUTOEXEC.BAT` and saved config, that the page mounts it, and the
-  IndexedDB isolation both ways (on DOOM). No test boots a game.
+The machine ships no third-party DOS games. C: is the factory FreeDOS image,
+the Disk library holds only free software (FreeDOS packages, DOS Navigator,
+Wing, Bolitaire), and there is no `?disk=` preset C:. Visitors bring their
+own floppy, CD-ROM and hard disk images.
 
 ## 51. 8237 terminal count masks a single-cycle channel
 
@@ -7322,13 +7197,12 @@ as POST does.
 ## 54. Only the gzipped hard disks ship
 
 The deployed site was about 1.5 GB, over the 1 GB GitHub documents for a
-Pages site. Four raw 256 MB C: images (FreeDOS and the three presets) made
+Pages site. Four raw 256 MB C: images (FreeDOS and three game presets) made
 up 1 GB of it, and each gzips to 1-7 MB because a fresh FAT16 drive is
 mostly zeros. Pages already gzipped them on the wire, so visitors were
 downloading 6.5 MB either way. Only the storage counted against the limit.
 
-`app.js` now fetches `disks/freedos-hdd.img.gz` (or the preset's
-`.img.gz`) and decompresses it with `DecompressionStream("gzip")`. The
+`app.js` now fetches `disks/freedos-hdd.img.gz` and decompresses it with `DecompressionStream("gzip")`. The
 `.gz` comes back as plain `application/gzip`, with no `Content-Encoding`,
 on Pages and on both dev servers, so nothing decompresses it twice. The
 dev servers map a raw request to its `.gz` sibling only when the raw file
@@ -7344,9 +7218,8 @@ untouched saved C: is replaced once by the same FreeDOS. A changed C: is
 kept, as for any new factory image.
 
 Tests: `hdd.spec.ts` "the factory C: is fetched as freedos-hdd.img.gz and
-decompressed in the page" fails if any `-hdd.img` is requested, and the
-DOOM preset test checks the same. `preset.spec.ts` reads the shipped `.gz`
-files. `check_site.py` resolves literal `disks/`, `roms/`, `tapes/`,
+decompressed in the page" fails if any `-hdd.img` is requested.
+`check_site.py` resolves literal `disks/`, `roms/`, `tapes/`,
 `examples/` and `assets/` paths in staged JS, so a page that still names a
 raw image fails `make site`, and it fails any staged site over 1 GB.
 

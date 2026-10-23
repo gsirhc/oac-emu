@@ -50,17 +50,22 @@ test.describe("Disk library", () => {
     await openLibrary(page);
     const lib = await page.evaluate(() => fetch("disks/library/library.json").then((r) => r.json()));
     await expect(page.locator("#libraryDialog .lib-item")).toHaveCount(lib.disks.length);
-    await page.locator("#libraryDialog .lib-item", { hasText: "Commander Keen" }).click();
-    await expect(page.locator("#libraryDialog .lib-meta")).toHaveText("1990  ·  id Software / Apogee  ·  Needs EGA, hard disk");
-    await expect(page.locator("#libraryDialog .lib-help")).toContainText("KEEN1");
+    await page.locator("#libraryDialog .lib-item", { hasText: "FreeDOS Games" }).click();
+    await expect(page.locator("#libraryDialog .lib-meta")).toHaveText("2022  ·  FreeDOS Project  ·  Needs 1.2MB drive A:");
+    await expect(page.locator("#libraryDialog .lib-help")).toContainText("A:\\SENET\\SENET");
     await page.locator("#libraryDialog .lib-close").click();
     await expect(page.locator("#libraryDialog")).toBeHidden();
   });
 
   test("a 360K disk offers both drives, a 1.2MB disk only A:", async ({ page }) => {
+    await page.route("**/disks/library/library.json", async (route) => {
+      const lib = await (await route.fetch()).json();
+      lib.disks.push({ id: "t360", title: "Test 360K", format: 360, images: [{ file: "fdgames.img", label: "360K" }] });
+      await route.fulfill({ json: lib });
+    });
     await boot(page, { expectScreen: null });
     await openLibrary(page);
-    await page.locator("#libraryDialog .lib-item", { hasText: "Commander Keen" }).click();
+    await page.locator("#libraryDialog .lib-item", { hasText: "Test 360K" }).click();
     await expect(page.locator("#libraryDialog .lib-disks button")).toHaveText(["Insert in A:", "Insert in B:"]);
     await page.locator("#libraryDialog .lib-item", { hasText: "FreeDOS Games" }).click();
     await expect(page.locator("#libraryDialog .lib-disks button")).toHaveText(["Insert in A:"]);

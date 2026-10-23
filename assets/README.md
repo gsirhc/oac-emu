@@ -14,56 +14,6 @@
   `__test.leds().addr & 0xff00`, then screenshot the `#altair .fp-case`
   element and resize to 286 px wide (progressive JPEG q≈88).
 
-- **`doom-e1m1.jpg`**: the first room of E1M1 in shareware DOOM, turned
-  toward the window and mountains, from *this project's* 486 DX2-66 running
-  the `?disk=doom` preset C:. A new game (Esc, Enter ×3) on
-  `pc486/full/?test=1&fast=1&disk=doom&full=…`, two steps forward and one turn right,
-  then a frame read off `__test.frameCanvas` (320×200), rows 25 to 168
-  cropped and resized to 286×128 (JPEG q90). Gameplay, not the title
-  screen, so no logo or title art.
-
-- **`wolf3d-e1m1.jpg`**: the first cell of E1M1 in shareware Wolfenstein 3-D,
-  turned a little left, from *this project's* 486 DX2-66 running the
-  `?disk=wolf3d` preset C:. Space, Space, Esc, Enter ×3 on
-  `pc486/full/?test=1&fast=1&disk=wolf3d&full=…` starts a new game; one left turn, then
-  a frame read off `__test.frameCanvas`, cropped inside the view border down
-  to the bottom of the view and resized to 286×128 (JPEG q90).
-
-- **`duke3d-e1l1.jpg`**: shareware Duke Nukem 3D's attract demo, a Pig Cop
-  in the E1L1 adult bookstore, from *this project's* 486 DX2-66 core booting
-  the `?disk=duke3d` preset C:. A 320×200 frame rendered by `RenderScreen`
-  about 4.8 billion cycles after power-on, rows 20 to 162 (below the
-  UNREGISTERED SHAREWARE tag, above the status bar) resized to 286×128
-  (JPEG q90). Its card sets `data-title-y="30%"` so the libretro title
-  screen shows the logo, not just the mushroom cloud.
-
-- **`rott-demo.jpg`**: shareware Rise of the Triad's attract demo, two
-  guards on a rooftop walkway with the dual pistols up, from *this
-  project's* 486 DX2-66 core booting the `?disk=rott` preset C:. A 320×200
-  frame rendered by `RenderScreen` about 7.6 billion cycles after power-on,
-  rows 22 to 164 (between the score bar and the health bar) resized to
-  286×128 (JPEG q90). Its card also sets `data-title-y="30%"`.
-
-- **`pinball-android.jpg`**: shareware Epic Pinball 2.1's attract demo on
-  the Super Android table, the Super Android logo, the ball and both
-  flippers, from *this project's* 486 DX2-66 core booting the
-  `?disk=pinball` preset C:. A 320×240 mode X frame rendered by
-  `RenderScreen` about 9 billion cycles after power-on, rows 77 to 219
-  (above the split-screen strip) resized to 286×128 (JPEG q90).
-
-- **`keen1-mars.jpg`**: shareware Commander Keen 1 on the Mars overworld map,
-  with Keen and the Bean-with-Bacon Megarocket, from *this project's* IBM
-  PC/AT running the `?disk=keen1` preset C:. Space at the title on
-  `ibmpc-at/?test=1&fast=1&disk=keen1` starts a game; a frame read off
-  `__test.frameCanvas` (320×200), top 143 rows resized to 286×128 (JPEG q90).
-
-- **`tyrian-demo.jpg`**: freeware Tyrian 2.1's attract demo, from *this
-  project's* 486 DX2-66 core booting the `?disk=tyrian` preset C: with FM
-  music and Sound Blaster effects on. A 320×200 frame rendered by
-  `RenderScreen` about 2.6 billion cycles after power-on, cropped to the
-  playfield below the INSERT COIN line (x 0–262, y 58–175) and resized to
-  286×128 (JPEG q90).
-
 - **`altair-startrek.jpg`**: Super Star Trek's opening short range scan on
   the VT100, from *this project's* Altair 8800 running the `?tape=startrek`
   quick play (8K BASIC off paper tape, Star Trek off the 88-ACR cassette,

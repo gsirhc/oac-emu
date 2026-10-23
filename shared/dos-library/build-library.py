@@ -12,8 +12,6 @@ import tempfile
 import time
 import zipfile
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-CACHE = os.path.join(HERE, "cache")
 
 # usable data bytes per format: clusters * cluster size from the BPB mformat writes
 FORMATS = {
@@ -263,28 +261,6 @@ def build_packages(entry, iso, outdir):
         make_image(os.path.join(outdir, img["file"]), fmt, b.get("label", entry["id"]).upper() + (str(i + 1) if count > 1 else ""), t)
 
 
-def build_shareware(entry, outdir):
-    b = entry["build"]
-    zpath = os.path.join(CACHE, b["shareware"])
-    if not os.path.exists(zpath):
-        die(f"{zpath} missing; run fetch-shareware.sh first")
-    with zipfile.ZipFile(zpath) as zf:
-        byname = {zi.filename.upper(): zi for zi in zf.infolist()}
-        if len(b["disks"]) != len(entry["images"]):
-            die(f"{entry['id']}: build.disks and images disagree")
-        for i, names in enumerate(b["disks"]):
-            t = Tree()
-            for n in names:
-                zi = byname.get(n.upper()) or die(f"{entry['id']}: {n} not in {b['shareware']}")
-                # unzip, not zipfile: the 1992 releases use PKZIP 1.x implode
-                data = subprocess.run(["unzip", "-p", zpath, zi.filename], check=True, capture_output=True).stdout
-                if len(data) != zi.file_size:
-                    die(f"{entry['id']}: {n} came out {len(data)} bytes, expected {zi.file_size}")
-                t.add(n, data, zi.date_time)
-            label = b.get("label", entry["id"]).upper() + (str(i + 1) if len(b["disks"]) > 1 else "")
-            make_image(os.path.join(outdir, entry["images"][i]["file"]), b["format"], label, t)
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--library", required=True)
@@ -303,8 +279,6 @@ def main():
         print(f"build-library: {entry['id']}")
         if "packages" in b:
             build_packages(entry, args.iso, args.out)
-        elif "shareware" in b:
-            build_shareware(entry, args.out)
         else:
             die(f"{entry['id']}: unknown build kind")
 

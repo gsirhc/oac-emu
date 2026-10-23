@@ -66,8 +66,6 @@ ibmpc-at/roms/egabios/font*.inc
 ibmpc-at/bios_host
 ibmpc-at/render_screen
 ibmpc-at/disks/build_freedos_hdd
-ibmpc-at/disks/build_preset_hdd
-ibmpc-at/disks/keen1-hdd.img
 
 # web integration suite (Playwright)
 node_modules/
@@ -114,13 +112,6 @@ pc486/vbe_mode13_check
 pc486/fm_trace_render
 pc486/disks/build_freedos_hdd
 pc486/disks/hdd_boot_check
-pc486/disks/build_preset_hdd
-pc486/disks/doom-hdd.img
-pc486/disks/wolf3d-hdd.img
-pc486/disks/duke3d-hdd.img
-pc486/disks/rott-hdd.img
-pc486/disks/pinball-hdd.img
-pc486/disks/tyrian-hdd.img
 pc486/disks/freedos-hdd.img
 pc486/disks/freedos-cd.iso
 pc486/disks/freedos-boot.img
@@ -257,9 +248,6 @@ scramble/roms/user/
 scramble/web/shared/
 scramble/web/tests/shared/
 
-pc486/web/Doom/
-pc486/web/EpicPinball/
-pc486/web/full/
 pc486/web/shared/
 ibmpc-at/disks/library/
 pc486/disks/library/
