@@ -1,0 +1,134 @@
+// Emscripten wrapper for the Konami Scramble (1981) arcade board.
+
+#include <emscripten/bind.h>
+#include <emscripten/val.h>
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <vector>
+
+#include "../machine.h"
+#include "arcade_frame.h"
+#include "hwtest_roms.h"
+#include "../hwtest_set.h"
+
+using emscripten::val;
+
+namespace {
+
+
+void copy_val(val src, uint8_t* dst, size_t n) {
+    auto v = emscripten::convertJSArrayToNumberVector<uint8_t>(src);
+    size_t m = v.size() < n ? v.size() : n;
+    std::copy(v.begin(), v.begin() + std::ptrdiff_t(m), dst);
+}
+
+}  // namespace
+
+class Machine {
+public:
+    Machine() {
+        m_.load_roms(scramble::hwtest_set());
+        m_.reset();
+    }
+
+    void reset() { m_.reset(); }
+
+    void loadHwtest() {
+        m_.load_roms(scramble::hwtest_set());
+        m_.reset();
+    }
+
+    void loadRomSet(val prog, val sound, val gfx, val color) {
+        scramble::RomSet s;
+        copy_val(prog, s.program.data(), s.program.size());
+        copy_val(sound, s.sound.data(), s.sound.size());
+        copy_val(gfx, s.gfx.data(), s.gfx.size());
+        copy_val(color, s.color_prom.data(), s.color_prom.size());
+        m_.load_roms(s);
+        m_.reset();
+    }
+
+    int runCycles(int n) { return m_.run_cycles(n); }
+
+    val frameBuffer() {
+        m_.render(frame_.clear());
+        return frame_.rgba();
+    }
+
+    void setIn0(int v) { m_.inputs.in0 = uint8_t(v); }
+    void setIn1(int v) { m_.inputs.in1 = uint8_t(v); }
+    void setIn2(int v) { m_.inputs.in2 = uint8_t(v); }
+    void setAudioHz(int hz) { m_.audio_hz = hz; }
+    int in0() const { return m_.inputs.in0; }
+    int in1() const { return m_.inputs.in1; }
+    int in2() const { return m_.inputs.in2; }
+
+    val drainAudio() {
+        val out = val::global("Float32Array").new_(m_.audio.size());
+        if (!m_.audio.empty())
+            out.call<void>("set",
+                           val(emscripten::typed_memory_view(m_.audio.size(), m_.audio.data())));
+        m_.audio.clear();
+        return out;
+    }
+
+    val state() const {
+        val s = val::object();
+        s.set("pc", int(m_.main.pc));
+        s.set("sp", int(m_.main.sp));
+        s.set("frames", m_.frames);
+        s.set("nmiEnable", m_.nmi_enable);
+        s.set("soundPc", int(m_.sound.pc));
+        return s;
+    }
+
+    double totalCycles() const { return double(m_.main.cycles); }
+    int screenWidth() const { return scramble::kUprightW; }
+    int screenHeight() const { return scramble::kUprightH; }
+    int ramByte(int addr) const {
+        if (addr < 0x4000 || addr >= 0x4800) return -1;
+        return m_.ram[unsigned(addr - 0x4000)];
+    }
+    void setRamByte(int addr, int v) {
+        if (addr < 0x4000 || addr >= 0x4800) return;
+        m_.ram[unsigned(addr - 0x4000)] = uint8_t(v);
+    }
+    void setMemByte(int addr, int v) {
+        m_.mem_write(uint16_t(addr & 0xFFFF), uint8_t(v));
+    }
+    void soundOut(int port, int v) { m_.sound_out(uint8_t(port), uint8_t(v)); }
+    int memRead(int addr) { return m_.mem_read(uint16_t(addr & 0xFFFF)); }
+
+private:
+    scramble::Machine m_;
+    arcade::RgbaFrame<scramble::kUprightW, scramble::kUprightH> frame_;
+};
+
+EMSCRIPTEN_BINDINGS(scramble) {
+    emscripten::class_<Machine>("Machine")
+        .constructor<>()
+        .function("reset", &Machine::reset)
+        .function("loadHwtest", &Machine::loadHwtest)
+        .function("loadRomSet", &Machine::loadRomSet)
+        .function("runCycles", &Machine::runCycles)
+        .function("frameBuffer", &Machine::frameBuffer)
+        .function("setIn0", &Machine::setIn0)
+        .function("setIn1", &Machine::setIn1)
+        .function("setIn2", &Machine::setIn2)
+        .function("setAudioHz", &Machine::setAudioHz)
+        .function("in0", &Machine::in0)
+        .function("in1", &Machine::in1)
+        .function("in2", &Machine::in2)
+        .function("drainAudio", &Machine::drainAudio)
+        .function("state", &Machine::state)
+        .function("totalCycles", &Machine::totalCycles)
+        .function("screenWidth", &Machine::screenWidth)
+        .function("screenHeight", &Machine::screenHeight)
+        .function("ramByte", &Machine::ramByte)
+        .function("setRamByte", &Machine::setRamByte)
+        .function("setMemByte", &Machine::setMemByte)
+        .function("soundOut", &Machine::soundOut)
+        .function("memRead", &Machine::memRead);
+}

@@ -1,0 +1,231 @@
+/* Shared page-shell + pagebar/titlebar chrome. Layout and per-theme visibility
+   live here; colors come from each machine's own tokens. */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--desktop);
+  color: var(--text);
+  font: 16px/1.5 var(--body-font);
+  padding: var(--body-pad);
+}
+:root:not([data-theme]) body {
+  /* theme-init.js always stamps data-theme before first paint; this only
+     covers a page loaded with scripting disabled entirely. */
+  background: #0e0f12; color: #d8dbe2;
+}
+a { color: var(--link); }
+h1, h2, h3 { font-weight: 600; }
+
+.page {
+  max-width: var(--page-max); margin: 0 auto;
+  background: var(--page-bg);
+  border: var(--page-border);
+  border-radius: var(--page-radius);
+  box-shadow: var(--page-shadow);
+  overflow: hidden;
+}
+/* Modern theme goes almost full page width on every machine page. */
+:root[data-theme="modern"] { --page-max: min(1600px, 95vw); }
+/* Atmosphere sits between the 90s fixed column and Modern's near-bleed. */
+:root[data-theme="aurora"] { --page-max: min(1180px, 86vw); }
+
+.pagebar {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--titlebar-bg); color: var(--titlebar-fg);
+  font: bold 14px Arial, Helvetica, sans-serif;
+  padding: 4px 8px;
+}
+.pagebar a { color: inherit; }
+.pb-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Windows title-bar app icon; Modern uses .pb-name/.pb-tag instead. */
+.pb-icon { width: 14px; height: 14px; vertical-align: -2px; margin-right: 3px; }
+:root[data-theme="modern"] .pb-icon { display: none; }
+.pb-home { flex: 0 0 auto; display: none; text-decoration: none; font-weight: bold; }
+.pb-name, .pb-tag { display: none; }   /* Modern uses these instead */
+.pb-tools { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.pb-theme { display: inline-flex; align-items: center; gap: 5px; font: inherit; }
+.pb-theme-btn {
+  font: 12px Arial, Helvetica, sans-serif;
+  color: var(--btn-fg); background: var(--btn-bg);
+  border: var(--btn-border); border-radius: var(--btn-radius);
+  padding: 1px 8px 2px; cursor: pointer;
+}
+.pb-theme-btn:active { border-style: inset; }
+:root[data-theme="winxp"] .pb-theme-btn {
+  font: 11px Tahoma, "Segoe UI", sans-serif;
+  border-radius: 3px;
+}
+:root[data-theme="winxp"] .pagebar {
+  font: bold 13px Tahoma, "Segoe UI", sans-serif;
+  padding: 5px 6px 5px 8px;
+  min-height: 30px;
+  border-radius: 7px 7px 0 0;
+  border-bottom: 0;
+}
+:root[data-theme="winxp"] .page {
+  border-radius: 8px 8px 0 0;
+  overflow: hidden;
+}
+:root[data-theme="winxp"] .pb-winbtns {
+  display: inline-flex; align-items: center; gap: 2px;
+  margin: 0 1px 0 4px;
+}
+:root[data-theme="winxp"] .pb-winbtns span,
+:root[data-theme="winxp"] .pb-winbtns a,
+:root[data-theme="winxp"] .pb-winbtns button {
+  width: 21px; height: 21px; line-height: 18px;
+  margin: 0; font-size: 13px; font-weight: 700;
+  color: #fff;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .55) 0%, rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, #3c9aff 0%, #1664d8 52%, #0a4aa8 100%);
+  border: 1px solid #fff;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(0, 40, 120, .35),
+              0 1px 1px rgba(0, 0, 0, .25);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, .4);
+}
+:root[data-theme="winxp"] .pb-winbtns a:visited { color: #fff; }
+:root[data-theme="winxp"] .pb-winbtns .pb-close {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .5) 0%, rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, #ff8e7a 0%, #e5483b 48%, #b82014 100%);
+  border-color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(120, 20, 10, .4),
+              0 1px 1px rgba(0, 0, 0, .25);
+}
+:root[data-theme="winxp"] .pb-winbtns button:disabled {
+  color: rgba(255, 255, 255, .45); text-shadow: none;
+}
+:root[data-theme="winxp"] .pb-winbtns .pb-close.is-disabled {
+  color: rgba(255, 255, 255, .55); text-shadow: none;
+}
+
+/* Theme picker dialog, built by theme-picker.js. Lives here so landing/about
+   get it too. */
+#themeDialog, #pc486SoonDialog {
+  max-width: 320px; padding: 16px 18px 18px;
+  background: var(--panel-bg); color: var(--text);
+  border: var(--panel-border); border-radius: var(--panel-radius);
+}
+/* Aurora panels are glassy; the dialog needs a solid sheet. */
+:root[data-theme="aurora"]:not([data-mode="dark"]) #themeDialog,
+:root[data-theme="aurora"]:not([data-mode="dark"]) #pc486SoonDialog {
+  background: rgba(255, 252, 255, .94);
+}
+:root[data-theme="aurora"][data-mode="dark"] #themeDialog,
+:root[data-theme="aurora"][data-mode="dark"] #pc486SoonDialog {
+  background: rgba(20, 17, 32, .94);
+}
+#themeDialog::backdrop, #pc486SoonDialog::backdrop { background: rgba(0,0,0,.55); }
+#themeDialog h2, #pc486SoonDialog h2 {
+  margin: 0 0 10px; font: bold 15px Arial, Helvetica, sans-serif;
+  text-transform: none; letter-spacing: normal; color: var(--text);
+}
+#themeDialog fieldset {
+  margin: 0 0 12px; padding: 8px 10px 10px;
+  border: var(--rule); min-width: 0;
+}
+#themeDialog legend {
+  padding: 0 4px; font-size: 12px; color: var(--dim);
+}
+#themeDialog label {
+  display: flex; align-items: center; gap: 8px;
+  margin: 4px 0; font-size: 14px; cursor: pointer;
+}
+#themeDialog .theme-dialog-modes {
+  display: flex; flex-wrap: wrap; gap: 4px 14px;
+}
+#themeDialog .theme-dialog-modes label { margin: 2px 0; }
+#themeDialog .row, #pc486SoonDialog .row {
+  display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px;
+}
+#themeDialog .row button, #pc486SoonDialog .row button {
+  font: 12px Arial, Helvetica, sans-serif;
+  color: var(--btn-fg); background: var(--btn-bg);
+  border: var(--btn-border); border-radius: var(--btn-radius);
+  padding: 4px 16px; min-width: 72px; cursor: pointer;
+}
+#themeDialog .row button:active, #pc486SoonDialog .row button:active { border-style: inset; }
+.pb-winbtns span, .pb-winbtns a, .pb-winbtns button {
+  display: inline-block; width: 16px; height: 14px; line-height: 12px;
+  margin-left: 2px; text-align: center; font-size: 10px;
+  color: #000; background: #c0c0c0; border: 1px outset #dfdfdf;
+  text-decoration: none; padding: 0; font-family: inherit; cursor: pointer;
+  vertical-align: middle; box-sizing: border-box;
+}
+.pb-winbtns button:disabled,
+.pb-winbtns .pb-close.is-disabled {
+  /* Win95 CS_NOCLOSE / disabled caption button */
+  color: #808080; text-shadow: 1px 1px 0 #fff; cursor: default; pointer-events: none;
+}
+.page.is-minimized > .inner,
+.page.is-minimized > #siteFooter { display: none; }
+
+/* Atmosphere: Windows 11 caption buttons (flat, flush, red close on hover). */
+:root[data-theme="aurora"] .pagebar {
+  padding: 0 0 0 12px; min-height: 32px;
+  font-family: Inter, Helvetica, Arial, sans-serif;
+}
+:root[data-theme="aurora"] .pb-tools { align-self: stretch; gap: 8px; }
+:root[data-theme="aurora"] .pb-theme { padding-right: 4px; }
+:root[data-theme="aurora"] .pb-winbtns {
+  display: inline-flex; align-self: stretch; margin: 0; height: auto;
+}
+:root[data-theme="aurora"] .pb-winbtns span,
+:root[data-theme="aurora"] .pb-winbtns a,
+:root[data-theme="aurora"] .pb-winbtns button {
+  width: 28px; height: auto; min-height: 32px; line-height: 32px;
+  margin: 0; padding: 0; border: 0; border-radius: 0;
+  background: transparent; color: #fff; font-size: 12px; font-weight: 300;
+  text-shadow: none; box-shadow: none;
+}
+:root[data-theme="aurora"] .pb-winbtns a:visited { color: #fff; }
+:root[data-theme="aurora"] .pb-winbtns .pb-min:hover,
+:root[data-theme="aurora"] .pb-winbtns .pb-max:hover {
+  background: rgba(255, 255, 255, .14);
+}
+:root[data-theme="aurora"] .pb-winbtns .pb-close:hover {
+  background: #c42b1c; color: #fff;
+}
+:root[data-theme="aurora"] .pb-winbtns button:disabled,
+:root[data-theme="aurora"] .pb-winbtns .pb-close.is-disabled {
+  color: rgba(255, 255, 255, .4); text-shadow: none; background: transparent;
+}
+:root[data-theme="aurora"] .pb-winbtns button:disabled:hover,
+:root[data-theme="aurora"] .pb-winbtns .pb-close.is-disabled:hover {
+  background: transparent;
+}
+
+:root[data-theme="web94"] .pagebar {
+  background: var(--page-bg); color: var(--text);
+  border-bottom: 1px solid #808080;
+  font: 15px "Times New Roman", Times, serif;
+}
+:root[data-theme="web94"][data-mode="dark"] .pagebar {
+  border-bottom: 1px solid #555566;
+}
+:root[data-theme="web94"] .pb-title   { display: none; }
+:root[data-theme="web94"] .pb-winbtns { display: none; }
+:root[data-theme="web94"] .pb-home { display: inline; color: var(--link); text-decoration: underline; font-weight: normal; }
+:root[data-theme="web94"] .pb-home:visited { color: var(--link-visited); }
+
+:root[data-theme="modern"] .pagebar {
+  background: var(--titlebar-bg); color: var(--titlebar-fg);
+  border-bottom: 1px solid #ecedf1; border-radius: 14px 14px 0 0;
+  font: 500 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: 10px 16px;
+}
+:root[data-theme="modern"][data-mode="dark"] .pagebar { border-bottom: var(--rule); }
+:root[data-theme="modern"] .pb-title   { display: none; }
+:root[data-theme="modern"] .pb-winbtns { display: none; }
+  :root[data-theme="modern"] .pb-home { display: inline; color: var(--link); text-decoration: none; font-weight: 600; font-size: 14px; opacity: .85; }
+  :root[data-theme="modern"] .pb-name { display: block; flex: 0 0 auto; margin-left: 2px; font-weight: 700; font-size: 17px; letter-spacing: .3px; color: var(--h1-color); }
+  :root[data-theme="modern"] .pb-tag { display: block; flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 14px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 700px) { :root[data-theme="modern"] .pb-tag { display: none; } }
+
+.inner { padding: 16px 20px 20px; }
+:root[data-theme="win"] .inner,
+:root[data-theme="winxp"] .inner,
+:root[data-theme="web94"] .inner { padding: 14px 22px 22px; }

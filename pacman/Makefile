@@ -1,0 +1,69 @@
+# Namco Pac-Man (1980) arcade board emulator.
+#
+#   make test    GoogleTest suite (video + WSG + machine + board smoke).
+#                User-ROM playthroughs skip unless roms/user/ holds a dump.
+#   make test-smoke  Smoke.* GoogleTest only (what deploy CI runs)
+#   make derive-aux-check  re-derive the Ms. Pac-Man aux wiring from a local
+#                mspacman dump and compare with machine.cpp (skips without one)
+#   make check   test + derive-aux-check (what nightly runs)
+#   make coverage  board-code llvm-cov report (no user-ROM playthroughs)
+#   make wasm    WebAssembly module
+#   make serve   wasm + test ROM + shared chrome, serve on :8000
+#   make clean
+
+CXX      ?= c++
+CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
+
+# llvm tools: xcrun on macOS, PATH on Linux
+LLVM_PROFDATA ?= xcrun llvm-profdata
+LLVM_COV      ?= xcrun llvm-cov
+
+.PHONY: help test check wasm serve clean roms test-smoke coverage derive-aux-check
+
+help:
+	@sed -n 's/^#   //p' $(MAKEFILE_LIST)
+
+test:
+	cmake -S tests -B tests/build
+	cmake --build tests/build -j
+	ctest --test-dir tests/build --output-on-failure
+
+# Board smoke only (Smoke.*). Full GoogleTest is `make test` / `make check`.
+test-smoke:
+	cmake -S tests -B tests/build
+	cmake --build tests/build -j --target smoke_test
+	ctest --test-dir tests/build -R '^Smoke\.' --output-on-failure
+
+# --- C++ coverage (source-based, llvm-cov) --------------------------
+COV_TESTS = video_test wsg_test machine_test smoke_test
+COV_SRCS  = machine.cpp video.cpp ../shared/namco/wsg.cpp
+coverage:
+	cmake -S tests -B tests/build-cov -DCOVERAGE=ON >/dev/null
+	cmake --build tests/build-cov -j >/dev/null
+	@set -e; cd tests/build-cov && rm -f *.profraw cov.profdata; \
+	  for t in $(COV_TESTS); do LLVM_PROFILE_FILE=$$t.profraw ./$$t >/dev/null; done; \
+	  $(LLVM_PROFDATA) merge -sparse *.profraw -o cov.profdata; \
+	  objs=$$(echo $(COV_TESTS) | sed 's/ / -object /g'); \
+	  srcs="$(addprefix $(CURDIR)/,$(COV_SRCS))"; \
+	  $(LLVM_COV) report $$objs -instr-profile=cov.profdata $$srcs; \
+	  $(LLVM_COV) show $$objs -instr-profile=cov.profdata -format=html -output-dir=../coverage-cpp $$srcs >/dev/null; \
+	  echo "  html: pacman/tests/coverage-cpp/index.html"
+
+roms:
+	$(MAKE) -C web roms
+
+wasm:
+	$(MAKE) -C web
+
+serve:
+	$(MAKE) -C web serve
+
+MSPACMAN_ROM ?= $(firstword $(wildcard roms/user/mspacman.zip) $(HOME)/images/arcade/mspacman.zip)
+derive-aux-check:
+	python3 tools/derive_aux.py --check machine.cpp $(MSPACMAN_ROM)
+
+check: test derive-aux-check
+
+clean:
+	rm -rf tests/build tests/build-cov tests/coverage-cpp
+	$(MAKE) -C web clean

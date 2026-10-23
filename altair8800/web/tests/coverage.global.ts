@@ -1,0 +1,24 @@
+import { CoverageReport } from "monocart-coverage-reports";
+import { coverageEnabled, coverageOptions } from "./coverage";
+
+// globalSetup / globalTeardown entry points; the COVERAGE_PHASE env set by the config picks one.
+
+export async function coverageSetup() {
+  if (!coverageEnabled) return;
+  new CoverageReport(coverageOptions).cleanCache();
+}
+
+export async function coverageTeardown() {
+  if (!coverageEnabled) return;
+  const report: any = await new CoverageReport(coverageOptions).generate();
+  const s = report?.summary;
+  if (s) {
+    const pct = (m: any) => (m && typeof m.pct === "number" ? `${m.pct.toFixed(1)}%` : "n/a");
+    console.log(
+      `\napp.js coverage — lines ${pct(s.lines)}  functions ${pct(s.functions)}  branches ${pct(s.branches)}` +
+        `\n  full report: altair8800/web/coverage/index.html\n`,
+    );
+  }
+}
+
+export default coverageTeardown;

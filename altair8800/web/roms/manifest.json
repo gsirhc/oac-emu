@@ -1,0 +1,57 @@
+{
+  "roms": [
+    {
+      "name": "Serial echo",
+      "file": "echo.bin",
+      "load": "0x0000",
+      "start": "0x0000",
+      "description": "Echoes every byte received on 2SIO channel A. Identical to the core's built-in default ROM."
+    },
+    {
+      "name": "Hello, world",
+      "file": "hello.bin",
+      "load": "0x0000",
+      "start": "0x0000",
+      "description": "Prints a greeting to 2SIO channel A, then halts. Watch the register bar stop at HALT."
+    },
+    {
+      "name": "Kill the Bit",
+      "file": "killbits.bin",
+      "load": "0x0000",
+      "start": "0x0000",
+      "description": "Dean McDaniel, MITS, 1975. A lit bit sweeps across the A8-A15 address lamps; flip the matching sense switch (top row, A8-A15) to knock it out. Clear the board and it stops. The classic front-panel game."
+    },
+    {
+      "name": "Altair 8K BASIC 4.0",
+      "file": "8kbas.bin",
+      "load": "0x0000",
+      "start": "0x0000",
+      "sense": "0x00",
+      "optional": true,
+      "basic8k": true,
+      "stream": true,
+      "description": "Microsoft 8K BASIC 4.0 (MITS 1976), the flat load-and-go image (8192 bytes) that reads in from 0000h through the 88-2SIO -- the real paper-tape load. Cold start: MEMORY SIZE? / TERMINAL WIDTH? / WANT SIN-COS-TAN-ATN? (Y). Needs ~12K of RAM."
+    },
+    {
+      "name": "Altair 4K BASIC 4.0",
+      "file": "4kbas.bin",
+      "load": "0x0000",
+      "start": "0x0000",
+      "sense": "0x00",
+      "optional": true,
+      "basic4k": true,
+      "stream": true,
+      "description": "Microsoft 4K BASIC 4.0 (MITS 1976) for the 88-2SIO console - the software that made the Altair. Flat 3833-byte load-and-go image; reads in from 0000h. Cold start: MEMORY SIZE? / TERMINAL WIDTH? / SIN? (Y), then OK with ~716 bytes free in a 4K machine."
+    },
+    {
+      "name": "Altair 8K BASIC (ROM build)",
+      "files": ["8kBas_e0.bin", "8kBas_e8.bin", "8kBas_f0.bin", "8kBas_f8.bin"],
+      "load": "0xE000",
+      "start": "0xE000",
+      "sense": "0x00",
+      "optional": true,
+      "basicRom": true,
+      "description": "Mike Douglas's EPROM build of 8K BASIC 4.0: entry at E000h, relocates itself to 0000h. Sits above RAM so it can't stream -- it drops straight in and cold-starts. An instant alternative to the paper-tape 8K image."
+    }
+  ]
+}

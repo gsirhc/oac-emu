@@ -1,0 +1,278 @@
+#include "wd1003.h"
+
+#include <algorithm>
+#include <cstring>
+#include <utility>
+
+namespace pc486 {
+
+void Wd1003::reset() {
+    error_ = 0;
+    sector_count_ = 1;
+    sector_number_ = 1;
+    cyl_low_ = 0;
+    cyl_high_ = 0;
+    drive_head_ = 0xA0;
+    status_ = ST_DRDY | ST_DSC;
+    floating_reads_left_ = 0;
+    nien_ = false;
+    srst_prev_ = false;
+    selected_drive_ = 0;
+    irq_pending_ = false;
+    pio_buffer_.clear();
+    pio_pos_ = 0;
+    pio_mode_ = PioMode::kNone;
+    xfer_active_ = false;
+    xfer_is_write_ = false;
+    xfer_credit_ = xfer_target_ = 0.0;
+    prev_cycles_ = 0;
+    // drives[] survive reset: a fixed disk keeps its contents.
+}
+
+void Wd1003::mount(int drive, const uint8_t *data, std::size_t len) {
+    mount(drive, std::vector<uint8_t>(data, data + len));
+}
+
+void Wd1003::mount(int drive, std::vector<uint8_t> &&image) {
+    Drive &d = drives[drive & 1];
+    d.image = std::move(image);
+    std::size_t len = d.image.size();
+    d.present = true;
+    d.dirty = false;
+    d.dirty_page.assign((len + Drive::kDirtyPageSize - 1) / Drive::kDirtyPageSize, false);
+    // WD Caviar AC2250 (256MB): translated geometry 1010 x 9 x 55 = 499,950
+    // sectors (WD Caviar parameter table, stason.org AC-2250 entry).
+    d.cylinders = kCylinders;
+    d.heads = kHeads;
+    d.sectors_per_track = kSectorsPerTrack;
+}
+
+bool Wd1003::owns(uint16_t port) const {
+    return (port >= 0x1F0 && port <= 0x1F7) || port == 0x3F6;
+}
+
+uint8_t Wd1003::pio_read_byte() {
+    if (pio_mode_ != PioMode::kReadDrain || pio_pos_ >= pio_buffer_.size()) return 0xFF;
+    uint8_t b = pio_buffer_[pio_pos_++];
+    if (pio_pos_ >= pio_buffer_.size()) {
+        pio_mode_ = PioMode::kNone;
+        status_ = uint8_t((status_ & uint8_t(~(ST_DRQ | ST_BSY))) | ST_DRDY | ST_DSC);
+    }
+    return b;
+}
+void Wd1003::pio_write_byte(uint8_t v) {
+    if (pio_mode_ != PioMode::kWriteFill || pio_pos_ >= pio_buffer_.size()) return;
+    pio_buffer_[pio_pos_++] = v;
+    if (pio_pos_ >= pio_buffer_.size()) {
+        // Commits synchronously when the last byte arrives. rombios.c's
+        // ata_cmd_data_io() calls await_ide() before its read completion check but not
+        // the write one, so it needs BSY already clear. See PC486_REVIEW.md.
+        pio_mode_ = PioMode::kNone;
+        finish_read_or_write();
+    }
+}
+
+uint16_t Wd1003::data_in16() {
+    uint8_t lo = pio_read_byte();
+    uint8_t hi = pio_read_byte();
+    return uint16_t(lo) | (uint16_t(hi) << 8);
+}
+void Wd1003::data_out16(uint16_t v) {
+    pio_write_byte(uint8_t(v & 0xFF));
+    pio_write_byte(uint8_t(v >> 8));
+}
+
+uint8_t Wd1003::in(uint16_t port) {
+    // Reads are never gated on the selected drive; see selected_drive_absent().
+    if ((port == 0x1F4 || port == 0x1F5) && floating_reads_left_ > 0) {
+        --floating_reads_left_;
+        return 0xFF;
+    }
+    switch (port) {
+        case 0x1F0: return pio_read_byte();
+        case 0x1F1: return error_;
+        case 0x1F2: return uint8_t(sector_count_);
+        case 0x1F3: return sector_number_;
+        case 0x1F4: return cyl_low_;
+        case 0x1F5: return cyl_high_;
+        case 0x1F6: return drive_head_;
+        case 0x1F7: irq_pending_ = false; return status_;  // reading status acknowledges the interrupt
+        case 0x3F6: return status_;  // alternate status: same bits, does NOT clear the interrupt
+        default: return 0xFF;
+    }
+}
+
+void Wd1003::out(uint16_t port, uint8_t v) {
+    // Only the command register write (0x1F7) is gated on drive selection; the
+    // other task-file registers are shared latches. See selected_drive_absent().
+    if (port == 0x1F7 && selected_drive_absent()) return;
+    switch (port) {
+        case 0x1F0: pio_write_byte(v); break;
+        case 0x1F1: error_ = v; break;  // "features" register when written; not interpreted
+        case 0x1F2: sector_count_ = v; break;
+        case 0x1F3: sector_number_ = v; break;
+        case 0x1F4: cyl_low_ = v; break;
+        case 0x1F5: cyl_high_ = v; break;
+        case 0x1F6: drive_head_ = v; selected_drive_ = (v & 0x10) ? 1 : 0; break;
+        case 0x1F7: run_command(v); break;
+        case 0x3F6: {
+            bool srst_now = (v & 0x04) != 0;
+            if (srst_now && !srst_prev_) {
+                // Soft reset: the device reasserts its signature whatever DEV selects. If
+                // SRST was released with the absent slave selected, the next two reads of
+                // Cylinder Low/High float to 0xFF for ata_detect(); see floating_reads_left_.
+                sector_count_ = 1;
+                sector_number_ = 1;
+                cyl_low_ = 0x00;
+                cyl_high_ = 0x00;
+                status_ = ST_DRDY | ST_DSC;
+                floating_reads_left_ = selected_drive_absent() ? 2 : 0;
+                error_ = 0;
+                pio_mode_ = PioMode::kNone;
+                xfer_active_ = false;
+            }
+            srst_prev_ = srst_now;
+            nien_ = (v & 0x02) != 0;
+            break;
+        }
+        default: break;
+    }
+}
+
+void Wd1003::run_command(uint8_t cmd) {
+    error_ = 0;
+    if ((cmd & 0xF0) == 0x10) {  // RECALIBRATE (0x10-0x1F)
+        status_ = ST_DRDY | ST_DSC;
+        irq_pending_ = !nien_;
+        return;
+    }
+    switch (cmd) {
+        case 0xEC: do_identify(); break;
+        case 0x91:  // INITIALIZE DEVICE PARAMETERS, accepted; this system's geometry is already fixed
+            status_ = ST_DRDY | ST_DSC;
+            irq_pending_ = !nien_;
+            break;
+        case 0x20: case 0x21: begin_read(); break;
+        case 0x30: case 0x31: begin_write(); break;
+        default:
+            status_ = ST_DRDY | ST_DSC | ST_ERR;
+            error_ = 0x04;  // ABRT
+            irq_pending_ = !nien_;
+            break;
+    }
+}
+
+void Wd1003::do_identify() {
+    Drive &d = drives[selected_drive_];
+    pio_buffer_.assign(512, 0);
+
+    auto put16 = [&](int word_idx, uint16_t v) {
+        pio_buffer_[std::size_t(word_idx) * 2] = uint8_t(v & 0xFF);
+        pio_buffer_[std::size_t(word_idx) * 2 + 1] = uint8_t(v >> 8);
+    };
+    // ATA strings are byte-swapped within each word.
+    auto put_string = [&](int word_start, int word_count, const char *s) {
+        int len = int(std::strlen(s));
+        for (int i = 0; i < word_count * 2; ++i) {
+            char c = (i < len) ? s[i] : ' ';
+            std::size_t byte_idx = std::size_t(word_start) * 2 + std::size_t(i ^ 1);
+            if (byte_idx < pio_buffer_.size()) pio_buffer_[byte_idx] = uint8_t(c);
+        }
+    };
+
+    put16(0, 0x0040);  // general config: fixed (non-removable) ATA device
+    put16(1, uint16_t(d.cylinders));
+    put16(3, uint16_t(d.heads));
+    // Word 5 (unformatted bytes per sector): the BIOS reads it from its cached
+    // IDENTIFY to size the `rep insw` count (rombios.c ata_detect(),
+    // ata_cmd_data_io()). Zero made it drain nothing and report failure, which
+    // broke the FreeDOS installer's auto-partition step. See PC486_REVIEW.md.
+    put16(5, Drive::kBytesPerSector);
+    put16(6, uint16_t(d.sectors_per_track));
+    put_string(10, 10, "0");                  // serial number
+    put_string(23, 4, "1.0");                  // firmware revision
+    put_string(27, 20, "WDC AC2250");          // model number
+    long total = d.capacity_sectors();
+    put16(60, uint16_t(total & 0xFFFF));
+    put16(61, uint16_t((total >> 16) & 0xFFFF));
+    // Word 83 bit 10 (LBA48) stays 0; the BIOS falls back to words 60/61.
+
+    pio_pos_ = 0;
+    pio_mode_ = PioMode::kReadDrain;
+    status_ = ST_DRQ | ST_DRDY | ST_DSC;
+    irq_pending_ = !nien_;
+}
+
+long Wd1003::offset_for_current_registers() const {
+    const Drive &d = drives[selected_drive_];
+    // Drive/Head bit 6 selects 28-bit LBA: sector number = LBA[7:0], cylinder
+    // low/high = LBA[15:8]/[23:16], head low nibble = LBA[27:24]. Postdates the
+    // WD1003 but rombios.c ata_cmd_data_io() always issues LBA. See PC486_REVIEW.md.
+    if (drive_head_ & 0x40) {
+        uint32_t lba = uint32_t(sector_number_) | (uint32_t(cyl_low_) << 8) |
+                       (uint32_t(cyl_high_) << 16) | (uint32_t(drive_head_ & 0x0F) << 24);
+        return long(lba) * Drive::kBytesPerSector;
+    }
+    int cyl = int(cyl_low_) | (int(cyl_high_) << 8);
+    int head = drive_head_ & 0x0F;
+    return d.offset_for(cyl, head, sector_number_);
+}
+
+void Wd1003::begin_read() {
+    int count = sector_count_ == 0 ? 256 : sector_count_;
+    xfer_len_ = std::size_t(count) * Drive::kBytesPerSector;
+    xfer_offset_ = offset_for_current_registers();
+    xfer_is_write_ = false;
+    xfer_active_ = true;
+    xfer_credit_ = 0.0;
+    xfer_target_ = double(xfer_len_) / kBytesPerSec * cpu_hz_;
+    status_ = ST_BSY;
+}
+
+void Wd1003::set_cpu_hz(double hz) {
+    if (!(hz > 0.0) || hz == cpu_hz_) return;
+    const double scale = hz / cpu_hz_;
+    if (xfer_active_) xfer_target_ = xfer_credit_ + (xfer_target_ - xfer_credit_) * scale;
+    cpu_hz_ = hz;
+}
+
+void Wd1003::begin_write() {
+    int count = sector_count_ == 0 ? 256 : sector_count_;
+    xfer_len_ = std::size_t(count) * Drive::kBytesPerSector;
+    xfer_offset_ = offset_for_current_registers();
+    xfer_is_write_ = true;
+    pio_buffer_.assign(xfer_len_, 0);
+    pio_pos_ = 0;
+    pio_mode_ = PioMode::kWriteFill;
+    // Asserts DRQ right away; completion is synchronous in pio_write_byte().
+    status_ = ST_DRQ | ST_DRDY;
+    xfer_active_ = false;
+}
+
+void Wd1003::finish_read_or_write() {
+    Drive &d = drives[selected_drive_];
+    xfer_active_ = false;
+    if (xfer_offset_ < 0 || std::size_t(xfer_offset_) + xfer_len_ > d.image.size()) {
+        status_ = ST_DRDY | ST_DSC | ST_ERR;
+        error_ = 0x10;  // IDNF (ID not found), closest real error code for an out-of-range CHS request
+        irq_pending_ = !nien_;
+        return;
+    }
+    if (xfer_is_write_) {
+        std::copy(pio_buffer_.begin(), pio_buffer_.end(), d.image.begin() + xfer_offset_);
+        d.dirty = true;
+        std::size_t first_page = std::size_t(xfer_offset_) / Drive::kDirtyPageSize;
+        std::size_t last_page = (std::size_t(xfer_offset_) + xfer_len_ - 1) / Drive::kDirtyPageSize;
+        for (std::size_t p = first_page; p <= last_page && p < d.dirty_page.size(); ++p) d.dirty_page[p] = true;
+        status_ = ST_DRDY | ST_DSC;
+        irq_pending_ = !nien_;
+    } else {
+        pio_buffer_.assign(d.image.begin() + xfer_offset_, d.image.begin() + xfer_offset_ + long(xfer_len_));
+        pio_pos_ = 0;
+        pio_mode_ = PioMode::kReadDrain;
+        status_ = ST_DRQ | ST_DRDY | ST_DSC;
+        irq_pending_ = !nien_;
+    }
+}
+
+}  // namespace pc486

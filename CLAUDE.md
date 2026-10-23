@@ -1,0 +1,740 @@
+# oac-emu — working principles
+
+This repo holds recreations of vintage machines. The browser emulators sit at
+the repo root, one folder per machine (`altair8800` — MITS Altair 8800 / Intel
+8080, deployed to `/altair8800/`; `index.html` is the landing page).
+Earlier history, the 6502 board's KiCad project and netlists, and the
+Commodore 64 work are in https://github.com/gsirhc/retro. The whole point is **fidelity to the real
+hardware**. When you work here, that comes first.
+
+Planned features that haven't been started are listed in
+[`IDEAS.md`](IDEAS.md).
+
+## Realism is the default, not an option
+
+- **Match the real machine's behavior, timing, limits, prompts, error messages,
+  I/O port addresses, and status-bit polarity.** If a real Altair did X, the
+  emulator does X — even when X is slow, awkward, or surprising.
+- When a behavior comes from a primary source (a schematic, a datasheet, a
+  period manual, an original ROM disassembly), **cite the source** in a
+  comment and keep the quirk, including genuine hardware behavior that
+  software depends on (e.g. the 8080's `ANA` instruction ORing bit 3 of both
+  operands into auxiliary carry, instead of the more intuitive AND).
+- When you're unsure whether something is period-accurate, **look it up** in
+  primary sources (schematics, datasheets, original manuals, ROM disassembly)
+  rather than guessing or picking whatever's convenient.
+
+## Never copy or reference other emulators
+
+Everything here is built from scratch. **Never copy, port, or translate
+another emulator's code**: routines, formulas, address calculations, and
+control flow. That covers MAME, SIMH, Altirra, Nuked-OPL3, DOSBox, Bochs,
+86Box, PCem, QEMU, MiSTer/FPGA cores, and the rest, and it applies to
+subagents too: don't open emulator source while writing code here, and
+tell any agent you delegate to the same.
+
+Single values are different from code. One value (an address, a constant,
+a bit, a timing) may come from an emulator when no primary source has it;
+mark it unsourced. A few related facts, like one filter's part values or a
+chip's interrupt vectors, still count as single values. Tables, arrays and
+curves never come from an emulator: take them from a primary source
+(datasheet, schematic, ROM dump) or derive them yourself. Do not cite the
+emulator for a value, and do not describe it as hardware until a
+schematic, a datasheet, a measurement, or the game's own ROM says so. Code
+must always be written fresh from datasheets and schematics.
+`make lint` fails on emulator names (`check_emulator_refs.py`).
+
+- Work only from primary sources: the board's own schematics and service
+  manuals, chip datasheets, period programming manuals, decap/die analyses,
+  original ROM disassemblies, and measurements of real hardware.
+- Don't cite an emulator in a comment, review doc, test, or commit message,
+  even for a plain fact. If a value is only known from an emulator, look
+  for a primary source first; if there is none, use the value and mark it
+  unsourced in the machine's review doc.
+- Model analog circuits (op-amps, 555s, RC networks, filters) from the
+  schematic's part values and the parts' datasheets, deriving the equations
+  yourself.
+- Running original period software (BASIC, CP/M, FreeDOS, game ROMs) and
+  standard CPU exerciser programs (zexdoc, Dormann, 8080EXM) as guest code
+  is fine. Those aren't emulator code.
+- Interop with the community's ROM dumps is fine: the user ROM loader may
+  accept the standard dump file names. Derive anything a filename implies
+  (high-score RAM tables, ROM layouts) from the game's own ROM disassembly.
+
+Exceptions. These do not waive the rest of this section.
+
+- **Bochs BIOS and the LGPL VGA BIOS.** Both PCs ship these as guest
+  firmware standing in for IBM's, fetched at build time
+  (`BIOS-bochs-legacy`, `VGABIOS-lgpl-latest.bin`). Redistributing the
+  Bochs BIOS binary is allowed when its license permits it. Comments,
+  reviews, and tests may name that ROM and describe what it requires of
+  the hardware (port `0xE9`, INT 15h, `rombios.c`). Do not read the rest
+  of Bochs, or the VGA BIOS, as a reference for our own chip code.
+- **Hub thumbnails.** The arcade hub's opt-in thumbnails may fetch from
+  libretro-thumbnails and Arcade Database, including the URL paths those
+  sites publish (`thumbnails.libretro.com/MAME/...`,
+  `adb.arcadeitalia.net/media/mame.current/...`). Don't call those files
+  MAME names in our own wording.
+- Historical detail is a feature: hardware names on the S-100 cards, the blank
+  paper-tape leader, the 72-column BASIC input buffer, `MEMORY SIZE?`
+  auto-detection landing on the real number, the ASR-33 crawling at 10 cps.
+  Preserve and add these, don't smooth them away.
+
+## Never speed these up — not even as an option, unless explicitly asked
+
+- **CPU / bus / clock timing.** 2 MHz is 2 MHz. The 8080 runs at real T-state
+  rates paced to wall-clock time. No "turbo", no cycle multipliers in normal
+  operation — "normal operation" means the live page a visitor loads. An
+  automated test may run the guest CPU faster (see "Current sanctioned
+  overrides" below); the shipped emulator never does, under any URL or
+  control a real visitor can reach.
+- **Terminal / serial output rates.** A 110-baud Teletype prints at 10
+  characters per second and *throttles the CPU* while it does. A VT100 at its
+  real baud. Do not meter output faster than the selected terminal's rate.
+
+(The existing `turbo` flag is a load-time-only concession used while injecting a
+BASIC listing or auto-answering cold-start prompts; it ends on the first
+keypress. Don't extend its use into normal running.)
+
+## Overrides are allowed where realism is genuinely impractical — but:
+
+1. the **default is always the realistic behavior**,
+2. the override is **clearly labelled** as a departure, and
+3. it's **opt-in** (a control the user chooses), never silent.
+
+Current sanctioned overrides:
+
+- **Paper-tape LOAD SPEED / cassette TAPE SPEED** (`Realistic` / `5×` / `25×` /
+  `50×`). Realistic is the real rate (10 B/s paper tape, 30 B/s cassette) and is
+  the default; the multipliers exist because a full ~14-minute 8K BASIC load (or
+  ~10-minute Star Trek cassette) is impractical for casual use — even 50× is
+  ~17 s for 8K BASIC, ~12 s for Star Trek, so nothing here is "instant". On the
+  cassette deck the selector paces the whole transport — PLAY, FAST-FORWARD, REW;
+  `CassetteACR::credit_` lets BASIC's CLOAD loop pull several bytes per frame so
+  25×/50× really are that fast (not frame-capped at ~60 B/s). An internal `Max`
+  (0 = unlimited) is **not** in the picker: it's what `?test=1` forces (below).
+- The transport keys (PLAY / REC gate the tape), the paper-tape reader's **START**
+  button (runs the reader only — no bootstrap, no reset — for a loader you keyed
+  in), and the front panel stay fully functional so the manual, authentic path is
+  always available. The reader's **AUTO-LOAD** button is a labelled shortcut, not
+  the default path.
+- **Automated tests** (`?test=1`) may force paper-tape / cassette / floppy
+  **load speed** to `Max` so a suite doesn't wait out a ~14-minute read or a
+  needless ~166 ms/rev pause on every disk poll. A few tests select
+  `Realistic` on purpose, to prove the throttle still works.
+- **Automated-test CPU clock multiplier.** A machine whose Playwright suite
+  is genuinely CPU-bound (its own real-time-paced boot/POST cost, not just
+  a device-transfer wait — e.g. ibmpc-at's ~45 s 8 MHz POST + FreeDOS boot)
+  may run the guest CPU faster than real speed, gated behind an explicit
+  test-only flag (ibmpc-at: `?test=1&fast=1`) that most tests pass by
+  default via their shared `boot()` helper. This is a genuine change from
+  the load-speed-only precedent above — the CPU itself, not just a
+  peripheral's transfer rate, runs faster than real hardware — so it is
+  held to the same three override rules, applied to the *test harness*
+  rather than the live UI: the flag defaults off (a bare page load, and
+  `?test=1` alone, both stay real-speed), it's clearly named and commented
+  at its one call site in `app.js`, and it never reaches a real visitor —
+  there is no control on the page that sets it, and `make site` rewrites
+  it to a constant `1` in the deployed `app.js` (`strip_fast_flag.py`,
+  which fails the build unless it matches exactly once; `check_site.py`
+  then fails it if any fast path is left). Every machine keeps at
+  least one **smoke test** that deliberately omits the flag (real speed)
+  specifically to verify the "genuine, wall-clock-paced clock" contract
+  itself still holds (e.g. ibmpc-at's `tests/smoke.spec.ts` measures actual
+  cycles/real-second and asserts it lands near the real clock rate) —
+  mirrors the existing "a few tests select `Realistic` on purpose"
+  practice above, now extended to the CPU. Altair8800 and assembler6502's
+  suites aren't meaningfully CPU-bound today (their cost is device-transfer
+  and per-test browser/wasm startup, already addressed above), so neither
+  currently defines this flag — add it there only if a real CPU-bound
+  bottleneck shows up, following this same pattern.
+- **`?help`'s in-terminal manual** prints at a boosted rate (not the selected
+  terminal's real baud) so the how-to page lands in ~8 s instead of minutes on
+  an ASR-33; a keypress skips straight to the end regardless. This affects only
+  emulator UI text, never machine output from a loaded program, so it's exempt
+  from the terminal-metering rule above — but it's still a labelled shortcut,
+  not the default reading speed.
+
+If you're about to add a speed/convenience knob, stop and check it against the
+three rules above. If it can't meet them, don't add it.
+
+## Adding a new machine
+
+A request to add a system to this repo means a fully emulated machine, not a
+spec sheet or reference document. Every addition must:
+
+- **Run entirely in the browser**, compiled to WASM (the `assembler6502`/Altair 8800
+  pattern), using the existing theme system (Windows 95 / Windows XP /
+  Mid-1990s Web / Modern / Atmosphere) and CRT/terminal conventions already in place.
+- **Emulate the real CPU, memory map, and clock** at the machine's actual
+  speed — no shortcuts on instruction timing, wait states, or bus contention
+  (see "Never speed these up" above; the same opt-in-override rules apply).
+- **Emulate the real graphics adapter**, reproducing its actual screen modes,
+  timing, and artifacts — not a framebuffer approximation of what it looked
+  like.
+- **Emulate storage as real hardware**: floppy drives that accept swappable
+  disk images (like the Altair's 88-DCDD), and a hard disk that ships
+  pre-loaded with the system's original OS, exactly as the real machine left
+  the factory.
+- When the original ROM/OS is still under active copyright (e.g. IBM's AT
+  BIOS, PC-DOS) — unlike the Altair's 1975 BASIC, which the community treats
+  as freely redistributable — don't bundle or auto-fetch the genuine
+  firmware. Substitute a freely-licensed, hardware-compatible replacement (an
+  open BIOS implementation, FreeDOS in place of PC-DOS) so the public build
+  stays turnkey like every other machine here, and label the substitution
+  clearly (README, boot banner) as a compatible stand-in, not the literal
+  factory firmware — the same labelled-departure rule as any override above.
+
+Arcade cabinets (Pac-Man, Frogger, Scramble, Galaxian, Galaga, Asteroids,
+Centipede, Missile Command, Space Invaders, Lunar Rescue, Battlezone, and any new one) also follow [`.claude/arcade.md`](.claude/arcade.md).
+That includes the hwtest help screen after the diagnostic patterns (copyright /
+load-your-own copy), not only the self-test picture.
+
+`about.html` follows [`.claude/about.md`](.claude/about.md): agents
+may change navigation, header, and footer chrome only. Chris owns the body
+copy — do not edit content sections. The public page does not link it.
+Help on `super_secret.html` and on the machine pages still opens it.
+`news_info.html` is the public About & News page. It follows
+[`.claude/blog.md`](.claude/blog.md). Chris owns the entries.
+
+## Wiring a machine into the site
+
+`index.html` (the landing page) and `Makefile` (site
+staging + local preview) are shared across every machine — getting a new
+one to actually show up and run is a separate step from building the
+machine itself (see "Adding a new machine" above).
+
+**Wiring is part of the implementation, not a follow-up.** A new machine
+or cabinet isn't done until every one of these lists it, in the same
+change:
+
+- `Makefile`: `_stage` build step, `MACHINES`, and the preview
+  URL echo. The machine's own `web/Makefile` sets `STAGE` and ends with
+  `include $(SHARED)/web.mk` (`shared`, `test-install`, `stage`; files
+  beyond the base set go in `SHARED_EXTRA`, extra stage steps in
+  `STAGE_POST`). A cabinet's is just variables plus
+  `include $(SHARED)/arcade.mk`, which also copies the shared arcade
+  specs (`shared/arcade-tests/`) into its `web/tests/shared/`;
+  the cabinet supplies `web/tests/cabinet.ts` (ROM database name, hwtest
+  files, the byte that makes a user set).
+- `watch_site.py` (`make watch`): `MACHINES`, `WASM_TARGETS` and
+  `GENERATED_JS`. A C++ change under `shared/` runs every machine's wasm
+  target and make's `.d` files decide which actually rebuild, so the wasm
+  rule must end with `$(call write_deps,…)` (`shared/web.mk`).
+- CI: `<machine>-test` / `<machine>-web-test` in
+  `.github/workflows/deploy-emulator.yml` (smoke, in `build`'s `needs:`)
+  and `nightly-full.yml` (full). A cabinet's `-web-test` calls
+  `.github/workflows/arcade-web.yml` with its name.
+- `.gitignore` (build dir, wasm/js, `hwtest_roms.h`, `web/roms/`,
+  `web/shared/`, `web/tests/shared/`, user ROMs), `eslint.config.js` (generated JS
+  ignore + module global), `lint-cpp.sh`, `package.json`
+  `lint:html`.
+- The landing-page card, or for a cabinet the arcade hub card, its
+  marquee in `shared/marquee.py`, and every spec that lists
+  the hub's cards (`pacman/web/tests/home.spec.ts`).
+- This file: Playwright port list, CI job naming, Build/test bullet,
+  generated-file list, and any cabinet/CPU enumeration. Also
+  `.claude/arcade.md` for cabinets (lists + high-score RAM table).
+
+Verify with `make lint` and the new machine's own suites
+before calling it done.
+
+- **Landing-page card**: computers and Homebrew get a `.machine-card` `<a>`
+  in `index.html` (286×128 image in `assets/`, name under
+  the shot) — copy an existing one's markup exactly, just swap the `href`,
+  image, and name. Arcade cabinets go on `arcade/index.html` with
+  the same tile size plus sort metadata (`data-name`, `data-year`,
+  `data-cpu`, `data-manufacturer`, plus `data-art` and `data-marquee`,
+  the libretro-thumbnails title and Arcade Database set name for the hub's opt-in thumbnails). Cabinets are listed on the hub only;
+  `index.html` has a full-width neon Enter the Arcade portal into
+  `/arcade/`. The public page shows Doom and a coming-soon 486. Doom
+  links to `/pc486/Doom/` (locked tease, drives grayed). The 486 card
+  explains that the full PC is coming soon. `super_secret.html` is the
+  unlinked full catalog; its 486 links go to `/pc486/full/?full=…` (and
+  Ready to Play adds `&disk=…`). Without the token, `/pc486/full/`
+  redirects to the landing page. `/pc486/` redirects to `Doom/`. A later
+  public game would be another staged copy of the same HTML (e.g.
+  `/pc486/Wolf3d/`), mapping the path segment to an existing preset —
+  no second markup file. Arcade tiles are generated by `shared/marquee.py`
+  (Courier New on a starfield), not cabinet scans; the recipe is in
+  `assets/README.md`.
+- **Staging**: `Makefile`'s `site` target copies `index.html`,
+  `super_secret.html`, `about.html`, `news_info.html`, and `arcade/index.html` to `_site/`, then runs each
+  machine's own `make -C <machine>/web stage DEST=…`. That target lists
+  exactly what ships (`STAGE = index.html app.js <wasm> assets roms shared …`)
+  and copies it with `stage_web.sh`, which also drops source and
+  tooling files (`*.py`, `*.sh`, `*.md`, `*.h`, `*.cpp`) from inside those
+  folders. `check_site.py` then fails the build if any dev file
+  reached `_site/` or a page, `fetch`, worker, or manifest `file` points at
+  something that wasn't staged. For a new machine set its `STAGE` (via `shared/web.mk`), its name to
+  `MACHINES`, and a build step (wasm + roms + any pinned media) in
+  `_stage`. `make site SITE=<dir>` stages somewhere else, e.g. to compare
+  output without touching a running preview.
+- **Only `web/` ever gets staged** — the deployed site (and `make preview`,
+  which serves the exact same `_site/`) has no access to anything one level
+  up via `../`. Any asset a machine's page fetches at runtime (ROMs, disk
+  images) must be copied into that machine's own `web/roms/`, `web/disks/`
+  etc. by *that machine's* `web/Makefile` (from wherever its native-core
+  fetch/build scripts already produced it, so there's one pinned/verified
+  source, not a second copy) — see `ibmpc-at/web/Makefile`'s
+  `roms`/`hdd-image` targets for the pattern. Front-end code shared across
+  machines (theme system, pagebar/titlebar chrome, fullscreen + focus-hint,
+  site footer — see `shared/`) follows the same rule: it's copied into each
+  machine's own `web/shared/` (git-ignored, regenerated) by a `shared`
+  target in that machine's own `web/Makefile`, never referenced via `../`.
+  The terminal machines share `shared/terminal.js` (output filters) and
+  `shared/vendor/` (xterm, fonts) the same way; the cabinets' wasm
+  wrappers share `shared/arcade_frame.h`.
+  A machine's own color-token *values* and anything that genuinely differs
+  stay local to its `index.html`, layered on top via the cascade — only the
+  parts that are actually identical move to `shared/`.
+- **Local preview**: `make preview` (foreground) / `preview-bg`
+  (detached, survives the terminal) serve `_site/` on `:8000`, bound to
+  `0.0.0.0` — reachable on the LAN, not just `localhost`. Both go through
+  `serve_nocache.py`, not a bare `python3 -m http.server`: without
+  explicit `Cache-Control: no-store`, a browser can keep serving a stale
+  wasm module/app.js after `make site` re-stages fresh ones underneath it,
+  which looks exactly like a regression that isn't actually there (a real
+  bug this repo hit once already — see `ibmpc-at/IBM_PCAT_REVIEW.md`
+  §15). `preview-install` loads it as a launchd agent so it survives sleep/
+  logout/reboot; `preview-stop`/`preview-status`/`preview-uninstall` manage it.
+- **Each machine's own `web/Makefile`** serves with `serve_nocache.py` too
+  (`python3 ../../serve_nocache.py PORT .`, as does its Playwright
+  config), so the suites run against the same server as `make preview`.
+  It should default its *own* `make serve`
+  to port `8000` too (matching every machine — you only ever run one
+  machine's dev server standalone at a time) and reserve a separate,
+  *fixed* port for its own Playwright suite instead (`8100`/`8110` altair8800,
+  `8200` assembler6502, `8300`/`8310` ibmpc-at, `8400`/`8410` pc486,
+  `8500`/`8510` pacman, `8600`/`8610` frogger, `8700`/`8710` scramble,
+  `8800`/`8810` galaxian, `8900`/`8910` galaga, `9000`/`9010` asteroids,
+  `9100`/`9110` centipede, `9200`/`9210` missile, `9300`/`9310` invaders, `9400`/`9410` lunarrescue, `9500`/`9510` battlezone)
+  specifically so a hand-run `make serve` and an automated test run never
+  collide.
+- **CI job naming**: `.github/workflows/deploy-emulator.yml` gives every
+  machine a `<machine>-test` (native smoke) and, once its Playwright suite
+  exists, a `<machine>-web-test` job (`needs: <machine>-test`) — e.g.
+  `altair8800-test`/`altair8800-web-test`, …, `pc486-test`/`pc486-web-test`
+  (plus `z80-test` / `mos6502-test` / `i8080-test` for the shared CPUs).
+  Pac-Man, Frogger, Scramble, Galaxian, and Galaga native jobs `needs:
+  z80-test`; Asteroids, Centipede, Missile Command and Battlezone `needs:
+  mos6502-test`; Altair 8800, Space Invaders and Lunar Rescue `needs: i8080-test`. `lint` covers
+  the whole repo. `build` lists every one of these in its own `needs:`
+  so a red smoke job blocks deploy. Add a new machine's pair the same way.
+  Deploy CI runs **smoke only**; the full suites run in
+  `.github/workflows/nightly-full.yml` (see "Smoke vs full" below).
+- Full details: `README.md`.
+
+## Smoke vs full
+
+Deploy CI (`deploy-emulator.yml`, on push/PR to `main`) must stay fast
+enough to gate Pages deploys. The full fidelity suites are slower
+(FreeDOS boots, zexdoc, Dormann, every Playwright control). Split:
+
+| When | Workflow | What runs |
+|------|----------|-----------|
+| Push / PR | `deploy-emulator.yml` | **Smoke** (`make test-smoke`) + lint + site build/deploy |
+| Nightly 08:00 UTC + manual | `nightly-full.yml` | **Full** (`make check` / `make test`) — no deploy |
+
+**What belongs in smoke** (keep this set small):
+
+- The machine **boots** (wasm loads, or native board starts).
+- One real interaction or paint proof (echo byte, Wozmon examine, hwtest
+  ROM paints, etc.).
+- Where the suite has a sanctioned fast-test CPU override: the
+  **real wall-clock pacing** check (`tests/smoke.spec.ts` realtime /
+  `realtime: true` cases) — the contract in "Never speed these up".
+- Arcade native: the existing `TEST(Smoke, …)` board smoke only.
+- Shared Z80: the named ISA and bus-timing GoogleTest suites only (not
+  zexdoc, zexall, or SingleStepTests). Shared 8080: the `I8080*`
+  GoogleTest suites only (not the CP/M diagnostics).
+
+**What is nightly / local full** (not deploy CI):
+
+- Every other Playwright spec (controls, media, themes, home card, …).
+- Long native exercisers: the 8080 CP/M diagnostics (`make -C
+  shared/cpu i8080diag`), the Altair CP/M disk boot, Klaus
+  Dormann 6502/65C02, Frank Cringle's zexdoc and zexall, SingleStepTests/z80,
+  pc486 `pm-check` /
+  `vbe-check`, pc486 Performance panel against the shipped (non-`?perf`)
+  binary, arcade `play_test` optional ROM playthroughs.
+
+**How to run locally**
+
+- Smoke (what deploy CI runs): `make -C <machine> test-smoke`
+  and/or `make -C <machine>/web test-smoke`.
+- Full (what nightly runs): `make -C <machine> check` and
+  `make -C <machine>/web test`.
+
+**Playwright smoke file**: each machine's `web/tests/smoke.spec.ts` is
+the CI web smoke set — `make test-smoke` runs only that file. Put a new
+deploy-critical case there; put exhaustive control coverage in the other
+`*.spec.ts` files (nightly). Do not grow smoke into a second full suite.
+
+**Native smoke target**: `make test-smoke` — arcade filters `Smoke.*`;
+Altair/assembler/ibmpc-at/pc486/z80 omit the long exercisers listed above
+(`make check` still runs them for nightly/local).
+
+**Self-hosted runner** (`retro-mini`, Chris's Mac mini): only nightly jobs
+whose specs need the host to hold real guest speed (today `pc486-web-test`
+and `ibmpcat-web-test`), routed through `nightly-full.yml`'s `pick-runner`
+with an ubuntu fallback that sets `SLOW_HOST=1`. Never put smoke or any
+`deploy-emulator.yml` job on it: smoke must prove real-speed pacing on a
+stock GitHub runner, and deploy CI runs on PRs (a public repo's fork PRs
+must never reach the Mini). Gate a wall-clock-sensitive spec with
+`test.skip(!!process.env.SLOW_HOST, "…")`, never smoke.
+
+## Check tests as you change things
+
+Deploy CI runs smoke only, so a change that breaks a full spec stays
+hidden until the nightly goes red. Catching that is your job, not the
+nightly's. Treat tests as part of every change, not a step at the end.
+
+- **Find every spec the change touches, in every machine.** Shared files
+  (`index.html`, `arcade/index.html`, `shared/`, a shared chip)
+  are asserted by many suites. Before finishing, grep all `web/tests/`
+  and native `tests/` for the text, selector, port, or value you changed
+  and update every hit. A landing-page title change once left one stale
+  `home.spec.ts` out of twelve.
+- **Run the affected full specs locally, not just smoke.** Smoke passing
+  says nothing about the spec you edited around. Say plainly which
+  suites you ran and which you didn't.
+- **Prove a new test can fail.** Put the old behaviour back, watch the
+  test go red, then restore it (sleep 1 and touch before rebuilding
+  native code). A test that passes either way isn't a test.
+- **Hunt for flakes before CI does.** A new or edited Playwright spec
+  that depends on timing, frames, or counters gets a stress run:
+  `npx playwright test <spec> --repeat-each 8 --workers 6 --retries=0`.
+  Never assert on a value that can wrap or race between two reads; record
+  the event in the page instead. Deploy CI runs `retries: 2` and marks a
+  pass-on-retry "flaky" with a GitHub annotation; the nightly sets
+  `FAIL_ON_FLAKY=1` (`failOnFlakyTests`), so the same test fails it.
+- **Never use `waitForTimeout`.** Not in a spec, not in a helper, and not
+  as a `new Promise((r) => setTimeout(r, ms))` sleep. Wait on what you
+  expect: a web-first `expect(locator)` assertion, `expect.poll`, or
+  `page.waitForFunction` on page state. When the guest has to run for a
+  while, wait on emulated progress (a cycle or frame counter passing a
+  target), not wall time. Only a test that measures the wall-clock rate
+  itself (the real-speed smoke) waits on `performance.now()` inside
+  `waitForFunction`. `make lint` fails on either sleep.
+- **CI is Linux, you're on macOS.** Headless Chromium behaves differently
+  there (Linux grants pointer lock on click, for one). Pin any browser
+  behaviour a test depends on with a stub instead of trusting the local
+  default.
+- **When the nightly is red, read it.** `gh run list --workflow
+  nightly-full.yml` and `gh run view --job <id> --log-failed`. Fix the
+  cause, including flakes marked "flaky", not just the hard failures.
+
+## Always delegate to a cheaper model when the task allows it
+
+**This is the default, not a suggestion, and it does not need asking about
+each time.** Before doing a well-scoped subtask yourself, hand it to a
+subagent: as Sonnet, delegate to Haiku; as Opus, delegate to Sonnet or
+Haiku, whichever fits. Delegate in parallel when subtasks are independent,
+and in the background so work continues while they run. Good
+candidates: running a fixed build/test command and reporting results,
+fetching and checksum-verifying a pinned asset, writing a test that
+mechanically follows an established pattern in the same file, a rename or
+mechanical refactor with an exact, fully-specified shape. Keep for yourself
+anything that leans on context you're already holding that a fresh agent
+would have to re-derive (a debugging session mid-diagnosis, a decision
+that needs the citation/period-accuracy discipline this repo runs on,
+anything where getting it wrong is expensive to catch later) — re-deriving
+that context usually costs more than the delegation saves. When genuinely
+unsure whether a task is a good candidate, don't guess — do it yourself
+rather than risk a wrong answer from a smaller model on something that
+matters.
+
+**Delegating does not delegate responsibility for being right.** A
+subagent's report is a claim, not a verified result. Spot-check anything
+load-bearing before repeating it — run the test yourself, `ls` the file it
+says is missing, read the diff it says it made. Subagents in this repo have
+confidently reported a build blocker that wasn't real and "matching" style
+that didn't match. Correct what's wrong, say plainly what you verified
+versus what you're relaying, and never pass a subagent's summary to Chris as
+if it were a fact you'd checked.
+
+## Conventions
+
+- `*.bin` and `*.dsk` are git-ignored — binary media (BASIC images, disk images)
+  are fetched at build time by the `fetch-*.sh` scripts, not committed.
+- Commit messages: no AI attribution, no `Co-Authored-By` trailer.
+- **One working copy.** Always work in `/Users/chrisgall/code/oac-emu` (the git
+  root). Never `git worktree add`, never create sibling folders
+  (`oac-emu-about`, `oac-emu-arcade-hiscore`, …). Point Cursor at that path.
+- **Ask where new work goes.** Default is `main`. Before starting, ask Chris
+  whether to stay on `main` or work on a branch — do not create a branch
+  unless he says so. Do not open pull requests unless asked.
+
+## Visitor-facing copy
+
+UI text on machine pages (status lines, boot notices, panel blurbs, tooltips,
+footers, button help) is Chris's voice, not generic "AI speak".
+`about.html` is the reference for tone.
+
+- **Direct and conversational.** Short sentences. Contractions are fine.
+- **Prefer periods and commas** over em dashes and stacked hyphens (`--` /
+  `—`). Split an aside into its own sentence instead of bolting it on with a
+  dash.
+- **No marketing filler.** Skip phrases like "get up and running", "seamlessly",
+  or padded parenthetical stacks. Say what the control does.
+- When rewriting a block of existing copy, **propose the text and wait for
+  approval** before editing (same one-block-at-a-time habit as the pc486
+  page pass). `about.html` body copy stays off-limits per
+  [`.claude/about.md`](.claude/about.md). `news_info.html` entries stay
+  off-limits per [`.claude/blog.md`](.claude/blog.md).
+
+## Code comments
+
+Comments should read like a terse human engineer wrote them. Most code gets
+none. The default is to write no comment at all.
+
+- **Only for the weird stuff.** A hardware quirk, a magic number, an ordering
+  constraint, a browser workaround, a surprising branch. If the code says it,
+  don't. Never comment a constant block, a getter, a loop, or a test whose
+  name already says what it checks.
+- **One line.** Two is the ceiling. Fragments are fine:
+  `// active-low (MITS 88-DCDD manual)`. Longer explanations go in the
+  machine's `*_REVIEW.md` or the commit message, not the code.
+- **Citations stay, compressed.** Source citations for hardware quirks
+  (a schematic, a manual, a ROM disassembly) are the one thing never deleted. Keep
+  the source name and the single fact, drop the essay.
+- **Present tense, present state.** A comment describes what the code does
+  right now. Never what it used to do, what changed, or what it might do
+  later. No "previously", "now", "used to", "we changed", "fixed a bug
+  where", "the old version", "TODO: will", "eventually", "for now",
+  milestone numbers, or how the code came to be. History goes in the commit
+  message; plans go in the review doc.
+- **No AI tells.** No "Note:", "Importantly", "worth stating plainly",
+  "deliberate, not a bug", "documented, not a gap", no defending the design,
+  no em-dash or `--` asides, no parenthetical stacks, no "see X's own
+  comment" cross-references. Never mention CLAUDE.md, the realism rules,
+  agents, or sessions in a comment.
+- **Docstrings too.** Python docstrings and file header banners follow the
+  same rules. A file banner, if any, is one line naming the chip/board and
+  its reference.
+- **No HTML comments.** Do not add `<!-- -->` in HTML, including inline
+  SVG. If a constraint would be lost without the comment, write it in
+  this file.
+
+## Formatting
+
+Match the file you are editing. New code looks like the code next to it.
+Do not reformat a file, or a neighboring function, while changing something
+else. There is no formatter in the repo (no Prettier, no clang-format).
+`make lint` checks bugs, not layout.
+
+- **Spaces.** 4 spaces in C++. 2 spaces in JavaScript, TypeScript, HTML,
+  and CSS. Makefiles keep real tabs. No trailing whitespace.
+- **Braces.** Opening brace on the same line for functions, classes, and
+  control statements. `else` stays on the same line as the closing brace.
+- **Line length.** Wrap prose comments near 80 columns. Leave opcode
+  tables, flag lists, and other column-aligned data on their existing
+  columns. A long call in `app.js` or a Playwright test stays on one line
+  when a break would obscure it.
+- **Names, C++.** Types `PascalCase`, functions and methods `snake_case`,
+  data members with a trailing underscore (`bus_`). Compile-time constants
+  are `kCamel`, or `constexpr` opcode names in `UPPER_SNAKE` when that file
+  already uses them. Enum flag bits are `FLAG_*`. `*` binds to the type
+  (`uint8_t* p`).
+- **Includes, C++.** The matching header first, then other project headers,
+  then the standard library, with a blank line between groups. A test
+  includes `<gtest/gtest.h>` before the project header.
+- **Names, JavaScript.** `const` and `let`, double quotes, semicolons.
+  Page entry points that other scripts call (`initThemePicker`,
+  `initFullscreen`, `initFocusHint`) stay `function` declarations so they
+  are globals on the page. Use `===`.
+- **Theme bootstrap.** `shared/theme-init.js` and the one-line copy inlined
+  in `index.html`, `super_secret.html`, `about.html`, `news_info.html`, and `arcade/index.html` stay in sync and
+  stay compact (`var`, `==`, a single `catch`). That snippet runs before
+  anything else paints.
+- **HTML.** Lowercase tags, double-quoted attributes. Keep `<!DOCTYPE html>`
+  or `<!doctype html>` as the page you are editing already has it. Head
+  metadata and stylesheets sit at column 0. Body content indents 2 spaces.
+  Decorative images keep `alt=""`. Inline `<style>` and `<script>` stay in
+  the page. No HTML comments (`<!-- -->`), including inside inline SVG.
+  The 6502 Assembler board diagram's `viewBox`
+  (`65.85 20.13 148.47 103.25`) is wider than the PCB outline plus its
+  4 mm margin so J2, the edge-mounted DB9, is not clipped — its shield
+  reaches absolute x=212.32.
+- **CSS.** Custom properties on `:root` and `[data-theme]`. A short rule
+  may stay on one line. A rule with several declarations gets one
+  declaration per line.
+- **Section breaks.** When a file already uses them: `// --- name ---` in
+  C++ and `// ---- name ----` in JavaScript. Keep the column alignment in
+  any table you are editing.
+- **TypeScript tests.** Same 2-space, double-quote, semicolon style as the
+  JavaScript. `import { test, expect } from "@playwright/test"`.
+
+## Build / test
+
+Every machine follows the same shape: a native GoogleTest suite over the
+C++ core, a WebAssembly front end, and a Playwright suite driving that real
+front end in a browser. `home.spec.ts` in each machine's own Playwright
+suite covers the shared `index.html` landing page (theme
+persistence, that machine's own `.machine-card` link) — not a fourth,
+separate suite.
+
+- **Altair 8800** (`altair8800/`): `make -C altair8800 test`
+  (GoogleTest), `make -C altair8800/web` (wasm via emscripten),
+  `make -C altair8800/web test` (Playwright; needs Node +
+  `npx playwright install chromium`). Coverage: `make -C
+  altair8800/web coverage` (app.js, V8/monocart), `make -C
+  altair8800 coverage` (disk88/cassette, llvm-cov). The 8080 core
+  is `shared/cpu/cpu_i8080` (shared with Space Invaders); its
+  GoogleTest suite and the 8080PRE/TST8080/CPUTEST/8080EXM diagnostics run
+  from `make -C shared/cpu test-smoke-i8080` / `i8080diag`, coverage
+  from `coverage-i8080`.
+- **6502 Assembler** (`assembler6502/`): `make -C
+  assembler6502 check` (GoogleTest + Klaus Dormann 6502/65C02
+  functional suites; needs `cc65` on PATH to build the real ROM from
+  `assembler6502/firmware/` source), `make -C assembler6502/web wasm roms`,
+  `make -C assembler6502/web test` (Playwright).
+- **IBM PC/AT** (`ibmpc-at/`): `make -C ibmpc-at check`
+  (GoogleTest over the 80286 core + AT chipset, including the
+  `shared/pc/` chips it shares with pc486), `make -C
+  ibmpc-at/web ibmpcat.js roms hdd-image library-images preset-images` (the shipped FreeDOS HDD
+  image is a real, slow installer run the first time — see
+  `IBM_PCAT_REVIEW.md` §11 — cached after that; `preset-images` builds the
+  `?disk=keen1` Ready to Play C:, §58), `make -C
+  ibmpc-at/web test` (Playwright; `make test-install` once for
+  `npm ci` + Chromium).
+- **Pac-Man Arcade** (`pacman/`): `make -C pacman check`
+  (GoogleTest over the tilemap/sprite video + Namco WSG + machine, including
+  `Smoke.HwtestBootsSignatureWatchdogAndPaints`), `make -C
+  pacman/web wasm roms` (the generated hardware self-test ROM — a
+  from-scratch assembler program, not Namco's — is built the same step),
+  `make -C pacman/web test-install test` (Playwright, including
+  `smoke.spec.ts`). Ships only that self-test ROM; a real Midway `pacman` ROM
+  set is opt-in and browser-local (IndexedDB) — see `PACMAN_REVIEW.md`.
+  The Z80 core is `shared/cpu/` (`make -C shared/cpu check`
+  runs the named GoogleTest suite, Frank Cringle's zexdoc and zexall, and
+  SingleStepTests/z80's per-T-state bus traces; see `Z80_REVIEW.md`).
+- **Frogger Arcade** (`frogger/`): `make -C frogger check`
+  (GoogleTest over the dual Z80 + Galaxian video + AY-3-8910 + two i8255s,
+  including the board smoke), `make -C frogger/web wasm roms`,
+  `make -C frogger/web test-install test` (Playwright). Ships a
+  from-scratch self-test ROM; a real Konami/Sega `frogger` set is opt-in
+  and browser-local — see `FROGGER_REVIEW.md`.
+- **Scramble Arcade** (`scramble/`): `make -C scramble check`
+  (GoogleTest over the dual Z80 + Galaxian video + two AY-3-8910s + PAL 6J,
+  including the board smoke),
+  `make -C scramble/web wasm roms`, `make -C scramble/web
+  test-install test` (Playwright). Ships a from-scratch self-test ROM; a
+  real Konami `scramble` set is opt-in and browser-local — see
+  `SCRAMBLE_REVIEW.md`. Shared chips live in `shared/galaxian/`.
+- **Galaxian Arcade** (`galaxian/`): `make -C galaxian check`
+  (GoogleTest over the single Z80 + Galaxian video + discrete sound, including
+  the board smoke), `make -C galaxian/web wasm roms`, `make -C
+  galaxian/web test-install test` (Playwright). Ships a from-scratch
+  self-test ROM; a real Namco `galaxian` set is opt-in and browser-local —
+  see `GALAXIAN_REVIEW.md`.
+- **Galaga Arcade** (`galaga/`): `make -C galaga check`
+  (GoogleTest over three Z80s + Namco video + the shared wavetable sound
+  chip + MB8843/MB8844, including the board smoke), `make -C
+  galaga/web wasm roms`, `make -C galaga/web test-install
+  test` (Playwright). Ships a from-scratch self-test ROM; a real Midway
+  `galagamw` set is opt-in and browser-local — see `GALAGA_REVIEW.md`.
+  The wavetable generator lives in `shared/namco/`.
+- **Asteroids Arcade** (`asteroids/`): `make -C asteroids
+  check` (GoogleTest over the NMOS 6502 + DVG + machine, including the
+  board smoke), `make -C asteroids/web wasm roms`, `make -C
+  asteroids/web test-install test` (Playwright). Ships a
+  from-scratch self-test ROM; a real Atari `asteroid` set is opt-in and
+  browser-local — see `ASTEROIDS_REVIEW.md`. The NMOS 6502 core and DVG
+  live in `shared/cpu/` and `shared/atari/`.
+- **Centipede Arcade** (`centipede/`): `make -C centipede
+  check` (GoogleTest over the NMOS 6502 + POKEY + machine, including the
+  board smoke), `make -C centipede/web wasm roms`, `make -C
+  centipede/web test-install test` (Playwright). Ships a
+  from-scratch self-test ROM; a real Atari `centiped` set is opt-in and
+  browser-local — see `CENTIPEDE_REVIEW.md`. The NMOS 6502 core and POKEY
+  live in `shared/cpu/` and `shared/atari/`.
+- **Missile Command Arcade** (`missile/`): `make -C missile
+  check` (GoogleTest over the NMOS 6502 + POKEY + machine, including the
+  board smoke), `make -C missile/web wasm roms`, `make -C
+  missile/web test-install test` (Playwright). Ships a
+  from-scratch self-test ROM; a real Atari `missile` set is opt-in and
+  browser-local — see `MISSILE_REVIEW.md`. The NMOS 6502 core and POKEY
+  live in `shared/cpu/` and `shared/atari/`.
+- **Space Invaders Arcade** (`invaders/`): `make -C invaders
+  check` (GoogleTest over the Midway 8080 board, MB14241 shifter, beam-timed
+  RST 1/RST 2 interrupts, and the discrete + SN76477 sound, including the
+  board smoke), `make -C invaders/web wasm roms`, `make -C
+  invaders/web test-install test` (Playwright). Ships a from-scratch
+  self-test ROM; a real Midway `invaders` set is opt-in and browser-local —
+  see `INVADERS_REVIEW.md`. The 8080 core is `shared/cpu/cpu_i8080`,
+  shared with the Altair. The board and sound board live in
+  `shared/mw8080/`, shared with Lunar Rescue; their tests build in
+  invaders' `make check`.
+- **Lunar Rescue Arcade** (`lunarrescue/`): `make -C
+  lunarrescue check` (GoogleTest over the colour PROM, the red-screen
+  latch, the Taito PV sound wiring and the board smoke), `make -C
+  lunarrescue/web wasm roms`, `make -C lunarrescue/web
+  test-install test` (Playwright). Ships a from-scratch self-test ROM and
+  colour PROM; a real Taito `lrescue` set is opt-in and browser-local — see
+  `LUNARRESCUE_REVIEW.md`.
+- **Battlezone Arcade** (`battlezone/`): `make -C battlezone
+  check` (GoogleTest over the AVG, the Math Box 2901s and sequencer, the
+  discrete sound board and the machine, including the board smoke and an
+  optional `Play.*` run against a local `bzone` dump in `roms/user/`),
+  `make -C battlezone/web wasm roms`, `make -C
+  battlezone/web test-install test` (Playwright). Ships a
+  from-scratch self-test ROM with its own Math Box microcode; a real Atari
+  `bzone` set is opt-in and browser-local — see `BATTLEZONE_REVIEW.md`. The
+  AVG and Math Box live in `shared/atari/` beside the DVG and POKEY.
+- **486 DX2-66 Gaming PC** (`pc486/`): `make -C pc486 check`
+  (GoogleTest over the 80486 core, chipset, EGA/VGA+VBE, WD1003, ATAPI
+  CD-ROM, Sound Blaster 16 and its OPL3, plus the `shared/pc/`
+  PIT, PIC, DMA, RTC, speaker and floppy controller), `make -C pc486/web
+  pc486.js roms hdd-image driver-images library-images
+  preset-images`, `make -C
+  pc486/web test-install test` (Playwright). The FreeDOS HDD image
+  is a real, slow installer run the first time and cached after that (see
+  `PC486_REVIEW.md` §11); the CuteMouse driver floppy the Drivers panel
+  offers is built from that image and needs `mtools` on PATH. `make test`
+  also uses mtools to build `legacy-hdd-fixture`, old-format 504MB C:
+  images (git-ignored, under `web/tests/media/`) for the conversion tests in
+  `hdd.spec.ts` (see `PC486_REVIEW.md` §37).
+  `library-images` (both PCs) builds the Disk library floppies from
+  `disks/library.json` via `shared/dos-library/` (mtools, plus
+  pc486's pinned FreeDOS LiveCD); see that folder's README.
+  `preset-images` builds the `?disk=doom`, `?disk=wolf3d`, `?disk=duke3d`,
+  `?disk=rott`, `?disk=pinball` and `?disk=tyrian` C:s behind the landing page's Ready to Play cards:
+  each game's real installer (or, for Epic Pinball and Tyrian, its own SETUP) run headless
+  onto a bare FreeDOS, then DOOM and Wolf3D run once to save their widest
+  view and Duke's, ROTT's and Epic Pinball's SETUPs save Sound Blaster sound and music
+  (`PC486_REVIEW.md` §50).
+  `make -C pc486/web pc486-perf.js` builds a *second* wasm with the
+  emulator's own performance counters compiled in (`PC486_PERF`), which
+  `?perf` loads for the Performance panel's Tier 2 — the shipped binary
+  carries none of them, since they sit on the hottest paths there are.
+  Deploy CI builds both binaries; nightly also re-runs the Performance
+  panel against the shipped (non-`?perf`) binary — see `PC486_REVIEW.md` §23.
+- Shared chips keep their tests beside them (`shared/pc/tests/`,
+  `shared/galaxian/tests/`, `shared/atari/tests/`, `shared/namco/tests/`),
+  and every machine that uses a chip builds its tests in its own `make
+  check`. A new shared chip gets a `tests/` folder the same way.
+- Front ends live in each machine's own `web/`; generated wasm/ROM/media
+  files (`retro8080.js`/`.wasm`, `cgoac6502.js`/`.wasm`/`roms/*.bin`,
+  `ibmpcat.js`/`.wasm`, `pacman.js`/`.wasm`, `frogger.js`/`.wasm`,
+  `scramble.js`/`.wasm`, `galaxian.js`/`.wasm`, `galaga.js`/`.wasm`,
+  `asteroids.js`/`.wasm`, `centipede.js`/`.wasm`, `missile.js`/`.wasm`,
+  `invaders.js`/`.wasm`, `lunarrescue.js`/`.wasm`, `battlezone.js`/`.wasm`, disk/tape
+  images) are regenerated by CI, not committed — see each machine's `.gitignore`
+  entries.
+- **Every control, device, terminal behaviour, and preset has an automated
+  test.** Each machine's `web/tests/` (Playwright) covers its front end;
+  its own `tests/` (GoogleTest) covers the core. A change that adds or
+  alters behaviour adds or updates a test in the same commit. Deploy CI
+  runs **smoke** only and **does not deploy a red build**; the full suites
+  run nightly (see "Smoke vs full" above). Coverage targets exist for
+  altair8800, the five Z80 arcades, invaders, lunarrescue and battlezone (`make -C <arcade>
+  coverage`, board code only); none of them gate CI. Use `/* v8 ignore next */` only
+  for genuinely unreachable defensive paths, never to hide an untested
+  feature.
+- The **deployed site** is staged in CI: `index.html` and
+  `super_secret.html` → `_site/`,
+  each machine's `web/` → `_site/<machine>/` (dev-only files stripped —
+  see "Wiring a machine into the site" above). Preview locally the same
+  way (see `README.md`).

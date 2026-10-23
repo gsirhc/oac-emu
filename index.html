@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en" data-no-help>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Welcome to OAC Emulators</title>
+<link rel="icon" href="assets/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="stylesheet" href="shared/theme.css">
+<link rel="stylesheet" href="shared/pagebar.css">
+<link rel="stylesheet" href="shared/footer.css">
+<link rel="stylesheet" href="shared/catalog.css">
+<style>
+  /* Catalog shell, tiles, and arcade portal live in shared/catalog.css.
+     Local: 2-col grid, welcome banner, contact, soon-card. */
+  :root { --catalog-cols: 2; }
+  .machines { margin-top: 22px; }
+
+  .welcome-banner {
+    margin: 0 -26px 20px;
+    padding: 12px 26px;
+    background: var(--titlebar-bg);
+    color: var(--titlebar-fg);
+    text-align: center;
+    font: bold 16px/1.45 Arial, Helvetica, sans-serif;
+  }
+  .welcome-banner a,
+  .welcome-banner a:visited { color: inherit; }
+  :root[data-theme="win"] .welcome-banner {
+    background: #000080;
+  }
+  :root[data-theme="web94"] .welcome-banner {
+    background: #000080;
+    color: #ffffff;
+    font-family: "Times New Roman", Times, serif;
+    font-size: 18px;
+  }
+  :root[data-theme="modern"] .welcome-banner {
+    margin-left: 0;
+    margin-right: 0;
+    border: var(--rule);
+    border-radius: 10px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  :root[data-theme="aurora"] .welcome-banner {
+    margin-left: 0;
+    margin-right: 0;
+    border-radius: 10px;
+    font-family: Inter, Helvetica, Arial, sans-serif;
+  }
+  #contact {
+    margin: 28px 0 0;
+    padding-top: 16px;
+    border-top: var(--rule);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--muted);
+  }
+  #contact + p {
+    margin: 6px 0 0;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--muted);
+  }
+
+  .machine-card.is-soon,
+  .arcade-portal.is-soon { pointer-events: none; }
+  .machine-card.is-soon:hover,
+  :root[data-theme="modern"] .machine-card.is-soon:hover,
+  :root[data-theme="aurora"] .machine-card.is-soon:hover,
+  :root:not([data-theme="modern"]) .machine-card.is-soon:active,
+  .arcade-portal.is-soon:hover,
+  :root[data-theme="modern"] .arcade-portal.is-soon:hover,
+  :root[data-theme="aurora"] .arcade-portal.is-soon:hover {
+    transform: none;
+    box-shadow: none;
+  }
+  .arcade-portal.is-soon:hover .portal-neon,
+  .arcade-portal.is-soon:hover .portal-open { filter: none; }
+
+  button.machine-card {
+    font: inherit; cursor: pointer; width: 100%; text-align: inherit;
+  }
+  .shot-frame { position: relative; display: block; overflow: hidden; line-height: 0; }
+  .shot-frame .shot { filter: brightness(.45); }
+  .soon-banner {
+    position: absolute; left: -18%; right: -18%; top: 50%;
+    transform: translateY(-50%) rotate(-18deg);
+    background: #9a1c1c; color: #fff; text-align: center;
+    font: 700 15px/1.2 Arial, Helvetica, sans-serif;
+    letter-spacing: .14em; text-transform: uppercase;
+    padding: 6px 0; box-shadow: 0 2px 8px rgba(0,0,0,.45);
+  }
+  #pc486SoonDialog { max-width: 440px; }
+  #pc486SoonDialog p { margin: 0 0 14px; font-size: 14px; line-height: 1.5; color: var(--dim); }
+</style>
+</head>
+<body>
+<script>try{var r=document.documentElement,t=localStorage.getItem("retro8080.theme")||"win",m=localStorage.getItem("retro8080.mode");if(t=="ai"||t=="systemaurora"){t="aurora";if(!m)m="system";}else if(t=="moderndark"){t="modern";if(!m)m="dark";}else if(t=="system"){t="modern";if(!m)m="system";}if(t!="win"&&t!="winxp"&&t!="web94"&&t!="modern"&&t!="aurora")t="win";if(m!="light"&&m!="dark"&&m!="system")m="light";var dark=m=="dark"||(m=="system"&&matchMedia("(prefers-color-scheme: dark)").matches);r.dataset.theme=t;if(dark)r.dataset.mode="dark";else delete r.dataset.mode;}catch(e){}</script>
+
+<div class="page">
+  <header class="pagebar">
+    <span class="pb-title"><img class="pb-icon" src="assets/favicon-32.png" alt="" aria-hidden="true"> OAC Emulators</span>
+    <span class="pb-tools">
+      <label class="pb-theme">Theme
+        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Windows 95</button>
+      </label>
+      <span class="pb-winbtns"><button type="button" class="pb-min" title="Minimize" aria-label="Minimize" aria-pressed="false">_</button><button type="button" class="pb-max" title="Maximize" aria-label="Maximize" disabled>&#9633;</button><span class="pb-close is-disabled" aria-disabled="true" title="Close unavailable">&times;</span></span>
+    </span>
+  </header>
+
+  <div class="inner">
+    <header>
+      <div class="brand">
+        <img class="site-icon" src="assets/icon-512.png" width="56" height="56" decoding="async" alt="">
+        <div class="brand-text">
+          <h1>Welcome to OAC Emulators</h1>
+          <p class="tagline">Vintage machines, running entirely in your browser.</p>
+        </div>
+      </div>
+    </header>
+
+    <p class="welcome-banner">We are just starting out and are currently 
+      working on several emulators.  
+      <br/>Here is a preview. Enjoy! Please read <a href="news_info.html">News & Info</a> for more details.
+    </p>
+
+    <div class="machines">
+      <a class="machine-card" href="pc486/Doom/">
+        <img class="shot" src="assets/doom-e1m1.jpg" width="286" height="128"
+             decoding="async" alt="Shareware DOOM, looking out a window in E1M1, on the 486 DX2-66">
+        <span class="name">Doom</span>
+        <span class="meta">486 DX2-66 Gaming PC</span>
+      </a>
+      <button type="button" class="machine-card" id="pc486Soon">
+        <span class="shot-frame">
+          <img class="shot" src="assets/pc486-panel.jpg" width="286" height="128"
+               decoding="async" alt="">
+          <span class="soon-banner" aria-hidden="true">Coming soon</span>
+        </span>
+        <span class="name">486 DX2-66 Gaming PC</span>
+        <span class="meta">Coming soon</span>
+      </button>
+    </div>
+
+
+    <dialog id="pc486SoonDialog">
+      <h2>Coming Soon!</h2>
+      <p>A 66 MHz 486 with VGA, Sound Blaster, a hard disk, a floppy drive, and a CD-ROM. The full PC will be available soon where you have full control over your system just like the real thing.</p>
+      <div class="row"><button type="button" id="pc486SoonOk">OK</button></div>
+    </dialog>
+  </div>
+</div>
+
+<script src="shared/theme-picker.js"></script>
+<script>initThemePicker();</script>
+<script src="shared/winbtns.js"></script>
+<script>
+document.getElementById("pc486Soon").addEventListener("click", function () {
+  document.getElementById("pc486SoonDialog").showModal();
+});
+document.getElementById("pc486SoonOk").addEventListener("click", function () {
+  document.getElementById("pc486SoonDialog").close();
+});
+</script>
+<script src="shared/footer.js"></script>
+</body>
+</html>

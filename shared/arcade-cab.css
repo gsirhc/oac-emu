@@ -1,0 +1,309 @@
+/* Shared arcade cabinet fascia: metal plate, 1P/2P start buttons, coin door.
+   Each machine sets color tokens on `.cab-face`. */
+
+/* Fullscreen drops the plastic frame so the portrait picture uses the full
+   viewport height. Arcade only; terminals keep the shared frame. */
+#bezel:fullscreen, #bezel:-webkit-full-screen {
+  padding: 0;
+  border: none;
+}
+#bezel:fullscreen .crt-overlay, #bezel:-webkit-full-screen .crt-overlay { inset: 0; }
+#bezel:fullscreen .bezel-controls, #bezel:-webkit-full-screen .bezel-controls {
+  top: 6px;
+  right: 8px;
+}
+
+.cab-face {
+  margin: 16px auto 0;
+  width: max-content;
+  max-width: 100%;
+  background: var(--cab-face-bg);
+  border-radius: 6px;
+  padding: 16px 18px 18px;
+  box-shadow: var(--cab-face-inset);
+}
+
+.cab-starts {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 48px;
+  margin: 0 0 14px;
+}
+
+/* Photo fills a circular clip; slight zoom hides the studio backdrop. */
+.cab-start {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 80px;
+  height: 80px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  color: inherit;
+  background: #c8c4bc;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+  display: block;
+  touch-action: manipulation;
+  transition: box-shadow .08s ease;
+}
+
+.cab-start-img {
+  display: block;
+  width: 118%;
+  height: 118%;
+  margin: -9%;
+  object-fit: cover;
+  pointer-events: none;
+  user-select: none;
+  transition: transform .08s ease, filter .08s ease;
+}
+
+.cab-start:active,
+.cab-start.pressed {
+  box-shadow: 0 0 1px rgba(0, 0, 0, .3);
+}
+
+.cab-start:active .cab-start-img,
+.cab-start.pressed .cab-start-img {
+  transform: scale(.97);
+  filter: brightness(.92);
+}
+
+.coin-door {
+  background: linear-gradient(180deg, #3f3a36 0%, #2c2825 50%, #1c1a18 100%);
+  border-radius: 4px;
+  padding: 20px 24px;
+  box-shadow: inset 0 0 0 2px #534e49, inset 0 2px 4px rgba(255, 255, 255, .08),
+              inset 0 -6px 12px rgba(0, 0, 0, .55), 0 2px 0 #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+}
+
+.coin-door .cd-mech {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Operator-style service pushbutton: mute lives on the coin door. */
+.cd-mute {
+  appearance: none;
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  margin: 0 4px;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  flex: 0 0 auto;
+  touch-action: manipulation;
+  background:
+    radial-gradient(circle at 35% 28%, #6a6660 0%, #3a3834 42%, #1a1917 100%);
+  box-shadow:
+    0 0 0 2px #0a0a0a,
+    0 0 0 4px #8a8680,
+    0 0 0 5px #2a2824,
+    inset 0 2px 3px rgba(255, 255, 255, .28),
+    inset 0 -3px 5px rgba(0, 0, 0, .65),
+    0 2px 4px rgba(0, 0, 0, .45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: box-shadow .12s ease;
+}
+
+.cd-mute:active {
+  box-shadow:
+    0 0 0 2px #0a0a0a,
+    0 0 0 4px #8a8680,
+    0 0 0 5px #2a2824,
+    inset 0 3px 6px rgba(0, 0, 0, .75),
+    0 1px 2px rgba(0, 0, 0, .35);
+}
+
+.cd-mute-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+  pointer-events: none;
+}
+
+.cd-mute-icon .cd-mute-body {
+  fill: #c8c4bc;
+}
+
+.cd-mute-icon .cd-mute-waves {
+  fill: none;
+  stroke: #c8c4bc;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.cd-mute-icon .cd-mute-slash {
+  fill: none;
+  stroke: #ff7070;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  opacity: 0;
+}
+
+.cd-mute[aria-pressed="true"] {
+  box-shadow:
+    0 0 0 2px #0a0a0a,
+    0 0 0 4px #8a8680,
+    0 0 0 5px #2a2824,
+    inset 0 2px 3px rgba(255, 255, 255, .2),
+    inset 0 -3px 5px rgba(0, 0, 0, .65),
+    0 0 10px 2px rgba(255, 60, 60, .55),
+    0 2px 4px rgba(0, 0, 0, .45);
+}
+
+.cd-mute[aria-pressed="true"] .cd-mute-body {
+  fill: #ffe0e0;
+}
+
+.cd-mute[aria-pressed="true"] .cd-mute-waves {
+  opacity: 0;
+}
+
+.cd-mute[aria-pressed="true"] .cd-mute-slash {
+  opacity: 1;
+}
+
+.cd-lamp {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 44px;
+  border-radius: 4px;
+  flex: 0 0 auto;
+  background: #140808;
+  color: #ffc8c8;
+  font: 700 22px Arial, Helvetica, sans-serif;
+  letter-spacing: .02em;
+  box-shadow: inset 0 0 0 1px #000, inset 0 3px 6px rgba(0, 0, 0, .85),
+              0 1px 0 rgba(255, 255, 255, .12);
+  transition: color .12s, box-shadow .12s;
+}
+
+.coin-door.coined .cd-lamp,
+.cd-mech:active .cd-lamp {
+  color: #fff;
+  box-shadow: inset 0 0 0 1px #000, 0 0 12px 3px rgba(255, 80, 80, .55);
+}
+
+.cd-throat {
+  width: 88px;
+  height: 44px;
+  border-radius: 4px;
+  flex: 0 0 auto;
+  background: linear-gradient(#0a0a0a, #2a2a2a 45%, #0a0a0a);
+  box-shadow: inset 0 0 0 1px #000, inset 0 4px 8px rgba(0, 0, 0, .9);
+  position: relative;
+}
+
+.cd-throat::after {
+  content: "";
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  top: 50%;
+  height: 6px;
+  transform: translateY(-50%);
+  background: #000;
+  border-radius: 2px;
+  box-shadow: 0 1px 0 #3a3a3a;
+}
+
+/* Touch control panel: joystick left, buttons right, as on the cabinet. Phones and tablets only. */
+.touch-controls[hidden] { display: none; }
+.touch-panel {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-around; gap: 14px 18px;
+  margin: 0 0 16px;
+  user-select: none; -webkit-user-select: none;
+}
+.touch-group { display: flex; align-items: center; gap: 18px; }
+
+.touch-stick {
+  width: 132px; height: 132px; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: none;
+}
+.touch-gate {
+  position: relative; width: 112px; height: 112px; border-radius: 50%;
+  background: radial-gradient(circle at 50% 45%, #2a2a2a 0%, #111 70%);
+  box-shadow: inset 0 0 0 3px #3a3a3a, inset 0 4px 10px rgba(0,0,0,.8), 0 2px 3px rgba(0,0,0,.4);
+  display: flex; align-items: center; justify-content: center;
+}
+.touch-stick[data-ways="2way"] .touch-gate { height: 64px; border-radius: 32px; }
+.touch-stick[data-ways="4way"] .touch-gate { border-radius: 18px; }
+.touch-ball {
+  width: 54px; height: 54px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ff8a8a 0%, #d81b1b 45%, #7a0909 100%);
+  box-shadow: 0 4px 8px rgba(0,0,0,.6), inset 0 -3px 6px rgba(0,0,0,.35);
+  transition: transform .05s linear;
+  pointer-events: none;
+}
+
+.touch-btn {
+  appearance: none; -webkit-appearance: none;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 0; margin: 0; border: 0; background: none; color: inherit;
+  cursor: pointer; touch-action: none; -webkit-tap-highlight-color: transparent;
+}
+.touch-btn-cap {
+  width: 66px; height: 66px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff1a8 0%, #f2c200 45%, #9a7a00 100%);
+  box-shadow: 0 0 0 4px #1a1a1a, 0 5px 0 4px #000, 0 7px 10px 4px rgba(0,0,0,.4);
+  transition: transform .05s ease, box-shadow .05s ease;
+}
+.touch-btn.red .touch-btn-cap { background: radial-gradient(circle at 35% 30%, #ff9a9a 0%, #e01f1f 45%, #7a0909 100%); }
+.touch-btn.white .touch-btn-cap { background: radial-gradient(circle at 35% 30%, #ffffff 0%, #e2e2e2 45%, #8a8a8a 100%); }
+.touch-btn.pressed .touch-btn-cap {
+  transform: translateY(4px);
+  box-shadow: 0 0 0 4px #1a1a1a, 0 1px 0 4px #000, 0 2px 4px 4px rgba(0,0,0,.4);
+}
+.touch-btn-label {
+  font: 700 11px Arial, Helvetica, sans-serif; letter-spacing: .06em; text-transform: uppercase;
+  color: #f2f0ea; background: rgba(0, 0, 0, .6); padding: 1px 6px; border-radius: 3px;
+}
+
+/* Portrait phone: the monitor fills the width at its real aspect, controls underneath. */
+.arcade-touch .inner { padding: 8px; }
+.arcade-touch .tagline, .arcade-touch hr.rule, .arcade-touch .keys { display: none; }
+.arcade-touch #displayCard { padding: 8px; }
+@media (orientation: portrait) {
+  .arcade-touch .bezel { width: 100%; }
+}
+.arcade-touch .cab-face { width: 100%; box-sizing: border-box; padding: 14px 12px 14px; }
+.arcade-touch .focus-hint { display: none; }
+@media (max-width: 420px) {
+  .arcade-touch .touch-stick { width: 116px; height: 116px; }
+  .arcade-touch .touch-gate { width: 100px; height: 100px; }
+  .arcade-touch .touch-btn-cap { width: 58px; height: 58px; }
+  .arcade-touch .touch-panel { gap: 12px 8px; }
+  .arcade-touch .touch-group { gap: 8px; }
+  .arcade-touch .touch-btn-label { font-size: 9px; letter-spacing: .02em; }
+  .arcade-touch .coin-door { padding: 14px 10px; gap: 8px; }
+  .arcade-touch .coin-door .cd-mech { gap: 6px; }
+  .arcade-touch .cd-lamp { width: 44px; height: 36px; font-size: 14px; }
+  .arcade-touch .cd-throat { width: 44px; height: 36px; }
+  .arcade-touch .cd-throat::after { left: 8px; right: 8px; }
+}

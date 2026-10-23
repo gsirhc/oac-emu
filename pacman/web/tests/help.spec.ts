@@ -1,0 +1,31 @@
+import { test, expect } from "@playwright/test";
+
+// After the test patterns the ROM holds a help screen saying Namco Pac-Man is not included.
+
+test("self-test ROM ends on a copyright / load-it-yourself help screen", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect(page.locator("#romStatus")).toHaveText("Running test ROM");
+  await page.waitForFunction(() => !!(window as any).__test?.machine);
+
+  // 90+90 frames at ~60.6 Hz is ~3 s.
+  await page.waitForFunction(() => (window as any).__test?.machine.totalCycles() >= 13_824_000);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+  const stats = await page.evaluate(() => {
+    const c = document.getElementById("screen") as HTMLCanvasElement;
+    const data = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+    let yellow = 0, white = 0, lit = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      if (r | g | b) lit++;
+      if (r > 180 && g > 180 && b < 40) yellow++;
+      if (r > 180 && g > 180 && b > 180) white++;
+    }
+    return { yellow, white, lit };
+  });
+  // Title is yellow, body is white.
+  expect(stats.yellow).toBeGreaterThan(80);
+  expect(stats.white).toBeGreaterThan(200);
+  // Sparse text, not a full-screen fill.
+  expect(stats.lit).toBeLessThan(224 * 288 * 0.35);
+});

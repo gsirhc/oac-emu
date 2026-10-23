@@ -1,0 +1,54 @@
+import { test, expect } from "@playwright/test";
+
+// Boots the self-test ROM and checks the core runs at the real 3.072 MHz.
+
+test("boots the test ROM, paints a non-black frame, no console errors", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+
+  await page.goto("/?test=1");
+  await expect(page.locator("#romStatus")).toHaveText("Running test ROM");
+  await page.waitForFunction(() => !!(window as any).__test?.machine);
+
+  // Let a few frames run so the ROM's tile fill, sprite and signature execute.
+  await page.waitForFunction(() => (window as any).__test?.machine.totalCycles() >= 1_536_000);
+
+  const nonBlack = await page.evaluate(() => {
+    const c = document.getElementById("screen") as HTMLCanvasElement;
+    const data = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] || data[i + 1] || data[i + 2]) return true;
+    }
+    return false;
+  });
+  expect(nonBlack).toBe(true);
+
+  expect(errors).toEqual([]);
+});
+
+test("the monitor fills about 75% of the viewport height when not fullscreen", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  const box = await page.locator("#screen").boundingBox();
+  expect(box).toBeTruthy();
+  // 75% of 800px = 600, minus bezel/chrome and the max-width clamp.
+  expect(box!.height).toBeGreaterThan(500);
+  expect(box!.height).toBeLessThan(650);
+  expect(Math.abs(box!.width / box!.height - 224 / 288)).toBeLessThan(0.02);
+});
+
+test("the guest CPU runs at real, wall-clock-paced 3.072 MHz -- not sped up", async ({ page }) => {
+  await page.goto("/?test=1");
+  await expect(page.locator("#romStatus")).toHaveText("Running test ROM");
+  await page.waitForFunction(() => !!(window as any).__test?.machine);
+
+  const sample = () => page.evaluate(() => [(window as any).__test.machine.totalCycles(), performance.now()]);
+  const [c0, t0] = await sample();
+  await page.waitForFunction((t) => performance.now() >= t, t0 + 2000);
+  const [c1, t1] = await sample();
+
+  const cyclesPerSecond = (c1 - c0) / ((t1 - t0) / 1000);
+  // Slow CI runners only lower the rate; the frame clamp keeps a correct build under 1.1x.
+  expect(cyclesPerSecond).toBeGreaterThan(1_500_000);
+  expect(cyclesPerSecond).toBeLessThan(3_379_000);
+});

@@ -1,0 +1,133 @@
+import { test, expect } from "./fixtures";
+import { boot, send, screen, waitForScreen, guestRun, wallWait, measureHz } from "./helpers";
+
+// Executable realism checks. ?test runs media loads at Max, but the CPU clock and terminal baud are never sped up.
+
+test.describe("timing fidelity", () => {
+  test("the 8080 runs at ~2 MHz of emulated time per wall-clock second", async ({ page }) => {
+    await boot(page); // echo ROM spinning in its poll loop
+    const hz = await measureHz(page, 2000);
+    expect(hz).toBeGreaterThan(1_700_000);
+    expect(hz).toBeLessThan(2_200_000);
+  });
+
+  test("an ASR-33 (tty33) meters output at ~10 characters/second", async ({ page }) => {
+    await boot(page, { params: "term=tty33" });
+    // echo ROM: send 60 chars, watch them trickle onto the paper roll
+    await send(page, "ABCDEFGHIJ".repeat(6));
+    await wallWait(page, 1200);
+    const mid = (await screen(page)).replace(/\s/g, "").length;
+    expect(mid).toBeGreaterThan(3);
+    expect(mid).toBeLessThan(30); // nowhere near all 60 yet
+    await expect
+      .poll(() => screen(page).then((s) => s.replace(/\s/g, "").length), { timeout: 12_000 })
+      .toBeGreaterThanOrEqual(60);
+  });
+
+  test("the Modern terminal does not meter output", async ({ page }) => {
+    await boot(page, { params: "term=modern" });
+    await send(page, "ABCDEFGHIJ".repeat(6));
+    await expect
+      .poll(() => screen(page).then((s) => s.replace(/\s/g, "").length), { timeout: 3000 })
+      .toBeGreaterThanOrEqual(60);
+  });
+
+  // ALTAIR_REVIEW.md §6: every profile's baud rate gets a metering assertion
+  test.describe("every other CRT profile meters output near its real baud, not instantly", () => {
+    const BAUD: Record<string, number> = { vt100g: 9600, vt100a: 9600, vt52: 4800, adm3a: 9600, glasstty: 300 };
+    for (const [key, baud] of Object.entries(BAUD)) {
+      test(`${key} (${baud} baud)`, async ({ page }) => {
+        await boot(page, { params: `term=${key}` });
+        const text = "ABCDEFGHIJ".repeat(30); // 300 chars, well under one screen, no scroll-loss risk
+        // ms from the send until every char is on screen, sampled per frame in the page
+        const landedMs = await page.evaluate((text) => new Promise<number>((resolve) => {
+          const t0 = performance.now();
+          const m = (window as any).__test.machine;
+          for (let i = 0; i < text.length; i++) m.sendByte(text.charCodeAt(i));
+          (function tick() {
+            const n = (window as any).__test.screen().replace(/\s/g, "").length;
+            if (n >= text.length) resolve(performance.now() - t0);
+            else requestAnimationFrame(tick);
+          })();
+        }), text);
+        expect(landedMs, key).toBeGreaterThan(150); // hasn't all landed instantly
+        await expect
+          .poll(() => screen(page).then((s) => s.replace(/\s/g, "").length), { timeout: 15_000 })
+          .toBeGreaterThanOrEqual(text.length);
+      });
+    }
+  });
+
+  test("paper tape at 'Realistic' feeds ~10 bytes/second", async ({ page }) => {
+    await boot(page, { params: "preset=cassette" });
+    await page.evaluate(() => (window as any).__test.paperTape.setSpeed("realistic"));
+    await page.click("#ptr .ptr-window");
+    await page.waitForFunction(
+      () =>
+        [...document.querySelectorAll("#ptrList option")].some((o) =>
+          /8K BASIC 4\.0/.test(o.textContent || ""),
+        ),
+    );
+    await page.evaluate(() => {
+      const sel = document.querySelector<HTMLSelectElement>("#ptrList")!;
+      const i = [...sel.options].findIndex((o) => /8K BASIC 4\.0/.test(o.textContent || ""));
+      sel.value = String(sel.options[i].value);
+      sel.dispatchEvent(new Event("change"));
+    });
+    await page.click("#ptrThread");
+    await page.click("#ptr .ptr-load");
+
+    const t0 = await wallWait(page, 3000);
+    const [bytes, t1] = await page.evaluate(() => {
+      const t = (window as any).__test.tape;
+      return [t.lead + t.pos, performance.now()];
+    });
+    const rate = bytes / ((t1 - t0) / 1000);
+    expect(rate).toBeGreaterThan(3);
+    expect(rate).toBeLessThan(30); // definitely not the whole 8 KB
+  });
+
+  // Realistic is the real 360 rpm drive with its 40 ms head load and 10 ms steps (§3.2).
+  // ?test forces Max; this test selects Realistic to prove the throttle. A CP/M cold boot takes
+  // ~1.8 s of CPU alone, so the floor sits well above that.
+  test("disk at 'Realistic' measurably slows a CP/M boot", async ({ page }) => {
+    await boot(page, { params: "preset=cpm" });
+    await page.evaluate(() => (window as any).__test.disk.setSpeed("realistic"));
+    const t0 = Date.now();
+    await page.click("#dcdd .dcdd-boot");
+    await waitForScreen(page, /A>/, 30_000);
+    expect(Date.now() - t0).toBeGreaterThan(2200);
+  });
+
+  test("paper tape at 'Max' feeds the whole image near-instantly", async ({ page }) => {
+    await boot(page, { params: "preset=cassette" }); // ?test forces Max
+    await page.click("#ptr .ptr-window");
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll("#ptrList option")].some((o) =>
+        /8K BASIC 4\.0/.test(o.textContent || ""),
+      ),
+    );
+    await page.evaluate(() => {
+      const sel = document.querySelector<HTMLSelectElement>("#ptrList")!;
+      const i = [...sel.options].findIndex((o) => /8K BASIC 4\.0/.test(o.textContent || ""));
+      sel.value = String(sel.options[i].value);
+      sel.dispatchEvent(new Event("change"));
+    });
+    await page.click("#ptrThread");
+    await page.click("#ptr .ptr-load");
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__test.tape.pos), { timeout: 4000 })
+      .toBeGreaterThan(8000);
+  });
+
+  test("the load-time turbo does not survive a keypress", async ({ page }) => {
+    await boot(page, { params: "preset=stock" });
+    await page.click("#ptr .ptr-load"); // cold-starts 4K BASIC with turbo on
+    await guestRun(page, 500);
+    await send(page, " "); // a byte from the "keyboard"
+    // once BASIC is at OK the loader has released turbo; the clock is back to 2 MHz
+    await expect
+      .poll(() => measureHz(page, 300), { timeout: 40_000 })
+      .toBeLessThan(2_400_000);
+  });
+});

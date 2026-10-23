@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en" data-no-help>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Help / About / FAQs</title>
+<link rel="icon" href="assets/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16.png">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="stylesheet" href="shared/theme.css">
+<link rel="stylesheet" href="shared/pagebar.css">
+<link rel="stylesheet" href="shared/footer.css">
+<style>
+  :root {
+    --title-font: 900 30px "Arial Black", Arial, sans-serif;
+    --page-max: 720px;
+    --body-pad: 28px 14px;
+  }
+  :root[data-theme="winxp"] { --title-font: bold 28px Tahoma, "Segoe UI", sans-serif; }
+  :root[data-theme="web94"] { --title-font: bold 26px "Times New Roman", Times, serif; }
+  :root[data-theme="modern"] { --title-font: 700 28px/1.15 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  :root[data-theme="aurora"] { --title-font: 800 30px/1.15 Inter, Helvetica, Arial, sans-serif; }
+
+  :root[data-theme="aurora"] .pagebar { border-bottom: 1px solid rgba(168,140,255,.35); }
+  body {
+    color: var(--text);
+    font: 18px/1.5 var(--body-font);
+    min-height: 100vh;
+  }
+  h1 {
+    margin: 0 0 8px; font: var(--title-font); color: var(--title-color);
+    text-shadow: var(--title-shadow); letter-spacing: 2px;
+  }
+  :root[data-theme="modern"] h1,
+  :root[data-theme="modern"] .tagline { display: none; }
+  .tagline { margin: 0 0 22px; color: var(--muted); }
+  a { color: var(--link); }
+  .mission {
+    margin: 14px 0 22px;
+    padding: 14px 18px;
+    border-left: 3px solid var(--dim);
+    color: var(--text);
+    font: italic 15px/1.55 "Courier New", Courier, ui-monospace, monospace;
+  }
+  .mission p { margin: 0; }
+  .aside { font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<script>try{var r=document.documentElement,t=localStorage.getItem("retro8080.theme")||"win",m=localStorage.getItem("retro8080.mode");if(t=="ai"||t=="systemaurora"){t="aurora";if(!m)m="system";}else if(t=="moderndark"){t="modern";if(!m)m="dark";}else if(t=="system"){t="modern";if(!m)m="system";}if(t!="win"&&t!="winxp"&&t!="web94"&&t!="modern"&&t!="aurora")t="win";if(m!="light"&&m!="dark"&&m!="system")m="light";var dark=m=="dark"||(m=="system"&&matchMedia("(prefers-color-scheme: dark)").matches);r.dataset.theme=t;if(dark)r.dataset.mode="dark";else delete r.dataset.mode;}catch(e){}</script>
+
+<div class="page">
+  <header class="pagebar">
+    <a class="pb-home" href="./">&#8592;&nbsp;All&nbsp;machines</a>
+    <span class="pb-title"><img class="pb-icon" src="assets/favicon-32.png" alt="" aria-hidden="true"> HELP_ABOUT_FA_Qs</span>
+    <span class="pb-name">Help / About / FAQs</span>
+    <span class="pb-tag">Vintage machines, running entirely in your browser</span>
+    <span class="pb-tools">
+      <label class="pb-theme">Theme
+        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Windows 95</button>
+      </label>
+      <span class="pb-winbtns"><button type="button" class="pb-min" title="Minimize" aria-label="Minimize" aria-pressed="false">_</button><button type="button" class="pb-max" title="Maximize" aria-label="Maximize" disabled>&#9633;</button><a class="pb-close" href="./" title="back to all machines" aria-label="close — back to all machines">&times;</a></span>
+    </span>
+  </header>
+
+  <div class="inner">
+    <h1>Help / About / FAQs</h1>
+    
+    <p>
+      This site emulates computer and game hardware running entirely in your browser.
+      The emulator cores are written from scratch in C++ and compiled to a WebAssembly module.    
+      The module is downloaded to the browser, allowing the emulator to execute all hardware 
+      simulation locally.  There are no virtual machines or third-party emulator engines involved.
+    </p>
+
+    <h2>Browser Support</h2>
+    <p>
+      Chromium-based browsers are recommended as most testing is done in Chrome.  However, the site 
+      should run fine in all major browsers.  If you use privacy extensions or privacy-focused 
+      browsers, you may encounter issues with sound, fullscreen or browser storage.
+    </p>
+
+    <h2>System Requirements</h2>
+    <p>
+      The emulators should run on any modern desktop, laptop, tablet or even smartphone.  The heavier 
+      emulators, such as the 486, may suffer performance issues on lower-end or older devices.
+    </p>
+    
+    <h2>Removable Media Formats</h2>
+    <p>
+      Media such as floppy disks, CDs, cassette/paper tapes and ROMs 
+      must be loaded from image files.  Each emulator will have instructions on which types of 
+      files are supported.  If you have physical media, you will need to convert them to the expected 
+      images.  This site does not support physical devices connected through USB or other means.
+    </p>
+    
+    <h2>Hard Drives</h2>
+    <p>
+      Emulator hard disk images are stored in your browser's IndexedDB and changes are saved every 
+      few seconds so you don't have to worry about losing your data.  To be sure your hard drive is synced, 
+      power off the machine before navigating away from the page.  It's also recommended that you download 
+      your hard drive images periodically as a backup.
+    </p>
+    
+    <h2>High Scores</h2>
+    <p>
+      For arcade games with high scores, the emulators will store your scores in browser storage
+      so they persist across sessions.  You can reset your high scores at any time.
+    </p>
+
+    <h2 id="rights">Commercial Software, Shareware and Freeware</h2>
+    <p>
+      This site does not host commercial software or game ROMs where active rights holders still enforce 
+      their copyrights.  So this means you must supply the commercial software yourself. 
+      However, there are some exceptions that seem to be shared around the community.  Shareware and freeware 
+      titles are provided where the creators actively encouraged sharing back in the day.
+    </p>
+    <p>
+      If you are an active rights holder of any of the supplied software here and would like it removed,
+      please contact me below.
+    </p>
+
+    <h2>Game Art</h2>
+    <p>
+      The site offers an option to download real game artwork where applicable.  The artwork is
+      still under copyright but you can choose to download it from <a href="https://www.libretro.com/">libretro</a> and the <a href="https://adb.arcadeitalia.net/">Arcade Database</a> in your
+      browser.  This site does not host the artwork.
+    </p>
+
+    <h2>Why not include the arcade ROMs?!</h2>
+    <p>
+      Yeah, it's a pain that the arcades don't come with the games, and that you have to supply your 
+      own ROMs.  I could supply them, then deal with the cease and desist orders...or not
+      because no one will use this site.  There are
+      many parties involved from the code repository to the hosting site to the rights holders.
+      It's just safer for me to not host the software.  
+    </p>
+
+    <h2>Found a bug?  The stupid thing isn't working?</h2>
+    <p>
+      Contact me below!  Please provide as much detail as possible to help get a conversation started.  Any 
+      feedback is welcome so don't hesitate to reach out.
+    </p>
+    <p>
+      I could also use your help testing!  Contact me if you'd like to get involved.  Any help is much appreciated.
+    </p>
+
+    <h2>Where are the site ads or paywalls?</h2>
+    <p>
+      Unlike so many things these days, this site is provided entirely for free.  You will not see embedded ads or paywalls anywhere.
+      The plan is to keep it that way.  I use as many free services as I can plus its a passion so it doesn't "cost"
+      me anything.  If you feel compelled to donate so the site doesn't go away, 
+      I won't turn it down.  However, I'd prefer you use the site regularly instead.  That keeps me going more than
+      making a happy buck.
+    </p>
+
+    <h2>About Me</h2>
+    <p>
+      My name is Chris and I'm the creator of this site.  I've been a professional software engineer for over 
+      25 years and a computer geek for much longer than that.  I'm getting old so I like old (retro) things.  
+      So, I set out to create this site to emulate "old-ass computer" (OAC) hardware that I remember using 
+      back in the day.  It started out as a project for myself then I figured why not put it out there for 
+      others to use.  So here it is!
+    </p>
+
+    <h2 id="contact">Contact Me</h2>
+    <p>
+      I am open to any questions, ideas or complaints.  If you want me to
+      take you seriously, please use English, spell correctly and provide one
+      fact about retro computing or gaming you find interesting. <br/><br/>
+      <b>chris @ oac-emu . dev</b>
+    </p>
+  </div>
+</div>
+
+<script src="shared/theme-picker.js"></script>
+<script>initThemePicker();</script>
+<script src="shared/winbtns.js"></script>
+<script src="shared/footer.js"></script>
+</body>
+</html>

@@ -1,0 +1,231 @@
+import { test, expect } from "./fixtures";
+import { boot, waitForScreen } from "./helpers";
+
+
+async function chooseTheme(page, theme, mode = "light") {
+  await page.locator("#pageThemeBtn").click();
+  await page.locator(`#themeDialog input[name="pageThemeFamily"][value="${theme}"]`).check();
+  await page.locator(`#themeDialog input[name="pageThemeMode"][value="${mode}"]`).check();
+  await page.locator("#themeDialogDone").click();
+}
+
+
+test.describe("page chrome, persistence, URL params", () => {
+  test("the page theme select drives data-theme and persists", async ({ page }) => {
+    await boot(page);
+    for (const t of ["web94", "modern", "win"]) {
+      await chooseTheme(page, t);
+      await expect(page.locator("html")).toHaveAttribute("data-theme", t);
+      expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe(t);
+    }
+  });
+
+  test("?theme= wins at load", async ({ page }) => {
+    await boot(page, { params: "theme=web94" });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "web94");
+  });
+
+  test("Modern + Dark sets data-mode=dark; Light clears it", async ({ page }) => {
+    await boot(page);
+    await chooseTheme(page, "modern", "dark");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("dark");
+    expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(18, 19, 23)");
+
+    // restored on reload
+    await page.reload();
+    await page.waitForFunction(() => !!(window as any).__test?.machine);
+    await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Modern");
+
+    await chooseTheme(page, "win", "light");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "win");
+    expect(await page.evaluate(() => document.documentElement.hasAttribute("data-mode"))).toBe(false);
+  });
+
+  test("System follows the OS appearance on the Modern palette", async ({ page }) => {
+    await boot(page);
+    await page.emulateMedia({ colorScheme: "light" });
+    await chooseTheme(page, "modern", "system");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    expect(await page.evaluate(() => document.documentElement.hasAttribute("data-mode"))).toBe(false);
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("system");
+
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
+    expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(18, 19, 23)");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Modern");
+
+    await chooseTheme(page, "modern");
+    await page.emulateMedia({ colorScheme: "dark" });
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    expect(await page.evaluate(() => document.documentElement.hasAttribute("data-mode"))).toBe(false);
+  });
+
+  test("the theme picker lives in the top bar, not a mid-page toolbar", async ({ page }) => {
+    await boot(page);
+    await expect(page.locator(".pagebar #pageThemeBtn")).toBeVisible();
+    await expect(page.locator(".toolbar #pageThemeBtn")).toHaveCount(0);
+    await expect(page.locator(".pagebar #pageThemeBtn")).toHaveText(/Windows 95/);
+  });
+
+  test("every theme offers a way back to the landing page", async ({ page }) => {
+    await boot(page);
+    for (const t of ["win", "winxp", "web94", "modern", "aurora"]) {
+      await chooseTheme(page, t);
+      // win: the titlebar close box; web94/modern: the "All machines" link
+      const home = page.locator('.pagebar a[href="../"]:visible');
+      await expect(home).toHaveCount(1);
+    }
+  });
+
+  test("every theme flows front panel -> terminal -> devices", async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 900 }); // below the side-by-side breakpoint
+    for (const t of ["win", "winxp", "web94", "modern", "aurora"]) {
+      await boot(page, { params: `theme=${t}&preset=cassette` });
+      await expect(page.locator("#ptr")).toBeVisible();
+      const y = async (s: string) => (await page.locator(s).boundingBox())!.y;
+      const [panel, termBar, dev] =
+        await Promise.all([y("#altair"), y(".term-bar"), y("#ptr")]);
+      expect(panel, t).toBeLessThan(termBar);   // front panel above the terminal
+      expect(termBar, t).toBeLessThan(dev);     // terminal above the devices
+    }
+  });
+
+  test("every theme caps the front panel, terminal, drives and bus at the Windows 95 width", async ({ page }) => {
+    await page.setViewportSize({ width: 1500, height: 900 }); // below the side-by-side breakpoint
+    for (const t of ["win", "winxp", "web94", "modern", "aurora"]) {
+      await boot(page, { params: `theme=${t}&preset=cpm` });
+      await expect(page.locator("#dcdd")).toBeVisible();
+      await expect(page.locator("#backplane")).toBeVisible();
+      const w = async (s: string) => (await page.locator(s).boundingBox())!.width;
+      const [panel, term, monitor, drives, bus] =
+        await Promise.all([w("#altair"), w(".ws-terminal"), w(".monitor"), w("#dcdd"), w("#backplane")]);
+      expect(panel, t).toBeLessThanOrEqual(870);
+      expect(term, t).toBeLessThanOrEqual(870);
+      expect(drives, t).toBe(panel);
+      expect(bus, t).toBe(panel);
+      expect(monitor, t).toBeGreaterThan(840);   // fills the column, not shrunk to its content
+    }
+  });
+
+  test("Modern, wide screen: terminal left of the panel, its settings folded into the PRESET bar", async ({ page }) => {
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await boot(page, { params: "theme=modern&preset=cassette" });
+    const panel = (await page.locator("#altair").boundingBox())!;
+    const term = (await page.locator(".ws-terminal").boundingBox())!;
+    expect(term.x + term.width).toBeLessThanOrEqual(panel.x + 1);   // fully to the left
+    expect(term.y).toBeLessThan(panel.y + panel.height);            // ...and on the same row
+    expect(panel.y).toBeLessThan(term.y + term.height);
+    await expect(page.locator(".toolbars .term-bar")).toHaveCount(1);      // moved up next to PRESET
+    await expect(page.locator(".ws-terminal .term-bar")).toHaveCount(0);
+  });
+
+  test("footer link list is on every theme; Mid-1990s Web dresses it Mosaic-style", async ({ page }) => {
+    await boot(page, { params: "theme=web94" });
+    const links = page.locator(".footer-links");
+    await expect(links).toContainText("BASIC Manual");
+    await expect(links.getByRole("link")).toHaveText(["BASIC Manual", "Altair Manual"]);
+    // web94: raw underlined blue links, "Page last modified"
+    await expect(links.locator("a").first()).toHaveCSS("text-decoration-line", "underline");
+    await expect(links.locator("a").first()).toHaveCSS("color", "rgb(0, 0, 255)");
+    await expect(page.locator(".footer")).toContainText(/Page last modified:/);
+
+    // Win95: same links, but "Last built" and no Mosaic blue
+    await chooseTheme(page, "win");
+    await expect(links).toBeVisible();
+    await expect(links).toContainText("Altair Manual");
+    await expect(page.locator(".footer")).toContainText(/Last built/);
+    await expect(links.locator("a").first()).not.toHaveCSS("color", "rgb(0, 0, 255)");
+  });
+
+  test("Modern folds the page header into the top bar; retro keeps the big header", async ({ page }) => {
+    await boot(page, { params: "theme=modern" });
+    await expect(page.locator(".pagebar .pb-name")).toHaveText("ALTAIR 8800");
+    expect((await page.locator(".inner > h1").boundingBox())!.height).toBeLessThan(4); // h1 kept for a11y, collapsed
+    await expect(page.locator(".inner .tagline.modern-only")).not.toBeVisible();
+    await expect(page.locator(".spec")).toHaveCount(0);                   // description removed
+
+    await chooseTheme(page, "win");
+    expect((await page.locator(".inner > h1").boundingBox())!.height).toBeGreaterThan(20); // big header back
+    await expect(page.locator(".pagebar .pb-name")).not.toBeVisible();
+  });
+
+  test("'Load it yourself' rides in the PRESET bar; the S-100 cards are last on the page", async ({ page }) => {
+    await boot(page, { params: "preset=cassette" });
+    await expect(page.locator(".preset-bar #pgToggle")).toBeVisible();
+    await expect(page.locator(".preset-bar #pgToggle")).toContainText("Load it yourself");
+    // one read per poll, so all three rects come from the same settled layout
+    await expect.poll(() => page.evaluate(() => {
+      const y = (sel: string) => document.querySelector(sel)!.getBoundingClientRect().y;
+      const bp = y("#backplane");
+      return { belowDevices: bp > y("#ptr"), aboveFooter: bp < y(".footer") };
+    })).toEqual({ belowDevices: true, aboveFooter: true });
+  });
+
+  test("the terminal settings bar sits above the monitor in every other layout", async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 900 });
+    for (const t of ["win", "winxp", "web94", "modern", "aurora"]) {
+      await boot(page, { params: `theme=${t}` });
+      await expect(page.locator(".ws-terminal .term-bar"), t).toHaveCount(1);
+      await expect(page.locator(".toolbars .term-bar"), t).toHaveCount(0);
+    }
+  });
+
+  test("a stored theme is restored on the next visit", async ({ page }) => {
+    await boot(page);
+    await chooseTheme(page, "modern");
+    await page.reload();
+    await page.waitForFunction(() => !!(window as any).__test?.machine);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+  });
+
+  test("the register bar shows A / BC / DE / HL / PC / SP and a clock rate", async ({ page }) => {
+    await boot(page);
+    await expect
+      .poll(() => page.locator("#regs").innerText())
+      .toMatch(/A [0-9A-F]{2}\s+BC [0-9A-F]{4}\s+DE [0-9A-F]{4}\s+HL [0-9A-F]{4}\s+PC [0-9A-F]{4}\s+SP [0-9A-F]{4}/);
+    await expect.poll(() => page.locator("#regs").innerText()).toMatch(/\d\.\d MHz/);
+  });
+
+  test("the register bar reads STOP after a panel STOP", async ({ page }) => {
+    await boot(page);
+    await page.evaluate(() => (window as any).__test.setRunning(false));
+    await expect.poll(() => page.locator("#regs").innerText()).toMatch(/STOP/);
+  });
+
+  test("?help prints the manual to the terminal", async ({ page }) => {
+    await boot(page, { params: "help" });
+    await waitForScreen(page, /front panel|ALTAIR|terminal/i, 15_000);
+  });
+
+  test("a keypress skips to the end of the slow ?help printout", async ({ page }) => {
+    await boot(page, { params: "help&term=tty33" }); // metered at 110 baud
+    await waitForScreen(page, /\S/, 15_000); // the manual has started printing
+    await page.evaluate(() => (window as any).__test.term.focus());
+    await page.keyboard.press("Space");
+    // the whole manual lands at once instead of trickling for ~30 s
+    await waitForScreen(page, /RESET|CLR|SINGLE STEP/i, 5_000);
+  });
+
+  test("the build date populates from the wasm's Last-Modified", async ({ page }) => {
+    await boot(page);
+    await expect.poll(() => page.locator("#buildDate").innerText()).not.toBe("");
+    await expect(page.locator("#buildDate")).not.toHaveText(/unknown/);
+  });
+
+  test("load devices persist across a reload in a custom build", async ({ page }) => {
+    await boot(page);
+    await page.selectOption("#preset", "");
+    await expect(page.locator("#deviceChips")).toBeVisible();
+    await page.check('#deviceChips input[data-dev="disk"]');
+    await page.reload();
+    await page.waitForFunction(() => !!(window as any).__test?.machine);
+    await expect(page.locator('#deviceChips input[data-dev="disk"]')).toBeChecked();
+    await expect(page.locator("#dcdd")).not.toHaveClass(/empty/);
+  });
+});

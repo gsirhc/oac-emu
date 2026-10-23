@@ -1,0 +1,29 @@
+; LCD DEMO. Writes to the 16x2 HD44780 as well as the terminal. Three
+; loops, since the assembler has no indirect addressing to share one.
+; JMP START skips the data. LCD_CLEAR is $800F, LCD_LINE2 is $8015
+; (Help panel, OS calls). ASM, then RUN.
+JMP START
+MSG1: .BYTE "6502 ASSEMBLER",$00
+MSG2: .BYTE "IT WORKS!",$00
+MSG3: .BYTE "CHECK THE LCD DISPLAY!",$0D,$0A,$00
+START: JSR $800F
+LDX #$00
+LOOP1: LDA MSG1,X
+BEQ L1DONE
+JSR $8009
+INX
+BRA LOOP1
+L1DONE: JSR $8015
+LDX #$00
+LOOP2: LDA MSG2,X
+BEQ L2DONE
+JSR $8009
+INX
+BRA LOOP2
+L2DONE: LDX #$00
+LOOP3: LDA MSG3,X
+BEQ L3DONE
+JSR $8003
+INX
+BRA LOOP3
+L3DONE:

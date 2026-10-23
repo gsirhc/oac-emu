@@ -1,0 +1,100 @@
+import { test, expect } from "@playwright/test";
+
+
+async function chooseTheme(page, theme, mode = "light") {
+  await page.locator("#pageThemeBtn").click();
+  await page.locator(`#themeDialog input[name="pageThemeFamily"][value="${theme}"]`).check();
+  await page.locator(`#themeDialog input[name="pageThemeMode"][value="${mode}"]`).check();
+  await page.locator("#themeDialogDone").click();
+}
+
+
+// Landing page on :8310. Shares the retro8080.theme key with the emulator.
+
+const HOME = "http://localhost:8310/";
+const CATALOG = HOME + "super_secret.html";
+
+test.describe("landing page", () => {
+  test("lists the IBM PC/AT with a launch link to /ibmpc-at/", async ({ page }) => {
+    await page.goto(CATALOG);
+    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+
+    const card = page.locator('a.machine-card[href="ibmpc-at/"]');
+    await expect(card).toHaveAttribute("href", "ibmpc-at/");
+    await expect(card.locator(".name")).toHaveText(/IBM PC\/AT/i);
+
+    const shot = card.locator("img.shot");
+    await expect(shot).toHaveAttribute("src", /assets\/ibmpcat-panel\.jpg$/);
+    await expect(shot).toHaveAttribute("width", "712");
+    await expect(shot).toHaveAttribute("height", "128");
+    await expect(shot).toHaveJSProperty("complete", true);
+    expect(await shot.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(712);
+    expect(await shot.evaluate((img: HTMLImageElement) => img.naturalHeight)).toBe(128);
+  });
+
+  test("Ready to Play lists Commander Keen, linking to the PC/AT with ?disk=keen1", async ({ page }) => {
+    await page.goto(CATALOG);
+    const card = page.locator('a.machine-card[href="ibmpc-at/?disk=keen1"]');
+    await expect(card.locator(".name")).toHaveText("Commander Keen");
+    await expect(card.locator(".meta")).toHaveText("IBM PC/AT");
+    await expect(card.locator("img.shot")).toHaveAttribute("src", /assets\/keen1-mars\.jpg$/);
+    await expect(card.locator("img.shot")).toHaveJSProperty("naturalWidth", 286);
+  });
+
+  test("the theme selector switches the page and persists to retro8080.theme", async ({ page }) => {
+    await page.goto(HOME);
+    const root = page.locator("html");
+    await expect(root).toHaveAttribute("data-theme", "win");
+
+    await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
+
+    await chooseTheme(page, "modern");
+    await expect(root).toHaveAttribute("data-theme", "modern");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
+
+    await chooseTheme(page, "web94");
+    await expect(root).toHaveAttribute("data-theme", "web94");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("web94");
+    await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
+  });
+
+  test("the public footer has no Help control, and about.html still returns home", async ({ page }) => {
+    await page.goto(HOME);
+    const footer = page.locator("#siteFooter");
+    await expect(footer).toContainText(/© 2026 oac-emu\.dev/);
+    await expect(footer).toContainText(/old-ass computer/);
+    await expect(footer.locator("a.about-sign")).toHaveCount(0);
+    await page.goto(HOME + "about.html");
+    await expect(page).toHaveURL(/\/about\.html$/);
+    await expect(page).toHaveTitle(/About/i);
+    await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
+    await expect(page.locator("a.pb-close")).toHaveAttribute("href", "./");
+    await page.locator("a.pb-close").click();
+    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+  });
+
+  test("a stored retro8080.theme is honoured on load", async ({ page }) => {
+    await page.goto(HOME);
+    await page.evaluate(() => localStorage.setItem("retro8080.theme", "modern"));
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Modern");
+  });
+
+  test("Windows title-bar buttons: soft-minimize collapses the page; close is disabled", async ({ page }) => {
+    await page.goto(HOME);
+    await expect(page.locator(".pb-close.is-disabled")).toHaveAttribute("aria-disabled", "true");
+    await expect(page.locator("a.pb-close")).toHaveCount(0);
+    await expect(page.locator(".pb-max")).toBeDisabled();
+    await expect(page.locator(".inner")).toBeVisible();
+    await page.locator(".pb-min").click();
+    await expect(page.locator(".page")).toHaveClass(/is-minimized/);
+    await expect(page.locator(".inner")).toBeHidden();
+    await expect(page.locator("#siteFooter")).toBeHidden();
+    await page.locator(".pb-min").click();
+    await expect(page.locator(".page")).not.toHaveClass(/is-minimized/);
+    await expect(page.locator(".inner")).toBeVisible();
+  });
+
+});

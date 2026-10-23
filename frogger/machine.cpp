@@ -1,0 +1,214 @@
+#include "machine.h"
+
+#include "galaxian/timer.h"
+
+namespace frogger {
+
+uint8_t swap_d0d1(uint8_t v) {
+    return uint8_t((v & 0xFC) | ((v & 1) << 1) | ((v & 2) >> 1));
+}
+
+Machine::Machine() : main(make_main_bus()), sound(make_sound_bus()) {
+    konami.ay = {&ay, nullptr};
+    konami.feedback_ohms = 5600.0;
+    wire_ppi();
+    reset();
+}
+
+z80::Bus Machine::make_main_bus() {
+    z80::Bus b;
+    b.read = [this](uint16_t a) { return mem_read(a); };
+    b.write = [this](uint16_t a, uint8_t v) { mem_write(a, v); };
+    b.in = [](uint16_t) { return uint8_t(0xFF); };
+    b.out = [](uint16_t, uint8_t) {};
+    b.irq_data = [] { return uint8_t(0xFF); };
+    b.tick = [this](int t) { video.advance(t); };
+    return b;
+}
+
+z80::Bus Machine::make_sound_bus() {
+    z80::Bus b;
+    b.read = [this](uint16_t a) { return sound_read(a); };
+    b.write = [this](uint16_t a, uint8_t v) { sound_write(a, v); };
+    b.in = [this](uint16_t port) { return sound_in(uint8_t(port)); };
+    b.out = [this](uint16_t port, uint8_t v) { sound_out(uint8_t(port), v); };
+    // The INT flip-flop clears on the M1 + IORQ acknowledge (Frogger 834-0069 LS74 at 11).
+    b.irq_data = [this] {
+        sound.set_int(false);
+        return uint8_t(0xFF);
+    };
+    return b;
+}
+
+void Machine::wire_ppi() {
+    ppi0.in_a = [this] { return inputs.in0; };
+    ppi0.in_b = [this] { return inputs.in1; };
+    ppi0.in_c = [this] { return inputs.in2; };
+    ppi1.out_a = [this](uint8_t v) { sound_latch = v; };
+    ppi1.out_b = [this](uint8_t v) { on_sound_control(v); };
+    ay.port_a_r = [this] { return sound_latch; };
+    ay.port_b_r = [this] { return galaxian::frogger_port_b(sound.cycles); };
+}
+
+uint8_t Machine::sound_in(uint8_t port) {
+    // Read with A6 set drives BC2+BC1 (834-0074 U37a, U25).
+    if (port & 0x40) return ay.read_data();
+    return 0xFF;
+}
+
+void Machine::sound_out(uint8_t port, uint8_t v) {
+    // Write: A7 latches the address, else A6 writes data (834-0074 U37b, U24, U25, U36).
+    if (port & 0x80) ay.write_addr(v);
+    else if (port & 0x40) ay.write_data(v);
+}
+
+void Machine::on_sound_control(uint8_t v) {
+    // Falling edge of bit 3 raises the sound Z80 /INT. Bit 4 mutes the AY (Computer Archaeology).
+    bool prev3 = (sound_control & 0x08) != 0;
+    bool now3 = (v & 0x08) != 0;
+    sound_control = v;
+    konami.mute = (v & 0x10) != 0;
+    if (prev3 && !now3) sound.set_int(true);
+}
+
+void Machine::reset() {
+    coin_line_[0] = coin_line_[1] = false;
+    ram.fill(0);
+    sound_ram.fill(0);
+    nmi_enable = false;
+    watchdog_ = kWatchdogFrames;
+    frames = 0;
+    audio.clear();
+    sound_latch = 0;
+    sound_control = 0;
+    sound_credit_ = 0;
+    video.reset();
+    ay.reset();
+    konami.reset();
+    ppi0.reset();
+    ppi1.reset();
+    // Both 8255s power up as inputs; PPI1 must be set to outputs for the latch to stick.
+    main.reset();
+    sound.reset();
+}
+
+void Machine::load_roms(const RomSet& set) {
+    program = set.program;
+    sound_rom = set.sound;
+    // Sound ROM 608 and gfx ROM 606 (at $800) have D0/D1 swapped on the PCB (Computer Archaeology).
+    for (int i = 0; i < 0x800; i++)
+        sound_rom[unsigned(i)] = swap_d0d1(set.sound[unsigned(i)]);
+    video.gfx = set.gfx;
+    for (int i = 0x800; i < 0x1000; i++)
+        video.gfx[unsigned(i)] = swap_d0d1(set.gfx[unsigned(i)]);
+    video.color_prom = set.color_prom;
+}
+
+uint8_t Machine::mem_read(uint16_t addr) {
+    if (addr < 0x4000) return program[addr];
+    if (addr >= 0x8000 && addr < 0x8800) return ram[addr - 0x8000];
+    if (addr >= 0x8800 && addr < 0x9000) {
+        watchdog_ = kWatchdogFrames;
+        return 0xFF;
+    }
+    if (addr >= 0xA800 && addr < 0xB000) return video.videoram[addr & 0x3FF];
+    if (addr >= 0xB000 && addr < 0xB800) return video.objram[addr & 0xFF];
+    if (addr >= 0xE000) return ppi0.read((addr >> 1) & 3);
+    if (addr >= 0xD000 && addr < 0xE000) return ppi1.read((addr >> 1) & 3);
+    return 0xFF;
+}
+
+void Machine::mem_write(uint16_t addr, uint8_t v) {
+    if (addr >= 0x8000 && addr < 0x8800) {
+        ram[addr - 0x8000] = v;
+        return;
+    }
+    if (addr >= 0xA800 && addr < 0xB000) {
+        video.videoram[addr & 0x3FF] = v;
+        return;
+    }
+    if (addr >= 0xB000 && addr < 0xC000) {
+        // Standalone D0 latches, decoded ahead of the $B000 objram mirror.
+        switch (addr & 0xFF1F) {
+            case 0xB808:
+                nmi_enable = (v & 1) != 0;
+                if (!nmi_enable) main.set_nmi(false);
+                return;
+            case 0xB80C: video.flip_y = (v & 1) != 0; return;
+            case 0xB810: video.flip_x = (v & 1) != 0; return;
+            case 0xB818: coin_counter_w(0, (v & 1) != 0); return;
+            case 0xB81C: coin_counter_w(1, (v & 1) != 0); return;
+            default: break;
+        }
+        if (addr < 0xB800) video.objram[addr & 0xFF] = v;
+        return;
+    }
+    if (addr >= 0xE000) {
+        ppi0.write((addr >> 1) & 3, v);
+        return;
+    }
+    if (addr >= 0xD000 && addr < 0xE000) {
+        ppi1.write((addr >> 1) & 3, v);
+        return;
+    }
+}
+
+uint8_t Machine::sound_read(uint16_t addr) {
+    if (addr < 0x1800) return sound_rom[addr];
+    // $4000–$43FF, mirrored through $5FFF (mask 0x1C00).
+    if (addr >= 0x4000 && addr < 0x6000) return sound_ram[addr & 0x3FF];
+    return 0xFF;
+}
+
+void Machine::sound_write(uint16_t addr, uint8_t v) {
+    addr &= 0x7FFF;
+    if (addr >= 0x4000 && addr < 0x6000) sound_ram[addr & 0x3FF] = v;
+    else if (addr >= 0x6000) konami.filter_w(uint16_t(addr & 0x0FFF));
+}
+
+void Machine::watchdog_fire() {
+    // The watchdog pulses /RESET; RAM keeps its contents, unlike a power cycle.
+    const auto keep_ram = ram;
+    const auto keep_sound_ram = sound_ram;
+    const auto keep_v_videoram = video.videoram;
+    const auto keep_v_objram = video.objram;
+    reset();
+    ram = keep_ram;
+    sound_ram = keep_sound_ram;
+    video.videoram = keep_v_videoram;
+    video.objram = keep_v_objram;
+    watchdog_reset = true;
+}
+
+void Machine::coin_counter_w(int n, bool on) {
+    if (on && !coin_line_[n]) coin_counter[unsigned(n)]++;
+    coin_line_[n] = on;
+}
+
+int Machine::run_cycles(int n) {
+    int done = 0;
+    while (done < n) {
+        int t = main.step();
+        done += t;
+        // Credit in sound-cycle units so an overshooting sound instruction is repaid later.
+        sound_credit_ += t * kSoundHz;
+        while (sound_credit_ >= kCpuHz) {
+            int st = sound.step();
+            konami.advance(st, audio_hz, audio);
+            sound_credit_ -= st * kCpuHz;
+        }
+        if (video.vblank_edge) {
+            video.vblank_edge = false;
+            frames++;
+            watchdog_--;
+            if (watchdog_ <= 0) {
+                watchdog_fire();
+                break;
+            }
+            if (nmi_enable) main.set_nmi(true);
+        }
+    }
+    return done;
+}
+
+}  // namespace frogger

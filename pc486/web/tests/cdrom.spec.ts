@@ -1,0 +1,95 @@
+import { test, expect } from "./fixtures";
+import { bootLive, bay, insertCdrom, insertCdromCue, ejectCdrom } from "./helpers";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+
+function makeBlankIso(bytes: number): string {
+  const p = path.join(os.tmpdir(), `pc486-test-${Date.now()}-${Math.random().toString(36).slice(2)}.iso`);
+  fs.writeFileSync(p, Buffer.alloc(bytes, 0));
+  return p;
+}
+
+// Minimal single-track data disc for the CUE+BIN mount path.
+function makeDataOnlyCueBin(dataBlocks: number): { cuePath: string; binPath: string } {
+  const tag = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const cuePath = path.join(os.tmpdir(), `pc486-test-${tag}.cue`);
+  const binPath = path.join(os.tmpdir(), `pc486-test-${tag}.bin`);
+  fs.writeFileSync(binPath, Buffer.alloc(dataBlocks * 2048, 0));
+  fs.writeFileSync(
+    cuePath,
+    `FILE "${path.basename(binPath)}" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n`,
+  );
+  return { cuePath, binPath };
+}
+
+test.describe("CD-ROM drive", () => {
+  test("boots with the drive empty and fetches no disc", async ({ page }) => {
+    const requests: string[] = [];
+    page.on("request", (req) => requests.push(req.url()));
+
+    await bootLive(page);
+
+    const bayCd = bay(page, "cdrom");
+    await expect(bayCd).not.toHaveClass(/loaded/);
+    const label = bayCd.locator('[data-role="label"]');
+    await expect(label).toHaveClass(/empty/);
+    await expect(bayCd.locator('[data-role="eject"]')).toBeDisabled();
+
+    const isPresent = await page.evaluate(() => (window as any).__test.machine.cdromPresent());
+    expect(isPresent).toBe(false);
+    expect(requests.some((u) => /\.iso$/i.test(u))).toBe(false);
+  });
+
+  test("ejecting empties the bay; inserting a new ISO loads it", async ({ livePage: page }) => {
+    const bayCd = bay(page, "cdrom");
+
+    const isoPath = makeBlankIso(2048 * 16);
+    const label = bayCd.locator('[data-role="label"]');
+    await insertCdrom(page, isoPath);
+    await expect(bayCd).toHaveClass(/loaded/);
+    await expect(label).toContainText(path.basename(isoPath));
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__test.machine.cdromPresent()))
+      .toBe(true);
+
+    await ejectCdrom(page);
+    await expect(bayCd).not.toHaveClass(/loaded/);
+    await expect(label).toHaveClass(/empty/);
+    await expect(bayCd.locator('[data-role="eject"]')).toBeDisabled();
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__test.machine.cdromPresent()))
+      .toBe(false);
+  });
+
+  test("inserting a CUE + BIN pair mounts the mixed-mode disc", async ({ livePage: page }) => {
+    const bayCd = bay(page, "cdrom");
+    const { cuePath, binPath } = makeDataOnlyCueBin(4);
+    const label = bayCd.locator('[data-role="label"]');
+
+    await insertCdromCue(page, cuePath, binPath);
+    await expect(bayCd).toHaveClass(/loaded/);
+    await expect(label).toContainText(path.basename(cuePath));
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__test.machine.cdromPresent()))
+      .toBe(true);
+
+    await ejectCdrom(page);
+    await expect(bayCd).not.toHaveClass(/loaded/);
+  });
+
+  test("swapping discs is independent of power state -- works while the machine is off", async ({ livePage: page }) => {
+    // The CD-ROM tray works with or without power, like the floppy bay (app.js pendingCdrom).
+
+    await page.locator("#powerSwitch").click({ force: true });
+    await expect(page.locator("#powerLed")).not.toHaveClass(/power-on/);
+
+    const bayCd = bay(page, "cdrom");
+    const isoPath = makeBlankIso(2048 * 16);
+    await insertCdrom(page, isoPath);
+    await expect(bayCd).toHaveClass(/loaded/);
+
+    await ejectCdrom(page);
+    await expect(bayCd).not.toHaveClass(/loaded/);
+  });
+});

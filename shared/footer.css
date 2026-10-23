@@ -1,0 +1,129 @@
+/* Site footer + theme-matched Help control. Markup injected by footer.js. */
+
+.site-footer {
+  margin: 0;
+  padding: 14px 22px 16px;
+  color: var(--dim);
+  font-size: 14px;
+  line-height: 1.3;
+  text-align: center;
+  border-top: var(--rule, 1px solid rgba(0, 0, 0, .18));
+}
+.site-footer p { margin: 0; }
+.site-footer p + p { margin-top: 2px; }
+.site-footer-about { margin: 0 0 8px !important; }
+.site-footer-about + p { margin-top: 0; }
+.site-footer-note a { color: var(--link); }
+.site-footer .source-link {
+  color: var(--link);
+  overflow-wrap: anywhere;
+}
+
+/* Win95 dialog Help button is the default, grey 3D, 12px MS Sans. */
+.site-footer .about-sign {
+  display: inline-block;
+  min-width: 75px;
+  padding: 3px 14px 4px;
+  color: var(--btn-fg);
+  background: var(--btn-bg);
+  border: var(--btn-border);
+  border-radius: 0;
+  font: 12px "MS Sans Serif", "Microsoft Sans Serif", Tahoma, sans-serif;
+  text-align: center;
+  text-decoration: none;
+}
+.site-footer .about-sign:active {
+  border-style: inset;
+  padding: 4px 13px 3px 15px;
+}
+.site-footer .about-sign:focus-visible {
+  outline: 1px dotted var(--text);
+  outline-offset: -5px;
+}
+
+/* Mid-1990s web: a bracketed Times link, same language as .pb-home. */
+:root[data-theme="web94"] .site-footer .about-sign {
+  min-width: 0;
+  padding: 0;
+  color: var(--link);
+  background: none;
+  border: none;
+  font: 16px "Times New Roman", Times, serif;
+  text-decoration: underline;
+}
+:root[data-theme="web94"] .site-footer .about-sign::before { content: "[ "; }
+:root[data-theme="web94"] .site-footer .about-sign::after { content: " ]"; }
+:root[data-theme="web94"] .site-footer .about-sign:visited { color: var(--link-visited); }
+:root[data-theme="web94"] .site-footer .about-sign:active {
+  color: #f00;
+  padding: 0;
+  border: none;
+}
+:root[data-theme="web94"][data-mode="dark"] .site-footer .about-sign:active {
+  color: #ff8080;
+}
+:root[data-theme="web94"] .site-footer .about-sign:focus-visible {
+  outline: 1px dotted var(--text);
+  outline-offset: 2px;
+}
+
+/* Modern / Dark Modern: a quiet rounded Help button. */
+:root[data-theme="modern"] .site-footer .about-sign {
+  min-width: 0;
+  padding: 7px 16px;
+  color: var(--btn-fg);
+  background: var(--btn-bg);
+  border: var(--btn-border);
+  border-radius: var(--btn-radius);
+  font: 600 13px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+:root[data-theme="modern"] .site-footer .about-sign:hover { background: #f4f5f7; }
+:root[data-theme="modern"][data-mode="dark"] .site-footer .about-sign:hover { background: #2f333d; }
+:root[data-theme="modern"] .site-footer .about-sign:active {
+  border-style: solid;
+  transform: translateY(1px);
+  padding: 7px 16px;
+}
+:root[data-theme="modern"] .site-footer .about-sign:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 3px;
+}
+
+/* Windows XP: Luna-style Help button (Tahoma, soft gradient face). */
+:root[data-theme="winxp"] .site-footer .about-sign {
+  min-width: 75px;
+  padding: 3px 14px 4px;
+  color: var(--btn-fg);
+  background: var(--btn-bg);
+  border: var(--btn-border);
+  border-radius: 3px;
+  font: 12px Tahoma, "Segoe UI", "Microsoft Sans Serif", sans-serif;
+}
+:root[data-theme="winxp"] .site-footer .about-sign:active {
+  border-style: inset;
+  padding: 4px 13px 3px 15px;
+}
+:root[data-theme="winxp"] .site-footer .about-sign:focus-visible {
+  outline: 1px dotted var(--text);
+  outline-offset: -5px;
+}
+
+/* Atmosphere: same Help control, this theme's glassy gradient tokens. */
+:root[data-theme="aurora"] .site-footer .about-sign {
+  min-width: 0;
+  padding: 7px 16px;
+  color: var(--btn-fg);
+  background: var(--btn-bg);
+  border: var(--btn-border);
+  border-radius: var(--btn-radius);
+  font: 600 13px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  box-shadow: 0 0 12px rgba(138, 43, 226, .25);
+}
+:root[data-theme="aurora"] .site-footer .about-sign:active {
+  padding: 7px 16px;
+  border-style: solid;
+}
+:root[data-theme="aurora"] .site-footer .about-sign:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 3px;
+}

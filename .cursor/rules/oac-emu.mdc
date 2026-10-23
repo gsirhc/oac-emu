@@ -1,0 +1,20 @@
+---
+description: oac-emu project working principles — fidelity, clocks, site wiring
+alwaysApply: true
+---
+
+# oac-emu
+
+Follow the project rules in [`CLAUDE.md`](../../CLAUDE.md) at the repo root. That file is the source of truth; do not contradict it.
+
+In particular:
+
+- **Fidelity first.** Match real hardware behavior, timing, port maps, and status polarity. Cite period sources for quirks. Do not copy another emulator’s shortcuts.
+- **Real clocks.** The live page runs at the machine’s actual speed. No visitor-facing turbo. Test-only speed overrides follow the three rules in CLAUDE.md (default off, labelled, opt-in).
+- **New machines** are full browser WASM emulators (real CPU, real graphics, real storage), plus GoogleTest and Playwright, wired through `Makefile` and `.github/workflows/deploy-emulator.yml`.
+- **Copyright.** Do not bundle or fetch ROMs still under active copyright. Ship a labelled free stand-in (test ROM, open BIOS, FreeDOS) and let the user supply originals locally.
+- **Arcade cabinets** follow [`.claude/arcade.md`](../../.claude/arcade.md) (high-score persist, hwtest ROMs, shared chips, cabinet chrome).
+- **`about.html`** follows [`.claude/about.md`](../../.claude/about.md): agents may touch nav / header / footer chrome only; Chris owns the body copy.
+- **Visitor-facing copy** is Chris's voice (`about.html` is the tone reference), not generic AI prose. Prefer periods/commas over em dashes and stacked hyphens. Propose substantive rewrites for approval before editing. See CLAUDE.md "Visitor-facing copy".
+- **Formatting.** Match the file you are editing. Follow the Formatting section in CLAUDE.md (4-space C++, 2-space JavaScript/TypeScript/HTML/CSS, braces on the same line, the compact theme bootstrap left as-is). Do not reformat unrelated code. Do not add Prettier or clang-format.
+- **One working copy.** Always `/Users/chrisgall/code/oac-emu`. Never create git worktrees or sibling folders. For new work, ask Chris where it should go (default `main`; a branch only if he says so). Do not open PRs unless asked.

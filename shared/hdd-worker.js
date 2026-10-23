@@ -1,0 +1,271 @@
+"use strict";
+// Owns C:'s IndexedDB storage off the main thread. Jobs run in arrival order, so a load sees
+// every earlier save. C: is stored as 64KB chunks keyed "c2:<index>"; all-zero chunks have no record.
+// ?db= names the database (a preset C: has its own), ?model= the drive, ?convert=1 loads the
+// legacy converter. Without one a legacy whole-image record is the same size and kept as is.
+const params = new URLSearchParams(self.location.search);
+if (params.get("convert") === "1") importScripts("hdd-convert.js");
+const convertLegacy = self.convertLegacyHdd || ((u8) => u8);
+const DB_NAME = params.get("db"), STORE = "hdd";
+const META_KEY = "c2-meta";
+const CHUNK = 65536;
+const MODEL = params.get("model");
+const chunkKey = (i) => "c2:" + String(i).padStart(5, "0");
+const chunkIndex = (key) => parseInt(key.slice(3), 10);
+const CHUNK_RANGE = IDBKeyRange.bound("c2:", "c2:￿");
+
+// Keys from the whole-image builds (pc486's 504MB C:, ibmpc-at's single record).
+const LEGACY_KEY = "c-drive";
+const LEGACY_CHUNK_META = "hdd-meta";
+const LEGACY_FACTORY_KEY = "factory-base";
+const LEGACY_FACTORY_META = "factory-base-meta";
+
+let dbPromise = null;
+function openDb() {
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore(STORE);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    // A refused open is retried on the next call, so storage that comes back is used.
+    dbPromise.catch(() => { dbPromise = null; });
+  }
+  return dbPromise;
+}
+function reqP(req) {
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function txDone(tx) {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error("transaction aborted"));
+  });
+}
+async function get(key) {
+  const db = await openDb();
+  return reqP(db.transaction(STORE, "readonly").objectStore(STORE).get(key));
+}
+function isZero(u8) {
+  const w = new Uint32Array(u8.buffer, u8.byteOffset, u8.byteLength >> 2);
+  for (let i = 0; i < w.length; i++) if (w[i]) return false;
+  return true;
+}
+
+// ---- legacy (504MB) records ----
+async function readLegacyFactoryBase() {
+  const meta = await get(LEGACY_FACTORY_META);
+  if (meta && meta.v === 1 && meta.chunks > 0) {
+    const out = new Uint8Array(meta.length);
+    for (let i = 0; i < meta.chunks; i++) {
+      const chunk = await get(LEGACY_FACTORY_KEY + ":" + i);
+      if (!chunk) return null;
+      out.set(new Uint8Array(chunk.buffer || chunk), i * meta.chunkSize);
+    }
+    return out;
+  }
+  const raw = await get(LEGACY_FACTORY_KEY);
+  if (raw instanceof Blob) return new Uint8Array(await raw.arrayBuffer());
+  return raw ? new Uint8Array(raw.buffer || raw) : null;
+}
+async function readLegacy() {
+  const rec = await get(LEGACY_KEY);
+  if (rec instanceof Blob) {
+    const ds = new DecompressionStream("gzip");
+    return new Uint8Array(await new Response(rec.stream().pipeThrough(ds)).arrayBuffer());
+  }
+  if (rec && rec.v === 1 && rec.base === "factory" && Array.isArray(rec.patches)) {
+    const base = await readLegacyFactoryBase();
+    if (!base) return null;
+    for (const p of rec.patches) base.set(new Uint8Array(p.bytes.buffer || p.bytes), p.offset | 0);
+    return base;
+  }
+  // Chromium refuses a 504MB value, so only other browsers have raw bytes.
+  if (rec) return rec instanceof Uint8Array ? rec : new Uint8Array(rec);
+  const meta = await get(LEGACY_CHUNK_META);
+  if (meta && meta.v === 1 && meta.chunks > 0) {
+    const out = new Uint8Array(meta.length);
+    for (let i = 0; i < meta.chunks; i++) {
+      const chunk = await get(LEGACY_KEY + ":" + i);
+      if (!chunk) return null;
+      out.set(new Uint8Array(chunk.buffer || chunk), i * meta.chunkSize);
+    }
+    return out;
+  }
+  return null;
+}
+async function hasLegacy() {
+  return !!((await get(LEGACY_KEY)) || (await get(LEGACY_CHUNK_META)));
+}
+async function deleteLegacy(store) {
+  const meta = await reqP(store.get(LEGACY_CHUNK_META));
+  if (meta && meta.chunks) for (let i = 0; i < meta.chunks; i++) store.delete(LEGACY_KEY + ":" + i);
+  const fmeta = await reqP(store.get(LEGACY_FACTORY_META));
+  if (fmeta && fmeta.chunks) for (let i = 0; i < fmeta.chunks; i++) store.delete(LEGACY_FACTORY_KEY + ":" + i);
+  for (const k of [LEGACY_KEY, LEGACY_CHUNK_META, LEGACY_FACTORY_KEY, LEGACY_FACTORY_META]) store.delete(k);
+}
+
+// ---- current (256MB) records ----
+async function writeImage(u8, { factoryFp = null, modified = true, dropLegacy = false } = {}) {
+  const db = await openDb();
+  const tx = db.transaction(STORE, "readwrite");
+  const store = tx.objectStore(STORE);
+  store.delete(CHUNK_RANGE);
+  for (let i = 0, n = Math.ceil(u8.length / CHUNK); i < n; i++) {
+    const piece = u8.subarray(i * CHUNK, Math.min((i + 1) * CHUNK, u8.length));
+    if (!isZero(piece)) store.put(piece.slice().buffer, chunkKey(i));
+  }
+  store.put({ v: 2, length: u8.length, chunkSize: CHUNK, model: MODEL, factoryFp, modified }, META_KEY);
+  if (dropLegacy) await deleteLegacy(store);
+  await txDone(tx);
+}
+async function readImage(meta) {
+  const db = await openDb();
+  const store = db.transaction(STORE, "readonly").objectStore(STORE);
+  const [keys, values] = await Promise.all([reqP(store.getAllKeys(CHUNK_RANGE)), reqP(store.getAll(CHUNK_RANGE))]);
+  const out = new Uint8Array(meta.length);
+  for (let i = 0; i < keys.length; i++) out.set(new Uint8Array(values[i]), chunkIndex(keys[i]) * CHUNK);
+  return out;
+}
+
+const ops = {
+  async info() {
+    const meta = await get(META_KEY);
+    const legacy = await hasLegacy();
+    if (meta && meta.v === 2) return { result: { kind: "saved", modified: !!meta.modified, factoryFp: meta.factoryFp, legacy } };
+    return { result: { kind: legacy ? "legacy" : "none", legacy } };
+  },
+
+  // Converts a 504MB save on the way when that's all there is.
+  async load() {
+    const meta = await get(META_KEY);
+    if (meta && meta.v === 2) {
+      const img = await readImage(meta);
+      return { result: { status: "saved", modified: !!meta.modified, buffer: img.buffer }, transfer: [img.buffer] };
+    }
+    let legacy;
+    try {
+      legacy = await readLegacy();
+    } catch (err) {
+      return { result: { status: "legacy-unconverted", code: "format", reason: String(err && err.message || err) } };
+    }
+    if (!legacy) return { result: { status: "none" } };
+    let img;
+    try {
+      img = convertLegacy(legacy, (fraction) => self.postMessage({ progress: { phase: "convert", fraction } }));
+    } catch (err) {
+      return { result: { status: "legacy-unconverted", code: err.code || "format", reason: err.message } };
+    }
+    await writeImage(img, { modified: true, dropLegacy: true });
+    return { result: { status: "converted", modified: true, buffer: img.buffer }, transfer: [img.buffer] };
+  },
+
+  async convert({ buffer }) {
+    let img;
+    try {
+      img = convertLegacy(new Uint8Array(buffer), (fraction) => self.postMessage({ progress: { phase: "convert", fraction } }));
+    } catch (err) {
+      return { result: { ok: false, code: err.code || "format", reason: err.message } };
+    }
+    await writeImage(img, { modified: true, dropLegacy: true });
+    return { result: { ok: true } };
+  },
+
+  async replace({ buffer, factoryFp, modified }) {
+    await writeImage(new Uint8Array(buffer), { factoryFp, modified, dropLegacy: modified });
+    return { result: true };
+  },
+
+  async blank({ length }) {
+    const db = await openDb();
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    store.delete(CHUNK_RANGE);
+    store.put({ v: 2, length, chunkSize: CHUNK, model: MODEL, factoryFp: null, modified: true }, META_KEY);
+    await deleteLegacy(store);
+    await txDone(tx);
+    return { result: true };
+  },
+
+  // Sector writes since the last save as {offset, bytes}; touched chunks are patched in one transaction.
+  async patch({ patches }) {
+    const db = await openDb();
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    const meta = await reqP(store.get(META_KEY));
+    if (!meta || meta.v !== 2) {
+      tx.abort();
+      return { result: { needFull: true } };
+    }
+    const touched = new Map();
+    for (const p of patches) {
+      const bytes = new Uint8Array(p.bytes.buffer || p.bytes, p.bytes.byteOffset || 0, p.bytes.byteLength);
+      let off = p.offset, pos = 0;
+      while (pos < bytes.length) {
+        const i = Math.floor(off / CHUNK), within = off - i * CHUNK;
+        const len = Math.min(bytes.length - pos, CHUNK - within);
+        if (!touched.has(i)) touched.set(i, []);
+        touched.get(i).push({ within, bytes: bytes.subarray(pos, pos + len) });
+        off += len;
+        pos += len;
+      }
+    }
+    const chunks = await Promise.all([...touched.keys()].map((i) => reqP(store.get(chunkKey(i)))));
+    [...touched.entries()].forEach(([i, pieces], k) => {
+      const size = Math.min(CHUNK, meta.length - i * CHUNK);
+      const chunk = chunks[k] ? new Uint8Array(chunks[k]) : new Uint8Array(size);
+      for (const { within, bytes } of pieces) chunk.set(bytes, within);
+      if (isZero(chunk)) store.delete(chunkKey(i));
+      else store.put(chunk.buffer, chunkKey(i));
+    });
+    if (!meta.modified) store.put({ ...meta, modified: true }, META_KEY);
+    await txDone(tx);
+    return { result: { needFull: false } };
+  },
+
+  async forget() {
+    const db = await openDb();
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    store.delete(CHUNK_RANGE);
+    store.delete(META_KEY);
+    await txDone(tx);
+    return { result: true };
+  },
+
+  async clear() {
+    const db = await openDb();
+    const tx = db.transaction(STORE, "readwrite");
+    const store = tx.objectStore(STORE);
+    store.delete(CHUNK_RANGE);
+    store.delete(META_KEY);
+    await deleteLegacy(store);
+    await txDone(tx);
+    return { result: true };
+  },
+
+  async loadLegacy() {
+    const img = await readLegacy();
+    if (!img) return { result: null };
+    const buf = img.byteOffset === 0 && img.byteLength === img.buffer.byteLength ? img.buffer : img.slice().buffer;
+    return { result: buf, transfer: [buf] };
+  },
+};
+
+let queue = Promise.resolve();
+self.onmessage = (e) => {
+  const { id, op, args } = e.data;
+  queue = queue.then(async () => {
+    try {
+      const { result, transfer } = await ops[op](args || {});
+      self.postMessage({ id, ok: true, result }, transfer || []);
+    } catch (err) {
+      self.postMessage({ id, ok: false, error: String(err && err.message || err) });
+    }
+  });
+};

@@ -1,0 +1,47 @@
+import { test, expect, type Page } from "@playwright/test";
+
+// One audio block is posted per frame, ~60 per second.
+const blocks = (page: Page, n: number) => page.evaluate((k) => new Promise<void>((done) => {
+  const w = window as any;
+  const end = w.__audioBlocks + k;
+  const tick = () => (w.__audioBlocks >= end ? done() : requestAnimationFrame(tick));
+  tick();
+}), n);
+
+test.describe("Audio level", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      const w = window as any;
+      w.__audioPeak = 0;
+      w.__audioBlocks = 0;
+      const post = MessagePort.prototype.postMessage;
+      MessagePort.prototype.postMessage = function (this: MessagePort, data: any, ...rest: any[]) {
+        if (data instanceof Float32Array) {
+          w.__audioBlocks++;
+          for (const s of data) w.__audioPeak = Math.max(w.__audioPeak, Math.abs(s));
+        }
+        return (post as any).call(this, data, ...rest);
+      };
+    });
+    await page.goto("/?test=1");
+    await page.waitForFunction(() => (window as any).__test);
+    await page.locator("body").click({ position: { x: 5, y: 5 } });
+    await page.waitForFunction(() => (window as any).__audioBlocks > 10);
+  });
+
+  test("an FS voice reaches the speaker at the discrete mixer level", async ({ page }) => {
+    await page.evaluate(() => { (window as any).__audioPeak = 0; });
+    await blocks(page, 18);
+    const idle = await page.evaluate(() => (window as any).__audioPeak);
+    await page.evaluate(() => {
+      const m = (window as any).__test.machine;
+      m.setMemByte(0x6800, 1);
+      (window as any).__audioPeak = 0;
+    });
+    await blocks(page, 30);
+    const peak = await page.evaluate(() => (window as any).__audioPeak);
+    expect(idle).toBeLessThan(1e-3);
+    expect(peak).toBeGreaterThan(0.11);
+    expect(peak).toBeLessThan(0.21);
+  });
+});

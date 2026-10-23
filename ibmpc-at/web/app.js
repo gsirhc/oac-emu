@@ -1,0 +1,754 @@
+"use strict";
+(() => {
+  // ---- page theme ----
+  // shared retro8080.theme localStorage key
+  initThemePicker();
+
+  // "Last built" is the wasm's mtime from the server
+  (async () => {
+    const el = document.getElementById("buildDate");
+    for (const url of ["ibmpcat.wasm", "ibmpcat.js", "app.js"]) {
+      try {
+        const r = await fetch(url, { method: "HEAD", cache: "no-store" });
+        const lm = r.headers.get("Last-Modified");
+        if (lm) {
+          el.textContent = new Date(lm).toLocaleString(undefined,
+            { year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" });
+          return;
+        }
+      } catch {}
+    }
+    /* v8 ignore next, only if every HEAD request fails / lacks Last-Modified */
+    el.textContent = "unknown";
+  })();
+
+  // Test-only CPU multiplier (?test=1&fast=1). Bare ?test=1 stays real speed.
+  const testParams = new URLSearchParams(location.search);
+  const TEST_CPU_MULTIPLIER =
+    testParams.get("test") === "1" && testParams.get("fast") === "1" ? 20 : 1;
+
+  // ---- keyboard: key -> AT Set 1 scan code ----
+  // number = one byte, array = 0xE0-prefixed. Break = make | 0x80 on the last byte.
+  const SET1 = {
+    Escape: 0x01,
+    Digit1: 0x02, Digit2: 0x03, Digit3: 0x04, Digit4: 0x05, Digit5: 0x06,
+    Digit6: 0x07, Digit7: 0x08, Digit8: 0x09, Digit9: 0x0A, Digit0: 0x0B,
+    Minus: 0x0C, Equal: 0x0D, Backspace: 0x0E,
+    Tab: 0x0F, KeyQ: 0x10, KeyW: 0x11, KeyE: 0x12, KeyR: 0x13, KeyT: 0x14,
+    KeyY: 0x15, KeyU: 0x16, KeyI: 0x17, KeyO: 0x18, KeyP: 0x19,
+    BracketLeft: 0x1A, BracketRight: 0x1B, Enter: 0x1C,
+    ControlLeft: 0x1D,
+    KeyA: 0x1E, KeyS: 0x1F, KeyD: 0x20, KeyF: 0x21, KeyG: 0x22, KeyH: 0x23,
+    KeyJ: 0x24, KeyK: 0x25, KeyL: 0x26,
+    Semicolon: 0x27, Quote: 0x28, Backquote: 0x29,
+    ShiftLeft: 0x2A, Backslash: 0x2B,
+    KeyZ: 0x2C, KeyX: 0x2D, KeyC: 0x2E, KeyV: 0x2F, KeyB: 0x30, KeyN: 0x31, KeyM: 0x32,
+    Comma: 0x33, Period: 0x34, Slash: 0x35, ShiftRight: 0x36,
+    NumpadMultiply: 0x37, AltLeft: 0x38, Space: 0x39, CapsLock: 0x3A,
+    F1: 0x3B, F2: 0x3C, F3: 0x3D, F4: 0x3E, F5: 0x3F, F6: 0x40,
+    F7: 0x41, F8: 0x42, F9: 0x43, F10: 0x44,
+    NumLock: 0x45, ScrollLock: 0x46,
+    Numpad7: 0x47, Numpad8: 0x48, Numpad9: 0x49, NumpadSubtract: 0x4A,
+    Numpad4: 0x4B, Numpad5: 0x4C, Numpad6: 0x4D, NumpadAdd: 0x4E,
+    Numpad1: 0x4F, Numpad2: 0x50, Numpad3: 0x51, Numpad0: 0x52, NumpadDecimal: 0x53,
+    F11: 0x57, F12: 0x58,
+    ControlRight: [0xE0, 0x1D], AltRight: [0xE0, 0x38],
+    Insert: [0xE0, 0x52], Delete: [0xE0, 0x53],
+    Home: [0xE0, 0x47], End: [0xE0, 0x4F], PageUp: [0xE0, 0x49], PageDown: [0xE0, 0x51],
+    ArrowUp: [0xE0, 0x48], ArrowLeft: [0xE0, 0x4B], ArrowRight: [0xE0, 0x4D], ArrowDown: [0xE0, 0x50],
+    NumpadEnter: [0xE0, 0x1C], NumpadDivide: [0xE0, 0x35],
+    // Fixed sequences, no simple break-bit form. Pause has no break code (Set 1).
+    PrintScreen: { make: [0xE0, 0x2A, 0xE0, 0x37], break: [0xE0, 0xB7, 0xE0, 0xAA] },
+    Pause: { make: [0xE1, 0x1D, 0x45, 0xE1, 0x9D, 0xC5], break: [] },
+  };
+
+  let machine = null;
+
+  // The keyboard buffers and paces bytes itself, so a whole sequence goes in at once.
+  function injectScancodeSequence(codes) {
+    if (!machine) return;
+    for (const code of codes) machine.injectScancode(code);
+  }
+
+  function sendKey(code, isBreak) {
+    const entry = SET1[code];
+    if (entry === undefined || !machine) return;
+    if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+      // Print Screen / Pause: fixed sequences
+      injectScancodeSequence(isBreak ? entry.break : entry.make);
+      return;
+    }
+    const bytes = Array.isArray(entry) ? entry.slice() : [entry];
+    const last = bytes.length - 1;
+    bytes[last] = isBreak ? (bytes[last] | 0x80) : bytes[last];
+    injectScancodeSequence(bytes);
+  }
+  const screenEl = document.getElementById("screen");
+  // The keyboard repeats on its own clock, so browser repeats are dropped (pc-keyboard.js).
+  const keyboard = initPcKeyboard({
+    root: document.getElementById("keyboardBody"),
+    toggleId: "keyboardToggle",
+    cardId: "keyboardCard",
+    sendKey,
+    isEnabled: () => poweredOn && !!machine,
+    readLeds: () => (machine ? machine.keyboardLeds() : 0),
+    keymapStorageKey: "retro8080.ibmpcat.keymap",
+    openStateKey: "retro8080.ibmpcat.keyboardOpen",
+    bezelKeysBtn: document.getElementById("keymapAllBtn"),
+  });
+  screenEl.addEventListener("keydown", keyboard.keyDown);
+  screenEl.addEventListener("keyup", keyboard.keyUp);
+  screenEl.addEventListener("blur", keyboard.releaseAll);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) keyboard.releaseAll(); });
+  screenEl.addEventListener("click", () => screenEl.focus());
+
+  // poweredOn is declared later, so pass it as a predicate
+  const isRunning = () => poweredOn;
+  const updateFocusHint = initFocusHint(screenEl, isRunning);
+  initFullscreen({
+    bezelEl: document.getElementById("bezel"),
+    screenEl,
+    fullscreenBtn: document.getElementById("fullscreenBtn"),
+    fsEscHint: document.getElementById("fsEscHint"),
+    fsEscHintOkBtn: document.getElementById("fsEscHintOk"),
+    isRunning,
+  });
+
+  // Nestable load overlay. Two rAFs let the spinner paint before a sync mount.
+  const loadOverlayEl = document.getElementById("loadOverlay");
+  const loadOverlayLabel = document.getElementById("loadOverlayLabel");
+  let loadBusyDepth = 0;
+  function beginLoad(msg) {
+    loadBusyDepth++;
+    if (msg) loadOverlayLabel.textContent = msg;
+    loadOverlayEl.classList.add("visible");
+    loadOverlayEl.setAttribute("aria-hidden", "false");
+  }
+  function endLoad() {
+    loadBusyDepth = Math.max(0, loadBusyDepth - 1);
+    if (loadBusyDepth === 0) {
+      loadOverlayEl.classList.remove("visible");
+      loadOverlayEl.setAttribute("aria-hidden", "true");
+    }
+  }
+  function paintLoadOverlay() {
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+  }
+  async function withLoad(msg, fn) {
+    beginLoad(msg);
+    try {
+      await paintLoadOverlay();
+      return await fn();
+    } finally {
+      endLoad();
+    }
+  }
+
+  // ---- floppy drives ----
+  // insert/eject works powered off too; pendingFloppy is remounted on power-on
+  const bays = Array.from(document.querySelectorAll(".at-bay"));
+  const driveDefaultLabel = (d) => (d === 0 ? "empty (1.2MB, 5.25″)" : "empty (360KB, 5.25″)");
+  function setBayLoaded(bay, name) {
+    bay.classList.add("loaded");
+    const label = bay.querySelector('[data-role="label"]');
+    label.textContent = name;
+    label.classList.remove("empty");
+    bay.querySelector('[data-role="eject"]').disabled = false;
+  }
+  function setBayEmpty(bay, drive) {
+    bay.classList.remove("loaded");
+    const label = bay.querySelector('[data-role="label"]');
+    label.textContent = driveDefaultLabel(drive);
+    label.classList.add("empty");
+    bay.querySelector('[data-role="eject"]').disabled = true;
+  }
+  // Writes live only in memory, so a written disk is handed back as a download.
+  function saveFloppy(drive) {
+    if (!machine || !machine.floppyDirty(drive)) return;
+    const bay = bays[drive];
+    const label = bay.querySelector('[data-role="label"]');
+    const blob = new Blob([machine.floppyImage(drive)], { type: "application/octet-stream" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (label.textContent || "disk").replace(/\.img$/i, "").replace(/[^\w.-]+/g, "_") + ".img";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    machine.clearFloppyDirty(drive);
+    bay.querySelector('[data-role="save"]').hidden = true;
+  }
+  async function insertFloppy(drive, name, data) {
+    saveFloppy(drive);
+    await withLoad("Loading floppy\u2026", async () => {
+      const bytes = await data;
+      pendingFloppy[drive] = { name, bytes };
+      if (machine) machine.mountFloppy(drive, bytes);
+      setBayLoaded(bays[drive], name);
+    });
+  }
+  for (const bay of bays) {
+    const drive = parseInt(bay.dataset.drive, 10);
+    const fileInput = bay.querySelector('[data-role="file"]');
+    fileInput.addEventListener("change", async () => {
+      const f = fileInput.files[0];
+      fileInput.value = "";
+      if (!f) return;
+      await insertFloppy(drive, f.name, f.arrayBuffer().then((b) => new Uint8Array(b)));
+    });
+    bay.querySelector('[data-role="save"]').addEventListener("click", () => saveFloppy(drive));
+    bay.querySelector('[data-role="eject"]').addEventListener("click", () => {
+      saveFloppy(drive);
+      if (machine) machine.unmountFloppy(drive);
+      pendingFloppy[drive] = null;
+      setBayEmpty(bay, drive);
+    });
+  }
+
+  // A: is a 1.2MB drive, which also reads 360K media; B: is 360K only.
+  const driveTakes = [(k) => k === 1200 || k === 360, (k) => k === 360];
+  initDiskLibrary({
+    button: document.getElementById("libraryBtn"),
+    drives: [{ id: 0, name: "A:", accepts: driveTakes[0] }, { id: 1, name: "B:", accepts: driveTakes[1] }],
+    insert: (drive, label, bytes) => insertFloppy(drive, label, bytes),
+  });
+
+  const FLOPPY_K = { 1228800: 1200, 368640: 360 };
+  const emptyDrive = () => (pendingFloppy[0] ? (pendingFloppy[1] ? 0 : 1) : 0);
+  const diskDrop = initDiskDrop({
+    accept: /\.(img|ima)$/i,
+    message: () => `Drop a floppy image to put it in drive ${emptyDrive() ? "B" : "A"}:`,
+    onDrop: async (f) => {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      const k = FLOPPY_K[bytes.length];
+      if (!k) {
+        diskDrop.flash(`${f.name} isn't a 1.2MB or 360K floppy image.`);
+        return;
+      }
+      const fits = [0, 1].filter((d) => driveTakes[d](k));
+      const drive = fits.find((d) => !pendingFloppy[d]) ?? fits[0];
+      await insertFloppy(drive, f.name, bytes);
+    },
+    onReject: (f) => diskDrop.flash(`${f.name} isn't a floppy image. The drives take .img files.`),
+  });
+
+  // ---- PC speaker (muted every page load) ----
+  // AudioWorklet ring buffer: a main-thread stall holds the last sample instead of
+  // leaving a gap that clicks.
+  const speakerCheckbox = document.getElementById("speakerEnabled");
+  speakerCheckbox.checked = false;
+  let audioCtx = null, speakerNode = null, lastLevel = false;
+
+  // worklet source loaded from a Blob URL to keep it in this script
+  const kSpeakerWorkletSrc = `
+    class PcSpeakerProcessor extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        // ~350ms at 48kHz of jank headroom
+        this.ring = new Float32Array(16384);
+        this.writeIdx = 0;
+        this.readIdx = 0;
+        this.available = 0;
+        this.lastSample = 0;
+        this.port.onmessage = (e) => {
+          const chunk = e.data;
+          for (let i = 0; i < chunk.length; i++) {
+            this.ring[this.writeIdx] = chunk[i];
+            this.writeIdx = (this.writeIdx + 1) % this.ring.length;
+            if (this.available < this.ring.length) {
+              this.available++;
+            } else {
+              // overflow: drop oldest, like an unread FIFO
+              this.readIdx = (this.readIdx + 1) % this.ring.length;
+            }
+          }
+        };
+      }
+      process(_inputs, outputs) {
+        const out = outputs[0][0];
+        for (let i = 0; i < out.length; i++) {
+          if (this.available > 0) {
+            this.lastSample = this.ring[this.readIdx];
+            this.readIdx = (this.readIdx + 1) % this.ring.length;
+            this.available--;
+          }
+          // underrun: hold last sample to avoid a click
+          out[i] = this.lastSample;
+        }
+        return true;
+      }
+    }
+    registerProcessor("pc-speaker-processor", PcSpeakerProcessor);
+  `;
+
+  async function ensureAudioStarted() {
+    if (audioCtx) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const blobUrl = URL.createObjectURL(new Blob([kSpeakerWorkletSrc], { type: "application/javascript" }));
+    try {
+      await audioCtx.audioWorklet.addModule(blobUrl);
+    } finally {
+      URL.revokeObjectURL(blobUrl);
+    }
+    speakerNode = new AudioWorkletNode(audioCtx, "pc-speaker-processor", { numberOfOutputs: 1, outputChannelCount: [1] });
+    speakerNode.connect(audioCtx.destination);
+  }
+  speakerCheckbox.addEventListener("change", () => {
+    if (speakerCheckbox.checked) ensureAudioStarted();
+  });
+
+  // Turns this frame's (cpu_cycle, level) edges into samples for the worklet ring.
+  function pumpAudio(frameStartCycle, cyclesThisFrame, dtSeconds) {
+    const edges = machine.speakerEdges();  // always drain, even if muted
+    if (!audioCtx || !speakerNode || !speakerCheckbox.checked || cyclesThisFrame <= 0) return;
+    const sampleRate = audioCtx.sampleRate;
+    // real dtSeconds, not cycles/8MHz, so the fast-test multiplier doesn't overproduce samples
+    const sampleCount = Math.max(1, Math.round(dtSeconds * sampleRate));
+    const data = new Float32Array(sampleCount);
+
+    let level = lastLevel, sampleIdx = 0;
+    const cycles = edges.cycles, levels = edges.levels;
+    // effective cycles/sec this frame
+    const cyclesPerRealSecond = cyclesThisFrame / dtSeconds;
+    for (let i = 0; i < cycles.length; i++) {
+      let edgeSample = Math.round(((cycles[i] - frameStartCycle) / cyclesPerRealSecond) * sampleRate);
+      if (edgeSample < 0) edgeSample = 0;
+      if (edgeSample > sampleCount) edgeSample = sampleCount;
+      const v = level ? 0.25 : -0.25;
+      for (; sampleIdx < edgeSample; sampleIdx++) data[sampleIdx] = v;
+      level = levels[i] !== 0;
+    }
+    const vTail = level ? 0.25 : -0.25;
+    for (; sampleIdx < sampleCount; sampleIdx++) data[sampleIdx] = vTail;
+    lastLevel = level;
+
+    speakerNode.port.postMessage(data, [data.buffer]);
+  }
+
+  // ---- main loop ----
+  const ctx = screenEl.getContext("2d");
+  const hddLed = document.getElementById("hddLed");
+  let cycleCredit = 0, lastT = null;
+
+  function clearScreenToBlack() {
+    setFrameSize(kTextRenderWidth, kTextRenderHeight);
+    frameCtx.fillStyle = "#000";
+    frameCtx.fillRect(0, 0, frameCanvas.width, frameCanvas.height);
+    presentFrame();
+  }
+  const kTextRenderWidth = 640, kTextRenderHeight = 350;  // ega_render.h text-mode default
+
+  // The guest frame lands in frameCanvas at native resolution, is scaled by a whole factor per
+  // axis (nearest) into #screen, then smooth-scaled to the CSS box, so guest pixels stay uniform.
+  // The 5154 Enhanced Color Display is a 4:3 tube in every mode, so 640x350 and 320x200 stretch tall.
+  const frameCanvas = document.createElement("canvas");
+  const frameCtx = frameCanvas.getContext("2d");
+  const kMaxScreenScale = 4;  // past 4x the final smoothing pass is invisible
+  let screenScaleX = 0, screenScaleY = 0;
+
+  function setFrameSize(w, h) {
+    if (frameCanvas.width === w && frameCanvas.height === h && screenScaleX) return;
+    frameCanvas.width = w;
+    frameCanvas.height = h;
+    screenScaleX = screenScaleY = 0;
+    fitScreen();
+  }
+
+  function fitScreen() {
+    const dpr = window.devicePixelRatio || 1;
+    const axis = (box, n) => Math.min(kMaxScreenScale, Math.max(1, Math.ceil(box * dpr / n - 0.01)));
+    const sx = axis(screenEl.clientWidth, frameCanvas.width);
+    const sy = axis(screenEl.clientHeight, frameCanvas.height);
+    if (sx === screenScaleX && sy === screenScaleY) return;
+    screenScaleX = sx;
+    screenScaleY = sy;
+    screenEl.width = frameCanvas.width * sx;
+    screenEl.height = frameCanvas.height * sy;
+    ctx.imageSmoothingEnabled = false;
+    presentFrame();
+  }
+
+  function presentFrame() {
+    ctx.drawImage(frameCanvas, 0, 0, screenEl.width, screenEl.height);
+  }
+
+  const screenResizeObserver = new ResizeObserver(fitScreen);
+  try {
+    screenResizeObserver.observe(screenEl, { box: "device-pixel-content-box" });
+  } catch {
+    screenResizeObserver.observe(screenEl);
+    // Without device-pixel-content-box a monitor move changes no CSS size, so watch the ratio.
+    (function watchDpr() {
+      matchMedia("(resolution: " + (window.devicePixelRatio || 1) + "dppx)")
+        .addEventListener("change", () => { fitScreen(); watchDpr(); }, { once: true });
+    })();
+  }
+
+  function frame(t) {
+    if (!poweredOn || !machine) return;  // powered off mid-loop, stop rescheduling
+    if (lastT === null) lastT = t;
+    let dtSeconds = (t - lastT) / 1000;
+    lastT = t;
+    dtSeconds = Math.min(dtSeconds, 0.25);  // clamp backgrounded-tab gap
+
+    // real 8 MHz; TEST_CPU_MULTIPLIER is 1 outside ?test=1&fast=1
+    cycleCredit += dtSeconds * 8000000 * TEST_CPU_MULTIPLIER;
+    let cyclesThisFrame = Math.floor(cycleCredit);
+    cycleCredit -= cyclesThisFrame;
+    const frameStartCycle = machine.totalCycles();
+    if (TEST_CPU_MULTIPLIER === 1) {
+      if (cyclesThisFrame > 0) machine.runCycles(cyclesThisFrame);
+    } else {
+      // fast test mode: stop at a wall-clock budget and drop the rest, or input starves behind 250ms frames
+      const deadline = performance.now() + 12;
+      while (cyclesThisFrame > 0 && performance.now() < deadline) {
+        const n = Math.min(cyclesThisFrame, 200000);
+        machine.runCycles(n);
+        cyclesThisFrame -= n;
+      }
+      cycleCredit = 0;
+    }
+
+    pumpAudio(frameStartCycle, machine.totalCycles() - frameStartCycle, dtSeconds);
+
+    const rgba = machine.renderFrame();
+    // Resolution varies by mode (640x350 text, 320x200 CGA graphics, ega_render.h); the 4:3 box stays put.
+    const frameW = machine.renderWidth(), frameH = machine.renderHeight();
+    setFrameSize(frameW, frameH);
+    const img = frameCtx.createImageData(frameW, frameH);
+    img.data.set(rgba);
+    frameCtx.putImageData(img, 0, 0);
+    presentFrame();
+
+    for (const bay of bays) {
+      const drive = parseInt(bay.dataset.drive, 10);
+      const led = bay.querySelector('[data-role="led"]');
+      led.classList.toggle("on", machine.floppyPresent(drive) && machine.floppyMotorOn(drive));
+      bay.querySelector('[data-role="save"]').hidden = !(machine.floppyPresent(drive) && machine.floppyDirty(drive));
+    }
+    hddLed.classList.toggle("on", machine.hddBusy());
+
+    requestAnimationFrame(frame);
+  }
+
+  // ---- preset C: (?disk=keen1, the home page's Ready to Play cards) ----
+  const kPresetHdds = {
+    keen1: { file: "disks/presets/keen1-hdd.img", label: "Commander Keen 1 shareware", reset: "Reset to original Keen disk" },
+  };
+  const presetId = new URLSearchParams(location.search).get("disk");
+  const presetHdd = Object.hasOwn(kPresetHdds, presetId) ? kPresetHdds[presetId] : null;
+  addFooterNote("All shareware and freeware titles remain the property of their respective owners. <a href=\"../about.html#rights\">More info</a>.");
+  const kFactoryHddLabel = presetHdd ? presetHdd.label : "factory FreeDOS (default)";
+
+  // ---- hard disk persistence (IndexedDB, shared/hdd-worker.js) ----
+  // The Machine is discarded on power-off, so C: is mirrored to IndexedDB, written sectors only.
+  // A preset C: has its own database, so the visitor's own C: is never touched.
+  const hddWorker = (() => {
+    const db = presetHdd ? "ibmpcat-hdd-" + presetId : "ibmpcat-hdd";
+    const worker = new Worker("shared/hdd-worker.js?model=WD1003&db=" + db);
+    const pending = new Map();
+    let nextId = 1;
+    worker.onmessage = (e) => {
+      const m = e.data;
+      if (m.progress) return;
+      const p = pending.get(m.id);
+      pending.delete(m.id);
+      if (m.ok) p.resolve(m.result);
+      else p.reject(new Error(m.error));
+    };
+    worker.onerror = (e) => {
+      console.error("hard disk worker failed:", e.message);
+      for (const p of pending.values()) p.reject(new Error(e.message));
+      pending.clear();
+    };
+    return {
+      call(op, args, transfer) {
+        const id = nextId++;
+        return new Promise((resolve, reject) => {
+          pending.set(id, { resolve, reject });
+          worker.postMessage({ id, op, args }, transfer || []);
+        });
+      },
+    };
+  })();
+  const HDD_STORAGE_BLOCKED = "Warning: the browser blocked storage (IndexedDB). Changes to C: won't be there when you return.";
+  let hddStorageOk = true;
+  function hddStorageFailed(what, err) {
+    console.error(what, err);
+    hddStorageOk = false;
+    refreshHddControls();
+  }
+  // A save from the single-record builds loads too; the worker rewrites it as chunks.
+  async function loadSavedHdd() {
+    try {
+      const r = await hddWorker.call("load");
+      return r.status === "saved" || r.status === "converted" ? new Uint8Array(r.buffer) : null;
+    } catch (err) {
+      hddStorageFailed("could not read saved hard disk, using factory default:", err);
+      return null;
+    }
+  }
+  let hddPersistChain = Promise.resolve();
+  function queueHddOp(what, op, args, transfer) {
+    hddPersistChain = hddPersistChain.then(() => hddWorker.call(op, args, transfer)).catch((err) => {
+      hddStorageFailed(what, err);
+    });
+    return hddPersistChain;
+  }
+
+  // ---- power switch ----
+  // power-off discards the Machine; power-on remounts floppies from pendingFloppy.
+  // No reset button on the 5170.
+  const powerSwitch = document.getElementById("powerSwitch");
+  const powerLed = document.getElementById("powerLed");
+  let poweredOn = false;
+  let firmware = null;  // {Module, bios, videoBios, hdd}, fetched once
+  const pendingFloppy = [null, null];  // {name, bytes} per drive
+
+  // next power-on mounts the saved IndexedDB image if any, else the factory image
+  let savedHdd = null;   // Uint8Array | null
+  let hddLabel = kFactoryHddLabel;
+  const hddStatus = document.getElementById("hddStatus");
+  const hddResetBtn = document.getElementById("hddResetBtn");
+  const hddBlankBtn = document.getElementById("hddBlankBtn");
+  const hddDownloadBtn = document.getElementById("hddDownloadBtn");
+  const hddUploadInput = document.getElementById("hddUploadInput");
+  if (presetHdd) {
+    hddResetBtn.textContent = presetHdd.reset;
+    hddBlankBtn.hidden = true;
+    hddUploadInput.closest(".filebtn").hidden = true;
+  }
+  function refreshHddControls() {
+    hddStatus.textContent = "Using: " + hddLabel + (hddStorageOk ? "" : ". " + HDD_STORAGE_BLOCKED);
+    // C: only changes at the next power-on
+    hddResetBtn.disabled = !firmware || poweredOn;
+    hddBlankBtn.disabled = !firmware || poweredOn;
+    hddDownloadBtn.disabled = !firmware;  // read-only, works while running
+    hddUploadInput.disabled = !firmware || poweredOn;
+    document.getElementById("hddUploadBtn").disabled = !firmware || poweredOn;
+  }
+  hddResetBtn.addEventListener("click", () => {
+    savedHdd = null;
+    hddLabel = kFactoryHddLabel + " -- takes effect next power-on";
+    refreshHddControls();
+    queueHddOp("could not clear saved hard disk:", "clear");
+  });
+  hddBlankBtn.addEventListener("click", () => {
+    if (!firmware) return;
+    savedHdd = new Uint8Array(firmware.hdd.byteLength);  // all zero, unformatted
+    hddLabel = "blank drive, unformatted (FDISK/FORMAT and install your own OS) -- takes effect next power-on";
+    refreshHddControls();
+    queueHddOp("could not save blank hard disk:", "blank", { length: savedHdd.byteLength });
+  });
+  // download C: as a file
+  hddDownloadBtn.addEventListener("click", () => {
+    if (!firmware) return;
+    // live image if running, else staged, else factory
+    const bytes = (poweredOn && machine) ? machine.hddImage() : (savedHdd || new Uint8Array(firmware.hdd));
+    const blob = new Blob([bytes], { type: "application/octet-stream" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = presetHdd ? "ibmpcat-" + presetId + "-hdd.img" : "ibmpcat-hdd.img";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  });
+  hddUploadInput.addEventListener("change", async () => {
+    const f = hddUploadInput.files[0];
+    hddUploadInput.value = "";
+    if (!f || !firmware) return;
+    await withLoad("Loading hard disk\u2026", async () => {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      // WD1003 geometry (733/5/17) is fixed in CMOS, so reject wrong-size images
+      if (bytes.byteLength !== firmware.hdd.byteLength) {
+        alert("That file is " + bytes.byteLength + " bytes; this machine's hard disk " +
+              "must be exactly " + firmware.hdd.byteLength + " bytes (733 cyl / 5 head / " +
+              "17 sec/track). Not mounted.");
+        return;
+      }
+      savedHdd = bytes;
+      hddLabel = "uploaded image (" + f.name + ") -- takes effect next power-on";
+      refreshHddControls();
+      const copy = savedHdd.slice().buffer;
+      await queueHddOp("could not store uploaded hard disk:", "replace", { buffer: copy, modified: true }, [copy]);
+    });
+  });
+
+  function remountPendingFloppies() {
+    for (let d = 0; d < 2; d++) {
+      const p = pendingFloppy[d];
+      if (!p) continue;
+      machine.mountFloppy(d, p.bytes);
+      setBayLoaded(bays[d], p.name);
+    }
+  }
+
+  // Shown only over the factory C:, until the screen first gains focus.
+  const BOOT_NOTICE_KEY = "retro8080.ibmpcatBootNoticeDismissed";
+  const bootNoticeEl = document.getElementById("bootNotice");
+  function hideBootNotice() { bootNoticeEl.classList.remove("visible"); }
+  function dismissBootNotice() {
+    hideBootNotice();
+    try { localStorage.setItem(BOOT_NOTICE_KEY, "1"); } catch {}
+  }
+  document.addEventListener("focusin", () => {
+    if (screenEl.contains(document.activeElement)) dismissBootNotice();
+  });
+
+  function powerOn() {
+    if (poweredOn || !firmware) return;
+    const factoryC = !presetHdd && !savedHdd;
+    if (!machine) {
+      machine = new firmware.Module.Machine();
+      machine.loadRom(0x100000 - firmware.bios.byteLength, new Uint8Array(firmware.bios));
+      machine.loadRom(0xC0000, new Uint8Array(firmware.videoBios));
+      machine.mountHdd(savedHdd || new Uint8Array(firmware.hdd));
+      remountPendingFloppies();
+      // The battery kept the clock running, so a fresh power-on reads the visitor's local time.
+      const now = new Date();
+      machine.setRtc(now.getFullYear(), now.getMonth() + 1, now.getDate(),
+        now.getHours(), now.getMinutes(), now.getSeconds(), now.getDay() + 1);
+    }
+    poweredOn = true;
+    powerLed.classList.add("power-on");
+    lastT = null;
+    requestAnimationFrame(frame);
+    refreshHddControls();
+    refreshFkeyControls();
+    updateFocusHint();
+    let noticeDismissed = false;
+    try { noticeDismissed = localStorage.getItem(BOOT_NOTICE_KEY) === "1"; } catch {}
+    if (factoryC && !noticeDismissed) bootNoticeEl.classList.add("visible");
+    if (new URLSearchParams(location.search).get("test") === "1") {
+      window.__test = {
+        machine, sendKey, screenEl, frameCanvas, keyboard,
+        cpuMultiplier: TEST_CPU_MULTIPLIER,
+        get loadOverlayVisible() { return loadOverlayEl.classList.contains("visible"); },
+        get loadOverlayText() { return loadOverlayLabel.textContent; },
+        beginLoad, endLoad,
+        persistHdd: () => persistHddIfDirty(),
+        whenHddSaved: () => hddPersistChain,
+        // Skips the one-minute wait before retrying a failed save.
+        retryHddSave: () => { hddRetryAt = 0; return persistHddIfDirty(); },
+      };
+    }
+  }
+
+  // A failed save already took its sectors out of the dirty set, so the next attempt stores the
+  // whole image, at most once a minute while storage keeps refusing.
+  let hddNeedsFull = false;
+  let hddRetryAt = Infinity;
+  let hddWrittenThisSession = false;
+  function queueHddSave(m, patches) {
+    const full = hddNeedsFull;
+    hddRetryAt = Infinity;
+    hddPersistChain = hddPersistChain.then(async () => {
+      const r = full ? { needFull: true } : await hddWorker.call("patch", { patches }, patches.map((p) => p.bytes.buffer));
+      // Nothing stored to patch yet: store the whole image.
+      if (r.needFull) {
+        const img = m.hddImage();
+        await hddWorker.call("replace", { buffer: img.buffer, modified: true }, [img.buffer]);
+      }
+      hddNeedsFull = false;
+      hddStorageOk = true;
+      hddLabel = "saved state (changes from this session)";
+      refreshHddControls();
+    }).catch((err) => {
+      hddNeedsFull = true;
+      hddRetryAt = performance.now() + 60_000;
+      hddLabel = "changes from this session";
+      hddStorageFailed("could not save hard disk changes:", err);
+    });
+    return hddPersistChain;
+  }
+  function persistHddIfDirty() {
+    if (!machine) return hddPersistChain;
+    if (!machine.hddDirty() && !(hddNeedsFull && performance.now() >= hddRetryAt)) return hddPersistChain;
+    const patches = machine.hddDirtyPatches();
+    machine.clearHddDirty();
+    hddWrittenThisSession = true;
+    return queueHddSave(machine, patches);
+  }
+
+  function powerOff() {
+    if (!poweredOn) return;
+    persistHddIfDirty();
+    if (hddWrittenThisSession) savedHdd = machine.hddImage();  // what the next power-on mounts
+    hddWrittenThisSession = false;
+    poweredOn = false;
+    machine = null;      // RAM is gone on power cut
+    powerLed.classList.remove("power-on");
+    for (const bay of bays) bay.querySelector('[data-role="led"]').classList.remove("on");
+    hddLed.classList.remove("on");
+    clearScreenToBlack();
+    if (audioCtx) { audioCtx.suspend().catch(() => {}); }
+    refreshHddControls();
+    refreshFkeyControls();
+    updateFocusHint();
+    hideBootNotice();
+  }
+
+  // ---- bezel Esc ----
+  // Fullscreen swallows the real Esc key, so the bezel sends it.
+  const escBtn = document.getElementById("escBtn");
+  function refreshFkeyControls() {
+    escBtn.disabled = !(poweredOn && !!machine);
+    keyboard.refresh();
+  }
+  escBtn.addEventListener("click", () => {
+    sendKey("Escape", false);
+    setTimeout(() => sendKey("Escape", true), 50);
+  });
+
+  powerSwitch.checked = false;
+  powerSwitch.disabled = true;
+  clearScreenToBlack();
+  refreshFkeyControls();  // start disabled while machine is off
+  powerSwitch.addEventListener("change", () => { if (powerSwitch.checked) powerOn(); else powerOff(); });
+
+  // autosave so closing the tab doesn't lose writes
+  setInterval(persistHddIfDirty, 5000);
+
+  // last-ditch prompt; gesture navigation can bypass beforeunload
+  window.addEventListener("beforeunload", (e) => {
+    if (poweredOn && machine && machine.hddDirty()) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
+
+  // ---- fetch firmware + HDD image ----
+  // web delivery only, not gated by the power switch
+  (async () => {
+    beginLoad("Loading\u2026");
+    try {
+      await paintLoadOverlay();
+      const [Module, savedHddResult, bios, videoBios, hdd] = await Promise.all([
+        IbmPcAt({}),
+        loadSavedHdd(),
+        fetch("roms/BIOS-bochs-legacy").then((r) => r.arrayBuffer()),
+        fetch("roms/egabios.bin").then((r) => r.arrayBuffer()),
+        fetch(presetHdd ? presetHdd.file : "disks/freedos-hdd.img").then((r) => r.arrayBuffer()),
+      ]);
+      firmware = { Module, bios, videoBios, hdd };
+      if (savedHddResult) {
+        savedHdd = savedHddResult;
+        hddLabel = "saved state (from a previous visit)";
+      }
+
+      powerSwitch.disabled = false;
+      refreshHddControls();
+      // boot once firmware is ready
+      powerSwitch.checked = true;
+      powerOn();
+    } finally {
+      endLoad();
+    }
+  })().catch((err) => {
+    // no on-page error; the power switch never enables
+    console.error(err);
+  });
+})();

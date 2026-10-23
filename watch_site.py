@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+# File watcher for `make watch`: rebuild wasm on C++ changes, restage _site/
+# for HTML/CSS/JS, then tell the preview server to live-reload. Stdlib mtime poll.
+import os
+import subprocess
+import threading
+import time
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+
+MACHINES = (
+    "altair8800",
+    "assembler6502",
+    "ibmpc-at",
+    "pacman",
+    "frogger",
+    "galaga",
+    "galaxian",
+    "scramble",
+    "asteroids",
+    "centipede",
+    "missile",
+    "invaders",
+    "lunarrescue",
+    "battlezone",
+    "pc486",
+)
+
+# make -C <machine>/web <targets...> after a C++ change for that machine
+WASM_TARGETS = {
+    "altair8800": ["retro8080.js"],
+    "assembler6502": ["wasm"],
+    "ibmpc-at": ["ibmpcat.js"],
+    "pacman": ["wasm"],
+    "frogger": ["wasm"],
+    "galaga": ["wasm"],
+    "galaxian": ["wasm"],
+    "scramble": ["wasm"],
+    "asteroids": ["wasm"],
+    "centipede": ["wasm"],
+    "missile": ["wasm"],
+    "invaders": ["wasm"],
+    "lunarrescue": ["wasm"],
+    "battlezone": ["wasm"],
+    "pc486": ["pc486.js", "pc486-perf.js"],
+}
+
+GENERATED_JS = frozenset({
+    "retro8080.js",
+    "cgoac6502.js",
+    "ibmpcat.js",
+    "pacman.js",
+    "frogger.js",
+    "galaga.js",
+    "galaxian.js",
+    "scramble.js",
+    "asteroids.js",
+    "centipede.js",
+    "missile.js",
+    "invaders.js",
+    "lunarrescue.js",
+    "battlezone.js",
+    "pc486.js",
+    "pc486-perf.js",
+})
+
+STATIC_EXT = frozenset({".html", ".css", ".js", ".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".map"})
+CPP_EXT = frozenset({".cpp", ".cc", ".cxx", ".c", ".h", ".hpp", ".hh", ".hxx", ".inc", ".S", ".s"})
+
+SKIP_DIR_NAMES = frozenset({
+    "_site",
+    "_site.new",
+    ".git",
+    ".preview-tls",
+    "node_modules",
+    "coverage",
+    "test-results",
+    "playwright-report",
+    ".playwright",
+    ".v8-coverage",
+    "__pycache__",
+    "tests",
+    "zex",
+})
+
+POLL_S = 0.4
+STATIC_DEBOUNCE_S = 0.45
+CPP_DEBOUNCE_S = 1.5
+
+
+def _rel(path):
+    return os.path.relpath(path, ROOT)
+
+
+def _should_skip_dir(name):
+    return name in SKIP_DIR_NAMES or name.startswith(".")
+
+
+def classify(rel):
+    """Return a change tag or None if ignored: root_static, shared_front,
+    (shared_cpp,), (machine_static, machine), (machine_cpp, machine)."""
+    rel = rel.replace("\\", "/")
+    if rel.startswith("_site/") or rel == "_site":
+        return None
+    base = os.path.basename(rel)
+    if base.startswith("."):
+        return None
+    _, ext = os.path.splitext(base)
+    ext = ext.lower()
+
+    if (rel in ("index.html", "about.html", "news_info.html", "super_secret.html")
+            or rel.startswith("assets/")
+            or rel.startswith("arcade/")):
+        if ext in STATIC_EXT or base == "README.md":
+            if base == "README.md":
+                return None
+            return ("root_static",)
+        return None
+
+    # shared/
+    if rel.startswith("shared/"):
+        rest = rel[len("shared/"):]
+        if ext in CPP_EXT or rest == "hwtest_font.py":
+            return ("shared_cpp",)
+        if rest.startswith("__pycache__/"):
+            return None
+        if ext in STATIC_EXT or rest.endswith(".py"):
+            if ext in STATIC_EXT:
+                return ("shared_front",)
+        return None
+
+    # <machine>/...
+    parts = rel.split("/", 1)
+    if len(parts) < 2 or parts[0] not in MACHINES:
+        return None
+    machine, rest = parts[0], parts[1]
+
+    if rest == "shared" or rest.startswith("shared/"):
+        return None
+    if rest.startswith("tests/") or rest.startswith("node_modules/"):
+        return None
+    # hwtest generators feed wasm (hwtest_roms.h); other roms/media stay ignored.
+    if rest.startswith("roms/hwtest/") and ext == ".py":
+        return ("machine_cpp", machine)
+    if rest.startswith("roms/") or rest.startswith("disks/") or rest.startswith("media/") or rest.startswith("tapes/"):
+        return None
+
+    if rest.startswith("web/"):
+        web_rest = rest[len("web/"):]
+        if web_rest == "shared" or web_rest.startswith("shared/"):
+            return None
+        web_base = os.path.basename(web_rest)
+        if web_base in GENERATED_JS or web_base.endswith(".wasm"):
+            return None
+        if web_base.endswith(".js.map") or web_base.endswith(".wasm.map"):
+            return None
+        # Generated header from gen_hwtest.py, rebuilds via the wasm target.
+        if web_base == "hwtest_roms.h":
+            return None
+        web_ext = os.path.splitext(web_base)[1].lower()
+        if web_ext in CPP_EXT:
+            return ("machine_cpp", machine)
+        if web_ext in STATIC_EXT:
+            return ("machine_static", machine)
+        return None
+
+    # Machine core (outside web/)
+    if "/tests/" in ("/" + rest) or rest.startswith("tests/"):
+        return None
+    file_ext = os.path.splitext(base)[1].lower()
+    if file_ext in CPP_EXT:
+        return ("machine_cpp", machine)
+    return None
+
+
+def scan_mtimes():
+    """Map relative path -> mtime for every watched file under ROOT."""
+    out = {}
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if not _should_skip_dir(d)]
+        rel_dir = _rel(dirpath)
+        if rel_dir.replace("\\", "/").endswith("/web/shared") or rel_dir.replace("\\", "/") == "web/shared":
+            dirnames[:] = []
+            continue
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            path = os.path.join(dirpath, name)
+            rel = _rel(path)
+            if classify(rel) is None:
+                continue
+            try:
+                out[rel] = os.path.getmtime(path)
+            except OSError:
+                pass
+    return out
+
+
+class ChangeSet:
+    def __init__(self):
+        self.root_static = False
+        self.shared_front = False
+        self.wasm_machines = set()
+        self.static_machines = set()
+
+    def add(self, tag):
+        if tag is None:
+            return
+        kind = tag[0]
+        if kind == "root_static":
+            self.root_static = True
+        elif kind == "shared_front":
+            self.shared_front = True
+        elif kind == "shared_cpp":
+            # every machine's make decides from its .d files whether the change reaches it
+            self.wasm_machines.update(WASM_TARGETS)
+        elif kind == "machine_static":
+            self.static_machines.add(tag[1])
+        elif kind == "machine_cpp":
+            self.wasm_machines.add(tag[1])
+
+    def empty(self):
+        return not (self.root_static or self.shared_front or self.wasm_machines or self.static_machines)
+
+    def needs_cpp_debounce(self):
+        return bool(self.wasm_machines)
+
+    def filter_machine(self, only):
+        if not only:
+            return
+        self.wasm_machines = {m for m in self.wasm_machines if m == only}
+        self.static_machines = {m for m in self.static_machines if m == only}
+
+
+def run_make_cmd(argv, log):
+    log("  $ " + " ".join(argv))
+    r = subprocess.run(argv, cwd=ROOT)
+    return r.returncode == 0
+
+
+def apply_changes(changes, log, only_machine=None):
+    """Rebuild / restage for a ChangeSet. Returns True on success."""
+    if only_machine:
+        changes.filter_machine(only_machine)
+    if changes.empty():
+        return True
+
+    for machine in sorted(changes.wasm_machines):
+        targets = WASM_TARGETS[machine]
+        if not run_make_cmd(["make", "-C", os.path.join(ROOT, machine, "web")] + targets, log):
+            log("  wasm build failed for %s — not restaging" % machine)
+            return False
+
+    if changes.shared_front:
+        targets = [only_machine] if only_machine else list(MACHINES)
+        for machine in targets:
+            if not run_make_cmd(
+                ["make", "-s", "-C", os.path.join(ROOT, machine, "web"), "shared"],
+                log,
+            ):
+                log("  shared copy failed for %s — not restaging" % machine)
+                return False
+
+    if not run_make_cmd(["make", "-s", "-C", ROOT, "site"], log):
+        log("  make site failed")
+        return False
+    return True
+
+
+def log_line(msg):
+    print(msg, flush=True)
+
+
+class SiteWatcher:
+    def __init__(self, notify_reload, only_machine=None, log=None):
+        self.notify_reload = notify_reload
+        self.only_machine = only_machine
+        self.log = log or log_line
+        self._stop = threading.Event()
+        self._thread = None
+        self._busy = False
+
+    def start(self):
+        self._thread = threading.Thread(target=self._loop, name="site-watch", daemon=True)
+        self._thread.start()
+        scope = self.only_machine or "all machines"
+        self.log("  watching the repo for HTML/CSS/JS/C++ (%s)" % scope)
+
+    def stop(self):
+        self._stop.set()
+
+    def _loop(self):
+        prev = scan_mtimes()
+        pending = ChangeSet()
+        last_event = 0.0
+
+        while not self._stop.is_set():
+            self._stop.wait(POLL_S)
+            if self._stop.is_set():
+                break
+            if self._busy:
+                continue
+
+            cur = scan_mtimes()
+            for rel, mtime in cur.items():
+                if prev.get(rel) != mtime:
+                    pending.add(classify(rel))
+                    last_event = time.monotonic()
+            for rel in prev:
+                if rel not in cur:
+                    pending.add(classify(rel))
+                    last_event = time.monotonic()
+            prev = cur
+
+            if pending.empty():
+                continue
+
+            debounce = CPP_DEBOUNCE_S if pending.needs_cpp_debounce() else STATIC_DEBOUNCE_S
+            if time.monotonic() - last_event < debounce:
+                continue
+
+            batch = pending
+            pending = ChangeSet()
+            self._run_batch(batch)
+
+    def _run_batch(self, batch):
+        self._busy = True
+        try:
+            if self.only_machine:
+                batch.filter_machine(self.only_machine)
+                if batch.empty():
+                    self.log("  change outside MACHINE=%s — ignored" % self.only_machine)
+                    return
+            bits = []
+            if batch.root_static:
+                bits.append("root")
+            if batch.shared_front:
+                bits.append("shared")
+            if batch.static_machines:
+                bits.append("static:" + ",".join(sorted(batch.static_machines)))
+            if batch.wasm_machines:
+                bits.append("wasm:" + ",".join(sorted(batch.wasm_machines)))
+            self.log("  change (%s) — rebuilding" % (" ".join(bits) or "unknown"))
+            ok = apply_changes(batch, self.log, only_machine=None)
+            if ok:
+                self.log("  restaged _site/ — reloading browsers")
+                self.notify_reload()
+            else:
+                self.log("  rebuild failed — browsers not reloaded")
+        finally:
+            self._busy = False

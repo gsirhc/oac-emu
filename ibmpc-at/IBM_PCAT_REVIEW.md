@@ -1,0 +1,3975 @@
+# IBM PC/AT (5170-339) — design notes and open questions
+
+This document plays the same role as `altair8800/ALTAIR_REVIEW.md`
+and `assembler6502/CGOAC6502_REVIEW.md`: a citation trail for the
+decisions behind the emulator's behavior, and an honest list of what isn't
+built yet, so a future contributor sees the reasoning instead of an
+unexplained gap.
+
+## 0. Status: Phase 2 well underway (chipset + real BIOS booting partway)
+
+Phase 1 (`cpu80286.h`/`.cpp` + tests) is done. Phase 2's chipset devices are
+built and tested: `pic8259` (×2, cascaded), `pit8253`, `i8042` (keyboard
+controller, A20 gate, CPU-reset trick, the keyboard's own unsolicited
+post-reset BAT byte), `cmos_rtc` (MC146818), `dma8237` (×2, register file
+only — no live transfer yet), `chipset` (the glue/memory-decode layer), and
+`machine` (wires the CPU + chipset and drives both from `run_cycles()`).
+87/87 GoogleTest cases pass, including an end-to-end PIT→PIC→CPU interrupt
+round trip that wakes a HLTed CPU and a regression test for the
+CPU-reset-must-not-corrupt-pacing bug class `assembler6502`'s review doc §10
+documents.
+
+The real, freely-licensed system BIOS (`BIOS-bochs-legacy`, see §6) is
+fetched, checksummed, and boots against this chipset via a native
+diagnostic harness (`bios_host.cpp`, built ahead of schedule) far enough to
+write a genuine POST diagnostic code before reaching a stable wait loop —
+see §6 for the exact state and what's still unexplained there.
+
+**Not yet done**: nothing boots to a usable state yet (no floppy/HDD/EGA),
+there's no WASM/browser build, and the `F000:0C49` wait loop in §6 isn't
+diagnosed. See the approved plan
+(`/Users/chrisgall/.claude/plans/golden-wishing-walrus.md`) for the
+remaining roadmap: floppy+EGA-text boot-to-prompt (3), WD1003 HDD with a
+pre-loaded FreeDOS image (4), full EGA graphics (5), PC speaker (6), full
+front end (7), test suites + site integration (8).
+
+## 1. Scope: real-address-mode only
+
+PC-DOS 3.30 and FreeDOS never leave real mode on this hardware, so the core
+implements real mode only. The real-mode-legal system instructions work
+(`SGDT/SIDT/LGDT/LIDT`, `SMSW/LMSW`, `CLTS`; §44.4). LMSW can't set PE,
+and the protected-mode-only ones (`LLDT/SLDT`, `LTR/STR`, `ARPL`, `LAR`,
+`LSL`, `VERR/VERW`) raise #UD, as they do on a 286 in real mode. Protected
+mode itself is open in `IBM_PCAT_PARITY.md` (C10).
+
+**Deferred, not forgotten**: the well-documented 80286 erratum where a
+segment's cached descriptor limit is not reset to `0xFFFF` on a return to
+real mode by any path other than RESET. This is only observable if the core
+ever *enters* protected mode even transiently — which it structurally
+cannot, since there is no GDT/LDT/descriptor-cache machinery to hold a stale
+limit in the first place. Revisit only if a later phase ever adds protected-
+mode support (not currently planned).
+
+## 2. Real-mode-legal 80286-over-8086 additions implemented
+
+`PUSHA`/`POPA` (0x60/0x61), `BOUND` (0x62), `PUSH imm8/imm16` (0x6A/0x68),
+`INS`/`OUTS` (0x6C-0x6F), three-operand `IMUL reg,r/m,imm` (0x69/0x6B),
+shift/rotate-by-immediate (0xC0/0xC1, alongside the 8086's by-1/by-CL forms
+at 0xD0-0xD3), `ENTER`/`LEAVE` (0xC8/0xC9). Source: Intel iAPX 286
+Programmer's Reference Manual (1987), "Instruction Set Differences from the
+8086."
+
+**Quirks preserved on purpose** (real, documented CPU-generation behavior,
+not bugs):
+- `PUSH SP` pushes the value SP had *before* the push on the 286; the 8086
+  and 80186 push the decremented value. `push_reg()` in `cpu80286.cpp`,
+  tested in `PushSpPushesValueFromBeforeThePush`. Software of the era used
+  exactly this instruction to tell an 8086 from a 286 (§44.1).
+- Shift/rotate counts are masked mod 32 on the 286; the 8086 used the raw
+  unmasked count (so a shift by 200 took 200 cycles on real 8086 silicon).
+  Tested in `ShiftCountMaskedMod32`.
+- `INC`/`DEC` never touch `CF` — true on the whole 8086 lineage, easy to get
+  wrong when reusing an `ADD`/`SUB` helper for them. Tested explicitly.
+- `OF` after a multi-bit shift/rotate (count != 1) is left **undefined** by
+  Intel's own documentation for this family; the core simply leaves the bit
+  untouched rather than guessing, matching the documented contract.
+- `AF` after `AND`/`OR`/`XOR` is likewise architecturally undefined and left
+  untouched, for the same reason.
+
+## 3. Known simplifications (documented, not silent)
+
+- **RESET vector**: the first fetch is the genuine `0xFFFFF0`, through
+  CS's hidden FF0000h base and the board's ROM alias at the top of 16MB
+  (§45.1).
+- **`POPF`/`IRET` flag mask** (`0x0FD5`) restores CF/PF/AF/ZF/SF/TF/IF/DF/OF
+  from the popped word and always zeroes bits 12-15. That's the real 286 in
+  real mode, not a simplification (§44.2).
+- **Cycle counts are categorical, not the full effective-address-dependent
+  table.** Real 80286 timing charges a different EA-calculation cost per
+  addressing mode (e.g. base+index+displacement costs more than a bare
+  register indirect) on top of the 1-wait-state memory penalty. This core
+  uses two flat constants (`CYC_REG=2`, `CYC_MEM=7`) folding in a
+  representative EA cost + the wait state, plus per-instruction-class
+  constants for jumps/calls/INT/string ops, all drawn from the iAPX 286
+  timing appendix's typical values. This gets the right order of magnitude
+  and throughput characteristics (no instruction is free, memory access
+  costs more than register access, taken branches cost more than
+  not-taken) without claiming cycle-exact precision. Revisit if a later
+  phase's BIOS timing loop (e.g. the PIT-driven delay POST uses) turns out
+  to be sensitive to the difference.
+
+## 4. Opcode coverage gaps
+
+Undefined opcodes raise #UD (INT 6) outside the firmware, and are a
+reported no-op inside it (§44.3). Beyond that:
+- The 386 layer (`0x66`, `0x0F 0x80-0x8F` Jcc rel16, SETcc, MOVZX/MOVSX,
+  two-operand IMUL) runs only from ROM, where the prebuilt BIOS and video
+  BIOS substitutes need it; see §6 and §7. Anywhere else it's #UD.
+- `0x0F 0x05` (LOADALL) is a reported no-op. It needs descriptor caches.
+- `0xD8`-`0xDF` (x87 coprocessor ESC) decode the ModR/M byte (so instruction
+  length stays correct for whatever follows) but perform no FPU operation —
+  correct behavior for this system's spec, which has no 80287 installed.
+  MSW.EM or TS set makes them #NM (INT 7).
+- `0xF1` is a LOCK-alias prefix, as tested on a real 286 (§45.4).
+  `F1 0F 04` (STOREALL) isn't modelled.
+- `AAM`/`AAD` are implemented for the standard base-10 encoding but not
+  exhaustively tested against non-standard bases.
+
+None of these are expected to matter for PC-DOS/FreeDOS or ordinary
+DOS-era compiled code; flagged here so a gap is a documented decision, not
+a silent one, per this repo's fidelity conventions (`CLAUDE.md`).
+
+## 5. Chipset devices (Phase 2): scope and simplifications
+
+- **PIC (8259 ×2)**: (§50.1 replaces this with the full 8259A.) fixed-priority mode only (IR0 highest), normal
+  (non-rotating, non-special-mask) EOI. Cascading is wired in `chipset.cpp`
+  the way real hardware does: the master's IR2 input tracks
+  `slave.has_interrupt()`, and an INTA cycle whose highest-pending master
+  line is IR2 forwards the actual vector fetch to the slave. Real DOS-era
+  BIOS/software never programs rotating priority or special mask mode, so
+  they're not implemented.
+- **PIT (8253)**: (§47.2 replaces this with a full 8254.) models a uniform symmetric toggle for every mode (a full
+  period every `reload` PIT clocks) rather than each mode's exact waveform
+  — correct for the AT's actual dependency (IRQ0's ~18.2 Hz edge rate,
+  confirmed exactly via divisor-0/65536 in `Pit8253Test`), not for a
+  cycle-perfect oscilloscope trace of e.g. Mode 2's asymmetric pulse.
+- **i8042**: the A20 gate is open at reset and after the 0xAA self-test,
+  and closed again before DOS boots (§45.2-§45.3). The CPU-reset trick (Output Port bit 0, or
+  command 0xFE) is exposed as `reset_requested()`/`clear_reset_request()`
+  for the embedding `Machine` to act on, matching this codebase's
+  host-agnostic device convention (a device never reaches into the CPU
+  object directly).
+- **CMOS/RTC**: no live ticking clock (nothing in these phases reads the
+  time-of-day repeatedly); register A's update-in-progress bit is hard tied
+  to 0 so a BIOS's "wait for UIP to clear" POST loop can never hang.
+- **DMA (8237 ×2)**: (§50.3 replaces this with the full channel model.) register file (address/count/mode/mask/command) only —
+  no live memory↔device transfer yet. That lands in Phase 3 alongside
+  `fdc765.h`, the first device that actually needs to move bytes over
+  channel 2.
+- **`Machine::run_cycles()`** only polls/acknowledges the PIC when the
+  CPU's `IF` flag is set, mirroring real hardware (the CPU never begins an
+  INTA cycle otherwise) — polling unconditionally would wrongly consume a
+  pending IRQ (e.g. a timer tick) during a `cli`-protected section that
+  never actually got serviced.
+
+## 6. BIOS integration: resolved on prebuilt pinned binaries
+
+Phase 2's plan called for building **SeaBIOS** from a pinned source commit.
+Verified this session: network access works in this sandbox, but building
+SeaBIOS doesn't — it needs a real i386-targeting compiler (16-bit real-mode
+codegen) plus either the `dev86` toolchain (`as86`/`ld86`/`bcc`) or a
+sufficiently i386-aware GCC, and this sandbox only has Apple Clang
+targeting `arm64-apple-darwin` (none of `as86`, `ld86`, `bcc`, `iasl` are
+present). SeaBIOS itself also publishes no prebuilt binaries.
+
+**Decided (user's call): always prefer a pinned, checksummed prebuilt
+binary over a source build when the choice arises.** Switched to the
+**Bochs Project's** own firmware instead of SeaBIOS, for two reasons: (a)
+it's committed as a **prebuilt binary directly in the Bochs source tree**
+(`bochs/bios/BIOS-bochs-legacy`, `bochs/bios/VGABIOS-lgpl/VGABIOS-lgpl-
+latest.bin`), so there's no toolchain problem to solve at all; (b)
+`BIOS-bochs-legacy` is specifically the plain-ISA/no-PCI/no-ACPI variant —
+a better match for a genuine AT-class machine than SeaBIOS's PCI-oriented
+default build target would have been anyway. Both are LGPL (`Copyright (C)
+2001-2026 The Bochs Project`), pinned to commit
+`bochs-emu/Bochs@ff17a0c2bbabccf96d33af4e08ba8061889b079d`, fetched and
+SHA-256-verified via `roms/fetch-bios.sh` (same pattern as
+`fetch-basic.sh`), gitignored like every other fetched binary in this
+repo. `BIOS-bochs-legacy` is exactly 64KB (fills F0000-FFFFF exactly);
+`VGABIOS-lgpl-latest.bin` is exactly 32KB (fills C0000-C7FFF exactly) —
+loading it into the C0000 ROM window is deferred to Phase 3/5 until the
+EGA device exists to back it (loading it now would just make POST hang
+inside video-BIOS init code polling hardware that isn't there yet).
+
+**Labelling** (per CLAUDE.md's substitution rule): `VGABIOS-lgpl-latest.bin`
+is a full VGA-compatible video BIOS, not an EGA-only one (no maintained
+EGA-only open BIOS project exists, and this is a prebuilt binary we can't
+trim down ourselves) — it will expose more video modes than genuine EGA
+hardware has. The EGA device itself (Phase 5) is what actually enforces
+the real 640×350×16 EGA ceiling regardless of what modes this BIOS thinks
+it can offer; this needs a clear boot-banner/README label once the web
+front end exists.
+
+**Verified with a real native harness** (`bios_host.cpp`, the `dos_host`-
+style diagnostic host the plan called for, built ahead of schedule since it
+was needed to answer this question at all): boots the actual fetched
+`BIOS-bochs-legacy` image against `chipset`/`machine` and reports POST
+progress via port 0x80 codes and HLT state. Result: real BIOS machine code
+executes correctly against `pic8259`/`pit8253`/`i8042`/`cmos_rtc`/`dma8237`
+for ~1.9M cycles, writes POST code `0x31`, and then reaches a stable
+`HLT`-based wait loop at `F000:0C49`. Along the way this caught and fixed a
+real gap: a genuine AT keyboard sends `0xAA` **unsolicited** after its own
+power-on self-test (independent of the controller's own `0xAA` self-test
+command) — BIOS's keyboard-presence check waits for exactly that byte, and
+without it POST hung at an earlier point entirely (`i8042.cpp`'s `reset()`,
+regression-tested in `ResetDeliversUnsolicitedKeyboardBatByte`).
+
+**`F000:0C49` diagnosed, and fixed.** Traced the exact instructions leading
+into it (single-instruction stepping with a ring-buffer trace, no
+disassembler needed): it's a deliberate `CLI ; HLT` fatal-halt path,
+reached from an expansion-ROM-scan loop that walks `0xC000-0xDFFF` looking
+for a `0x55 0xAA` option-ROM signature (correct behavior — we haven't
+loaded any option ROM yet, so it should legitimately find nothing and
+continue). The loop's condition test used `0x0F 0x85` (`JNZ rel16`) — **an
+80386 addition, not genuine 80286 behavior** (Intel never defined `0x0F
+0x80-0x8F` on the 286; only the short `Jcc rel8` at `0x70-0x7F` exists
+there). `BIOS-bochs-legacy`, despite its "legacy"/no-PCI branding, was
+evidently built assuming at least a 386 baseline — unsurprising in
+hindsight, since essentially nothing in the modern PC-emulation/
+virtualization ecosystem still targets genuine 80286 compatibility.
+`cpu80286.cpp` now decodes `0x0F 0x80-0x8F` as `Jcc rel16`, explicitly
+commented and tested (`JccNear0FEncodingTaken/NotTakenWhenZero`) as a
+**pragmatic BIOS-compatibility concession, not real 80286 behavior** —
+the same labelled-departure discipline CLAUDE.md requires of any other
+realism override.
+
+With that fix, POST no longer halts there — it proceeds until it executes
+`XOR BX,BX ; INT 10h` (video services) at `F000:0679`. That crashes into
+segment `0000:0000` and runs off into the weeds, because **there is no
+video BIOS loaded yet** — INT 10h's vector (physical `0x40`) is still zero
+from reset, exactly the outcome the "don't load `vgabios` before the EGA
+device exists" decision above anticipated, just manifesting as a wild
+jump into unmapped vector space rather than a hang. This is not a new bug
+to chase: it's Phase 3/5's actual job (EGA text mode + `vgabios` loaded at
+`C0000`), and confirms the chipset is solid enough to get real BIOS code
+this far. `trace_host.cpp` (the scratch tool used for this investigation)
+has been removed now that the mystery is resolved, per its own header
+comment's promise; `bios_host.cpp` (the lasting diagnostic harness) stays.
+
+- **WD1003 `IDENTIFY DEVICE` vs. CMOS fixed-disk-parameter-table**: whether
+  the chosen BIOS's ATA driver needs an `IDENTIFY DEVICE` (`0xEC`) response
+  or can be steered onto an old-style CMOS type-table path is unresolved
+  until Phase 4, once the actual BIOS source is read.
+
+## 7. Phase 3: FDC + EGA text mode + real-boot debugging (in progress)
+
+Built and fully tested this round: `fdc765` (NEC uPD765 floppy controller,
+both drives, a real command/parameter/execution/result state machine),
+live DMA channel-2 transfer support added to `dma8237` (address/count
+advance with the real page-boundary-wrap and N-1 terminal-count
+conventions), and `ega` (CRTC/Sequencer/Graphics Controller/Attribute
+Controller register files, the color text-mode VRAM window, the Input
+Status 1 retrace toggle, the AC address/data flip-flop and its
+reset-on-reading-0x3DA quirk). All wired into `chipset`, which orchestrates
+the FDC↔DMA↔memory handoff the same way it orchestrates the PIC cascade.
+104/104 GoogleTest cases pass, including a chipset-level test proving a
+full floppy READ DATA command actually moves real bytes from a mounted
+disk image into system RAM via DMA.
+
+**Real-BIOS boot debugging, using the fetched `BIOS-bochs-legacy` source
+(same pinned commit) to pin down each blocker precisely rather than
+guessing from raw bytes:**
+
+1. Confirmed and fixed (§6): `0x0F 0x80-0x8F` (`Jcc rel16`, an 80386
+   addition) needed for the option-ROM scan loop.
+2. **Keyboard POST sequencing, fixed.** Fetched `rombios.c` and found the
+   real `keyboard_init()` routine (line ~1965 at the pinned commit): it
+   sends the keyboard an explicit `0xFF` RESET command and expects **two
+   separate responses** — an immediate ACK (`0xFA`), then, on a second,
+   later read, the Basic-Assurance-Test-passed byte (`0xAA`) — not the
+   power-on unsolicited BAT byte the earlier fix (§0) modeled. `i8042.cpp`
+   now special-cases command `0xFF` to queue `0xAA` right after its `0xFA`
+   ACK is read (`ResetCommandGetsAckThenBatByteOnSeparateReads`). With
+   this, `keyboard_init()` runs to completion (POST code reaches `0x77`,
+   its own final checkpoint, confirmed against the source) instead of
+   hanging.
+3. **Real progress milestone**: with both fixes in place and
+   `VGABIOS-lgpl-latest.bin` loaded at `0xC0000`, the system BIOS's
+   `rom_scan` genuinely finds and far-calls into the video BIOS's real
+   init routine (`C000:0003`), which correctly installs its own INT 10h
+   vector — confirmed by tracing a live call/return loop between the
+   system BIOS's `wrch()` helper and the video BIOS's own INT 10h handler
+   that's exactly `_print_bios_banner` printing the real "Bochs BIOS..."
+   banner character-by-character through **genuine, unmodified vgabios
+   code** — not a stub, the actual fetched binary running correctly
+   against our EGA register model.
+4. **The "IVT corruption" was a symptom, not a bug — root cause found and
+   fixed: a whole missing dimension of opcode coverage, not one opcode.**
+   Rather than keep tracing individual crash sites by hand, added a
+   permanent diagnostic hook (`Cpu::on_unimplemented`, called with the
+   exact opcode and address whenever `step()` falls through to the
+   unimplemented-opcode path) and ran the real BIOS boot through it. One
+   opcode lit up: **`0x66`**, the 80386 operand-size override prefix —
+   hit **5,818 times** in the first million steps alone. `BIOS-bochs-
+   legacy` uses genuine 32-bit registers (EAX/EBX/...) throughout, even in
+   16-bit real-mode code, via this prefix — not a rare edge case, a
+   pervasive assumption. This is *why* the earlier "IVT corruption" showed
+   up: every `0x66`-prefixed instruction was being treated as a bare 1-byte
+   no-op, desyncing the entire instruction stream from that point on and
+   scribbling wherever the misinterpreted bytes happened to land, including
+   over the IVT.
+
+   Fixed properly rather than patched around: `cpu80286`'s general-purpose
+   registers are now stored as full 32 bits (`ax`/`bx`/... are simply the
+   low 16 of `EAX`/`EBX`/...), the `0x66` prefix is recognized, and every
+   opcode that fetches an immediate or writes a register/memory operand
+   (the ALU group, `MOV`, `PUSH`/`POP`, `INC`/`DEC`, shifts, `IMUL`,
+   string ops, `CBW`/`CWD`→`CWDE`/`CDQ`, `MUL`/`IMUL`/`DIV`/`IDIV`) now
+   branches on operand size. Also added the 386's most commonly-compiled
+   `0x0F`-prefixed instructions the same diagnostic hook would otherwise
+   have flagged next: `SETcc`, two-operand `IMUL`, `MOVZX`, `MOVSX`. All
+   of this is explicitly labelled in `cpu80286.h`'s file header as a
+   80386 compatibility *concession* — not genuine 80286 behavior, kept
+   because the firmware substitute needs it, exactly like the `0x0F
+   0x80-0x8F` fix in finding #1. 25 new GoogleTest cases cover it
+   (`OpSize32*`, `Movzx*`, `Movsx*`, `Setcc*`, `TwoOperandImul*`).
+   **Deliberately not added**: a 32-bit *address* size (`0x67`, SIB bytes,
+   "big real mode") — the diagnostic hook never flagged it as missing, so
+   there's no evidence this machine's BIOS needs it.
+
+5. **With that fix, the real BIOS now boots to its own correct, legitimate
+   conclusion — proven by reading its actual output.** Logging every
+   character the BIOS sends through its `wrch()` character-print helper
+   reconstructs its real startup banner, produced by genuine, unmodified
+   `BIOS-bochs-legacy` and `vgabios` code running against this machine's
+   chipset:
+   ```
+   Bochs 3.0.devel BIOS - build: 08/23/26
+   Options: apmbios pcibios pnpbios eltorito
+   Press F12 for boot menu.
+   FATAL: No bootable device.
+   ```
+   That "FATAL" is not a bug — it's the **correct** response to a machine
+   with no floppy or hard disk image mounted, which is exactly this
+   machine's current state (Phase 4's pre-loaded FreeDOS HDD image hasn't
+   landed yet). The CPU, chipset, keyboard, PIT/PIC, DMA, FDC, and EGA are
+   all now demonstrated working together well enough for a real, unmodified
+   third-party BIOS to run its complete POST sequence correctly and reach
+   its true terminal state.
+
+This closes out the BIOS-compatibility debugging thread for Phase 3: three
+real, cited bugs found and fixed (the `0x0F 0x80-0x8F` opcode, the keyboard
+ACK+BAT sequencing, and the `0x66` operand-size dimension), each confirmed
+against the actual `rombios.c` source or the BIOS's own reconstructed
+output rather than guessed.
+
+## 8. Real FreeDOS floppy fetched and mounted — booting confirmed starting
+
+Fetched the FreeDOS 1.3 official "Floppy Edition" 1.2MB (`120m/`) boot
+image via `disks/fetch-freedos.sh` (same pinned-URL + SHA-256 pattern as
+`roms/fetch-bios.sh`) — its size (1,228,800 bytes = 80×2×15×512) matches
+Drive A:'s geometry exactly, no conversion needed. Mounted it via
+`chipset.fdc.mount(0, ...)` and re-ran the boot: still got **"FATAL: No
+bootable device"** even with a real, bootable floppy physically mounted.
+
+Root cause, found in `rombios.c`'s `int19_function` (not guessed): with
+`BX_ELTORITO_BOOT` compiled in (confirmed earlier — "eltorito" is in this
+BIOS's own printed options line), the boot device sequence comes from
+**CMOS register 0x3D** (low nibble = 1st boot device; `0x01` = floppy,
+`0x02` = hard disk), not from probing drives directly. We'd never seeded
+it, so `bootdev == 0` unconditionally → instant panic regardless of what's
+mounted. Seeding `cmos.poke(0x3D, 0x01)` (plus `0x10=0x20` for "drive A: is
+1.2MB" and `0x14=0x01` for "a floppy drive is installed", the equipment
+byte) immediately changed the banner's last line from `FATAL: No bootable
+device.` to **`Booting from Floppy...`** — the BIOS reads our FDC, accepts
+the media, and proceeds into the actual boot attempt. Execution continues
+correctly afterward (no crash, no unimplemented-opcode hits) but hadn't yet
+reached the boot sector's own code (still inside system-BIOS segment F000
+when this investigation had to stop for time) — worth a few more minutes
+of the same tracing approach to confirm the INT 13h read + far jump to
+`0000:7C00` next session, but the hard part (a real bootable disk, real
+BIOS, and the exact CMOS bytes it needs) is now done and verified.
+
+**Wired into the permanent build**: `Machine::configure_factory_cmos()`
+(called once, automatically, by `Machine`'s constructor) now seeds exactly
+these bytes -- base memory size, floppy types, equipment byte, boot
+sequence, and a correctly-computed checksum -- matching how a real AT's
+Setup diskette would have written them once, at the factory, before the
+machine ever shipped. Covered by
+`MachineTest.ConstructorSeedsFactoryCmosConfiguration`.
+
+## 9. Two more real bugs found and fixed -- reached genuine boot-sector and kernel code
+
+Wiring the factory CMOS config into `Machine` immediately surfaced a real
+bug: **CMOS is battery-backed and must survive any reset**, exactly like
+`mem`/`rom_`/mounted floppy media already do in this codebase -- but
+`Chipset::reset()` was unconditionally calling `cmos.reset()` (and, for the
+same reason, clearing `rom_`'s write-protection flags too). The moment any
+caller did the natural thing -- construct a `Machine`, then call
+`m.reset()` -- the freshly-seeded factory configuration was silently wiped
+back to zero. Fixed by removing `cmos.reset()` (and the `rom_` clear) from
+`Chipset::reset()` entirely; regression-tested
+(`MachineTest.FactoryCmosSurvivesAnExplicitResetCall`).
+
+With that fixed, the BIOS reached "Booting from Floppy..." via the
+permanent build, but then got stuck in an apparent infinite loop right at
+the point of processing the floppy's completion. **Switched investigative
+method here** rather than continuing to hand-decode opcode bytes: installed
+Python's `capstone` disassembler and read the actual mnemonics of the stuck
+region instead of guessing from hex. That immediately revealed the real
+shape of the code -- it's the floppy IRQ6 handler (`int0Eh`), and it
+legitimately has *two* paths: if the FDC's Main Status Register doesn't
+yet show a completed result phase, it proactively issues its own SENSE
+INTERRUPT STATUS and drains it; but if a result phase *is* already ready,
+it takes a different, shorter path that just EOIs the PIC, sets a
+BIOS-data-area completion flag, and returns -- deliberately leaving the
+FDC's actual result bytes for **foreground** code to drain later. That's
+completely legitimate real BIOS design.
+
+The bug was in `chipset.cpp`: **IRQ6 was modeled as level-triggered
+(`if (fdc.irq_pending()) pic_master.raise(6);` called every tick), when
+every real ISA interrupt is edge-triggered** -- it fires once, on the
+transition, not continuously for as long as the underlying condition
+holds. Since the "short path" ISR doesn't drain any result bytes,
+`fdc.irq_pending()` legitimately stays true for a while (real foreground
+code is supposed to drain it later) -- and re-raising IRQ6 every single
+tick while it waited turned one real, single interrupt into an infinite
+storm that re-entered the ISR every ~42 cycles forever, permanently
+starving the foreground code of any chance to run at all. Fixed by
+tracking the 0→1 transition explicitly (`fdc_irq_prev_`) and raising IRQ6
+only on that edge, matching genuine 8259/ISA wiring. Regression-tested at
+the chipset level (`ChipsetTest.Irq6IsEdgeTriggeredNotReRaisedWhileStillPending`),
+reproducing the exact "service once without draining, verify no re-trigger"
+scenario.
+
+**Result**: with both fixes, the BIOS loads and executes the **real boot
+sector** at `0000:7C00` and continues into real FreeDOS kernel code,
+reaching a `HLT`-based wait. Chasing what that wait was blocked on (§10,
+below) led to one more real bug and then a complete, successful boot.
+
+## 10. Full success: a live, interactive `A:\>` DOS prompt
+
+**Switched method again**: installed Python's `capstone` disassembler
+(already in use for §9) to read the *live RAM* the halted CPU was sitting
+in, not just the ROM. That immediately answered the "is this a crash or a
+wait" question: `0000:7C00` held genuine, structured x86 (the real boot
+sector, not blank memory), and the halt itself was sitting inside a
+completely ordinary DOS idiom --- `INT 2Fh AX=1680h` ("release current
+virtual-machine time slice", the standard DOS-idle multiplex call used by
+TSRs/multitaskers) followed by `HLT`, looping until a shared flag byte
+exceeded 1. Dumping the **EGA text VRAM directly** (rather than relying on
+the `wrch()` character log, which only ever sees the system BIOS's own
+print helper, never anything DOS itself prints via `INT 10h`) confirmed
+it immediately: the screen held a complete, real FreeDOS 1.3 installer
+screen --- ASCII-art logo, welcome text, and `Do you want to proceed
+[Y,N]?` --- genuinely waiting for a keystroke.
+
+Injecting one (`chipset.kbc.inject_scancode()`) to test the input path
+surfaced one more real, previously-undiscovered bug: **IRQ1 (the keyboard)
+had never been wired to the PIC at all.** `chipset.cpp` handled IRQ0 (PIT)
+and IRQ6 (FDC) but simply never checked `kbc.irq1_pending()` -- a
+plain omission, not a subtle timing bug like the other two. A keypress sat
+in `i8042`'s output buffer forever; anything waiting on the *vectored*
+keyboard interrupt (rather than polling port 0x60 directly) could never
+wake. Fixed the same way as IRQ6 (`chipset.cpp` raises IRQ1 only on the
+0->1 edge of `kbc.irq1_pending()`) plus one more real detail: real
+hardware ties IRQ1 directly to the "output buffer full" condition, so
+`i8042::in(0x60)` now clears `irq1_pending_` the moment the byte is read,
+matching genuine wiring. Regression-tested
+(`ChipsetTest.KeyboardIrq1ReachesThePic`).
+
+With that fixed, injecting `N` made FreeDOS **echo it to the screen**
+(`Do you want to proceed [Y,N]?N`) -- proof the full input round trip
+works: scancode -> IRQ1 -> PIC -> CPU -> the system BIOS's real `INT 9h`
+handler -> the BIOS keyboard buffer -> FreeDOS's own input routine -> a
+character drawn to EGA VRAM by FreeDOS's own code, not a stub. Following
+with `Enter` completed the prompt:
+
+```
+The installation of FreeDOS 1.3 has been aborted.
+A:\>
+```
+
+**A live, interactive DOS prompt.** `CS:IP` at that point is `06B3:1570`
+with the CPU *not* halted -- COMMAND.COM's own input loop, actively
+running, waiting for the next command. This is a genuine, unmodified
+`BIOS-bochs-legacy` + unmodified `vgabios` + genuine FreeDOS 1.3 kernel +
+FreeCOM, booted from a real 1.2MB floppy image, with full keyboard input
+and video output working end-to-end -- not a stub, not a mock, the actual
+software doing what it does on real hardware.
+
+**Every bug found this session (three: `0x66` operand-size coverage, the
+IRQ6 edge-vs-level modeling, the missing IRQ1 wire) was found through
+disassembly/RAM-inspection evidence against real third-party software,
+never guessed, and each has a regression test.** 117/117 tests pass.
+Phase 3's original goal -- floppy + EGA text mode + booting to a prompt --
+is not just met, it's demonstrated with real, unmodified software.
+
+## 11. Phase 4: WD1003 hard disk controller
+
+Read the real `rombios.c` (Bochs BIOS, pinned commit
+`ff17a0c2bbabccf96d33af4e08ba8061889b079d`) *before* writing any of
+`wd1003.h`/`.cpp`, specifically `ata_detect()` and `hard_drive_post`, to
+avoid the multi-round trial-and-error Phase 3's FDC work needed. That
+research settled three design questions the approved plan had explicitly
+deferred:
+
+**Detection protocol is genuine ATA/IDE, not the classic CMOS type-table.**
+`ata_detect()` writes a `0x55`/`0xAA` scratch pattern to the Sector
+Count/Number registers (0x1F2/0x1F3) and reads it back to confirm something
+answers, issues a soft reset via the Device Control register's SRST bit
+(port 0x3F6) and checks the documented post-reset signature (sector
+count/number = 1, cylinder = 0), then issues `IDENTIFY DEVICE` (`0xEC`) and
+reads drive geometry directly out of the response -- word 1 = cylinders,
+word 3 = heads, word 6 = sectors/track, words 60-61 = total LBA sector
+count. `wd1003.cpp`'s `do_identify()` implements exactly this layout
+(including the ATA string-field convention of byte-swapping character pairs
+within each 16-bit word, used for the model/serial/firmware strings).
+
+**The legacy CMOS "Type 47" fixed-disk table is a separate, coexisting path.**
+`hard_drive_post` *also* reads a completely different legacy structure --
+CMOS register 0x12's high nibble must read `0xF` ("use extended type") or
+the whole block is skipped, then register 0x19 must read exactly 47, and
+registers 0x1B-0x23 hold cylinders/heads/write-precomp/control-byte/landing-
+zone/sectors-per-track, filled by `hard_drive_post` into a legacy EBDA
+parameter table for `INT 41h`/`INT 46h` callers. This doesn't replace the
+ATA/IDENTIFY path -- both run, both must describe the same drive, or the two
+would disagree with each other. `Machine::configure_factory_cmos()` seeds
+both, describing the identical ST-4038 geometry (733 cyl / 5 heads / 17
+sec/track, no write precomp, landing zone 733) in each place.
+
+**Real port wiring: 0x3F6, not 0x3F7.** A genuine AT's hard disk control
+block uses only 0x1F0-0x1F7 plus 0x3F6 (Device Control / Alternate Status)
+-- not 0x3F7, which the floppy controller already owns (DIR on read, CCR on
+write). `wd1003.h`'s header comment records this as a deliberate period-
+accurate wiring decision, not an arbitrary port choice.
+
+**Genuinely atomic 16-bit port I/O.** Unlike almost every other AT I/O
+device, where a 16-bit access legitimately decomposes into two adjacent
+8-bit ports, the ATA data register at 0x1F0 is atomically 16-bit -- 0x1F1 is
+a *different* register (Error/Features), not "the high byte of 0x1F0".
+`cpu80286.h`'s `Bus` gained `in16`/`out16` alongside the existing 8-bit
+`in`/`out`, used by the four 16-bit port opcodes (`IN AX,imm8`/`OUT
+imm8,AX`/`IN AX,DX`/`OUT DX,AX`) and `INSW`/`OUTSW`;
+`Chipset::io_in16`/`io_out16` special-case port 0x1F0 to reach
+`Wd1003::data_in16()`/`data_out16()` directly, defaulting to the old
+compose-two-8-bit-accesses behavior everywhere else. Regression-tested at
+the CPU level (`Cpu80286Test.{In,Out}{Ax,Dx}*AtomicSixteenBitPath`,
+`InswStoresAtomicSixteenBitPortReadAtEsDi`,
+`OutswSendsAtomicSixteenBitPortWriteFromDsSi`) and end-to-end through the
+chipset (`ChipsetTest.HddIdentifyAndReadGoesThroughAtomicSixteenBitBusPath`).
+
+**A genuine port-conflict bug, caught by the first chipset-level integration
+test.** `Fdc765::owns()` claimed the whole `0x3F0-0x3F7` range -- wrong:
+0x3F6, sitting in the middle of that otherwise-contiguous-looking block,
+belongs to the hard disk controller, not the floppy controller, on real
+hardware. Because `Chipset::io_in`/`io_out` check `fdc.owns(port)` before
+`hdd.owns(port)`, every access to 0x3F6 was silently being routed to the FDC
+(which has no case for it and falls through to open-bus/discard) and never
+reached the HDD at all -- caught immediately by
+`ChipsetTest.HddIdentifyAndReadGoesThroughAtomicSixteenBitBusPath` returning
+garbage instead of the expected sector data. Fixed by narrowing
+`Fdc765::owns()` to `0x3F0-0x3F5` and `0x3F7` only, matching what
+`fdc765.cpp`'s own `in()`/`out()` switch statements actually implement.
+Regression-tested directly (`Fdc765Test.DoesNotOwnPortThreeF6`) as well as
+via the now-passing HDD integration test.
+
+**Byte-credit pacing, same discipline as `fdc765.h`.** READ/WRITE SECTORS
+accumulate transfer time against a real bytes/sec rate (raised BSY, `tick()`
+completes the whole bulk copy once elapsed) rather than modeling byte-by-
+byte hardware handshake -- WRITE SECTORS asserts DRQ immediately per real
+ATA behavior (no seek delay on the CPU side) and only raises BSY once the
+CPU has supplied the full buffer, pacing the *commit* to media rather than
+the CPU's data delivery.
+
+**Edge-triggered IRQ14**, on the slave PIC's line 6 (global IRQ14 = slave
+IR6), following the exact discipline already established for IRQ6/IRQ1 (see
+§8-9): raised only on the 0->1 transition of `hdd.irq_pending()`, and
+reading the primary Status register (0x1F7) acknowledges/clears it, matching
+genuine ATA semantics -- reading the Alternate Status register (0x3F6)
+deliberately does not, so a test (or a real driver) can poll status without
+disturbing a pending interrupt. Regression-tested
+(`ChipsetTest.Irq14IsEdgeTriggeredNotReRaisedWhilePending`).
+
+All of this is implemented and unit-tested (13 new/changed cases across
+`wd1003_test.cpp`, `chipset_test.cpp`, `fdc765_test.cpp`, and
+`cpu80286_test.cpp`; 133/133 total tests pass) purely at the device/chipset
+level, driving the controller directly rather than through a booted BIOS.
+
+**Decision: build the shipped HDD image by actually running the real
+installer, not by hand-crafting a filesystem.** No pre-built 733/5/17-
+geometry raw HDD image exists (unlike the floppy, which is an official
+pre-built FreeDOS distribution file). Rather than synthesize a FAT
+filesystem directly, the shipped image is produced by driving the genuine
+FreeDOS 1.3 multi-floppy installer (`FD13-FloppyEdition.zip`'s `BOOT` +
+`DSK01`-`DSK06`, the real installer set, not the pre-built boot floppy
+alone) against this emulator end-to-end -- the same unmodified BIOS,
+VGABIOS, and installer software a real 5170-339 owner would have used,
+automated via screen-text matching and injected keystrokes instead of a
+human at the keyboard. This produces a genuinely-installed disk, not an
+approximation of one, and is "as realistic as FreeDOS allows" per the
+instruction that scoped this work.
+
+**Three more real bugs, found the same way as Phases 2-3: booting real,
+unmodified software and reading the actual BIOS source when behavior
+didn't make sense, never guessing.**
+
+1. **A phantom second drive caused a genuine BIOS divide-by-zero.**
+   `Wd1003` modeled a single shared task-file register set regardless of
+   which drive was selected. Since drive 1 (the slave/D: position) is
+   permanently unpopulated on this machine, selecting it should make the
+   command-block bus float (real absent ATA devices don't drive the bus at
+   all), but the shared-register model just echoed drive 0's real values
+   back. The BIOS's own `ata_detect()` (`rombios.c`) scratch-register test
+   (write 0x55/0xAA to Sector Count/Number, read it back) therefore
+   concluded a second drive existed, IDENTIFYing it returned all-zero
+   geometry (nothing was ever mounted at index 1), and the BIOS's extended-
+   geometry query (`AH=48`) divided by that zero somewhere in its own CHS-
+   translation math -- a hard `#DE` inside the BIOS itself (confirmed by
+   instrumenting `Cpu::interrupt()` and disassembling at the faulting
+   `CS:IP`), which the FreeDOS kernel's own exception handler then reported
+   as `PANIC: MCB chain corrupted`. Fixed by making register access for a
+   permanently-absent drive index float to `0xFF` on read and go nowhere on
+   write (`Wd1003::selected_drive_absent()`), keyed off the fixed hardware
+   fact of which drive index is populated -- deliberately NOT off whether
+   `mount()` happened to be called yet, since the existing register-
+   protocol tests exercise drive 0 without ever mounting an image (matching
+   a real controller answering regardless of whether the platters hold a
+   valid filesystem). Regression-tested
+   (`Wd1003Test.AbsentSlaveDriveFloatsInsteadOfEchoingMasterRegisters`).
+
+2. **Every real disk I/O from this BIOS uses 28-bit LBA addressing, never
+   plain CHS -- even for "legacy" `INT 13h AH=02/03` calls.** Reading
+   `rombios.c`'s `ata_cmd_data_io()` showed it converts CHS to LBA in
+   software for *every* call (the classic sentinel is passing `sector=0`
+   to that internal function, which then computes the LBA fields and ORs
+   `ATA_CB_DH_LBA` (0x40) into the Drive/Head register) and always issues
+   the ATA command that way. `Wd1003` always interpreted Sector
+   Number/Cylinder Low/Cylinder High/Drive-Head as pure CHS regardless of
+   that bit -- which happened to still work for LBA sector 0 (arithmetically
+   identical to CHS(0,0,1) for any geometry, since sector 1 is always the
+   first sector) and so stayed hidden through every boot-sector read so
+   far, but silently computed the wrong byte offset for anything else. This
+   is exactly what broke the FreeDOS installer's auto-partition step, which
+   needed to touch sectors where the two addressings genuinely diverge.
+   Genuine ATA LBA28 support is the same kind of documented compatibility
+   concession as IDENTIFY DEVICE itself (a real 1984 WD1003 predates LBA by
+   over a decade) -- implemented in
+   `Wd1003::offset_for_current_registers()`, gated on Drive/Head bit 6.
+   Regression-tested
+   (`Wd1003Test.ReadSectorsUsesLbaAddressingWhenDriveHeadBitSixIsSet`, using
+   an LBA address chosen to be out of range under a naive CHS
+   interpretation of the same register values, so the test fails loudly if
+   the addressing mode is ever ignored again).
+
+3. **A missing IDENTIFY field made the BIOS's own transfer loop move zero
+   bytes despite our device having real data ready.** `ata_detect()` reads
+   IDENTIFY word 5 ("bytes per unformatted sector" -- an obsolete field on
+   any real drive, always 512 in practice) into its own per-device cache,
+   then `ata_cmd_data_io()`'s assembly transfer loop sizes its `rep
+   insw`/`rep outsw` word count directly from that cached value. `Wd1003`'s
+   `do_identify()` never set word 5, defaulting to zero from the buffer's
+   initial zero-fill -- so the BIOS's own PIO loop moved zero words per
+   chunk. The device's paced READ SECTORS still completed correctly and had
+   genuine data sitting behind DRQ the whole time, but the BIOS never
+   actually drained any of it, so its own post-transfer completion check
+   (which expects DRQ to have cleared once the expected byte count has been
+   pulled) saw DRQ still set and reported total operation failure --
+   exactly what the installer's "Automatically partition drive C:. Failed."
+   message was. Found by tracing the specific `INT 13h AH=42` (extended
+   read) call end to end: capturing its Disk Address Packet, confirming
+   `Wd1003` itself logged a normal, in-range, successfully-completed read,
+   and then reading `ata_cmd_data_io()`'s post-transfer status check in
+   `rombios.c` to see exactly what it was waiting for that never happened.
+   Fixed by setting IDENTIFY word 5 to 512. Regression-tested
+   (`Wd1003Test.IdentifyDeviceReportsRealGeometry`, extended to check word 5).
+
+With all three fixed, the exact real FreeDOS 1.3 installer -- unmodified
+BIOS, unmodified VGABIOS, unmodified installer floppies -- now reports
+**"Automatically partition drive C:. Success."** against a genuinely blank
+733/5/17 image and proceeds to the "reboot to apply the new partition"
+step, which itself works end-to-end (a real `INT 19h`-style reboot back
+through the same boot floppy, landing at the installer's welcome screen
+again with the newly-written MBR now persisted on the mounted image).
+
+**In progress**: scripting the rest of the real installer flow (format,
+file copy across the `DSK01`-`DSK06` floppy swaps, completion) via the same
+screen-text-matching-and-keystroke-injection approach, to produce the
+final genuinely-installed 733/5/17 image; then a pinned/checksummed
+`disks/build-freedos-hdd.sh` (fetches `FD13-FloppyEdition.zip`, runs the
+installer-automation tool against it, verifies the result boots) following
+the repo's fetch-script conventions, and an actual `bios_host`-driven
+boot-from-HDD trace against the finished image.
+
+**A fourth real bug, hit as soon as the installer needed to swap floppies
+mid-session.** `fdc765.h`'s Digital Input Register (0x3F7) had, since Phase
+3, always reported "media unchanged" -- documented at the time as "not
+modeled" because nothing yet exercised it (a single-floppy boot never
+swaps media at all). Driving the real multi-disk installer past its first
+"Insert diskette #2 ... press a key to continue" prompt exposed why that
+matters: the installer's own file-copy routine polls this bit specifically
+to confirm the user actually swapped media before trusting a re-read of
+the drive, and reporting "unchanged" unconditionally left it waiting
+forever for a change that could never come -- confirmed by giving it an
+enormous cycle budget (20 billion) with zero progress, not just "needs more
+time." Fixed with genuine DSKCHG modeling: `Drive::disk_changed` starts
+true (real hardware asserts it at power-on), `mount()` re-asserts it
+(matching a real media swap), and it clears only once a RECALIBRATE/SEEK
+command actually steps that drive afterward (matching a real controller
+re-latching the new media) -- `in(0x3F7)` reports it for whichever drive
+the DOR's select bits currently address. Regression-tested
+(`Fdc765Test.DiskChangeLineSetByMountAndClearedBySeek`).
+
+**Real progress on the multi-disk install, and a fifth real bug in the
+scripted keystroke timing.** Extending the disk-swap logic to answer
+subsequent "press a key" prompts hit a genuine, permanent `HLT` with
+interrupts enabled but never woken -- confirmed with a CS:IP hit
+histogram (the same disassembly-based technique as earlier phases)
+showing the CPU parked inside the classic `INT 2Fh AX=1680h` DOS-idle
+idiom (see §10) with zero PIC pending-interrupt observations across three
+million sampled cycles yet real wake events still occurring, which ruled
+out an interrupt-delivery bug and pointed at software: the installer's
+"press a key" wait apparently flushes/discards whatever's already queued
+right before it actually starts waiting, so a burst of presses sent the
+instant the prompt's text first appeared can land entirely inside that
+flush window and vanish. Fixed by nagging with one keypress every ~0.25s
+of emulated time instead of a single burst, matching what an actually
+impatient human does. This is a scripting-tool finding, not an emulator
+bug -- noted here because the same install-automation approach needed it
+to make real progress at all.
+
+**The real file-to-disk mapping, discovered rather than guessed.** Past
+the first floppy, the installer names files individually ("Insert diskette
+containing file A:\FREEDOS.NNN") instead of by disk number. Parsing each
+install floppy's actual FAT12 root directory (rather than guessing) showed
+the real split-archive layout: DSK01=FREEDOS.001-019, DSK02=.020-039,
+DSK03=.040-059, DSK04=.060-079, DSK05=.080-099, DSK06=.100-114 -- clean,
+contiguous ranges, confirming the installer processes files strictly in
+numeric order and only asks for a new diskette exactly at a range
+boundary.
+
+**With all of the above, the real, unmodified FreeDOS 1.3 installer
+completed the entire installation end to end** -- format, MBR, boot
+partition, and all 114 split files across all 6 disks -- ending with its
+own "The installation of FreeDOS 1.3 has completed" message. The
+installer's own in-memory `Wd1003::Drive::image` (not the buffer originally
+passed to `mount()`, which only reflects the *starting* state -- a scratch-
+tooling detail worth remembering for any future automation, not an
+emulator bug) was extracted to a genuine 733/5/17, 31,900,160-byte raw HDD
+image.
+
+**Booting that image standalone (no floppy mounted, matching real AT
+behavior falling through to drive C: when drive A: is empty) surfaced
+three more real bugs, all in how `Wd1003` modeled ATA/IDE's master/slave
+bus sharing -- each one only visible because nothing exercises "boot with
+zero help from a floppy in between" during a normal install session:**
+
+1. **A real ~32-second hardware timeout, not a bug -- but one that needs
+   billions of genuine 8MHz cycles to actually clear.** `rombios.c`'s
+   `await_ide()` has no hardware-timer-based timeout at all: `IDE_TIMEOUT`
+   (32000, "32 seconds max for IDE ops") is a raw *loop iteration* count,
+   calibrated by the BIOS's original authors against whatever host speed
+   they had in mind -- at this machine's genuine, unaccelerated 8MHz, the
+   real elapsed time to exhaust it is on the order of several real seconds
+   of *simulated* clock time, i.e. billions of actual 8MHz cycles. A
+   from-cold HDD-only boot legitimately waits out this real timeout for
+   the permanently-absent slave drive before POST can continue, and a test
+   budget of a few billion cycles simply wasn't enough to observe anything
+   past it -- confirmed by disassembling the exact hot loop (an `inb()`
+   polling `await_ide` call) and recognizing the calibration, then simply
+   giving the harness enough cycles. This is genuine, period-accurate
+   behavior worth preserving as-is per this repo's own realism rules, not
+   something to special-case away.
+
+2. **The command-register-only write gate was still too broad.** The
+   original phantom-drive fix (§ above) gated *every* write aimed at the
+   selected-but-absent slave, on the reasoning that "there's no Device 1
+   state machine to receive it." True for the command register, but wrong
+   for Sector Count/Number/Cylinder Low/High/Features: those are simple
+   latches on a shared parallel bus that whichever real device is
+   physically present absorbs *regardless of the DEV bit* -- there's no
+   per-device routing for them at all on real hardware. This BIOS's own
+   boot-sector-read code programs exactly those registers *before*
+   reselecting the master (right after probing the slave last during
+   POST), so gating them on the then-still-selected slave silently
+   discarded the real CHS parameters, corrupting the very first
+   boot-sector read into a bogus, negative-offset request. Fixed by
+   narrowing the gate to the command register (0x1F7) alone -- found by
+   tracing the exact sequence of port writes leading into the failing
+   read and noticing Sector Number simply never got programmed.
+
+3. **The absence-signaling fix from bug 2's era was *also* too broad in
+   the read direction, in two different ways, uncovered one after the
+   other.** First: reads were gated to float (0xFF) whenever the slave
+   was selected at all, matching "nothing answers" -- but per the real
+   ATA spec, when no Device 1 is wired at all, Device 0 must keep
+   answering *reads* too regardless of the DEV bit, since there's nothing
+   else on the bus to float to; gating them made the master's own status
+   register look permanently floated (BSY stuck set) the instant POST's
+   own slave probe left the slave selected, which is exactly the state
+   the boot loader's very first status check finds itself in. Un-gating
+   all reads fixed that -- but broke detection itself: with reads never
+   floating, the slave's post-reset Cylinder Low/High showed the same
+   0x00/0x00 signature as a genuine drive, so `ata_detect()`'s own
+   `cl==0xff && ch==0xff` "no second drive" check never fired, the slave
+   got misclassified as real ATA, and its inevitably-refused IDENTIFY
+   attempt made the BIOS panic with "Failed to detect ATA device" after
+   timing out. The real, precise fix needed both facts to hold at once:
+   Cylinder Low/High/Status float *only* for the exact two reads
+   `ata_detect()` performs immediately after a soft reset released while
+   the slave was selected (modeled as a two-read countdown,
+   `Wd1003::floating_reads_left_`, armed by the reset and consumed by
+   the very next two reads of those two registers), and reflect the real,
+   present master for absolutely everything else -- including the boot
+   loader's later, unrelated status check with the slave still nominally
+   selected from that same long-past probe. All three were found via a
+   dedicated HDD-only boot verification harness (no floppy mounted at
+   all) and a CS:IP hit histogram to pin down exactly where the CPU was
+   stuck at each step, the same evidence-based technique used throughout
+   this project. Regression-tested
+   (`Wd1003Test.AbsentSlaveDriveOnlyRefusesToExecuteCommands`,
+   `Wd1003Test.SoftResetSignalsAbsenceForTheSlaveViaFloatedCylinderRegisters`,
+   `Wd1003Test.FloatedSignatureIsATwoReadWindowNotAPersistentState`).
+
+**One more real, genuine factory-configuration gap, found by the same
+boot test:** `Machine::configure_factory_cmos()` set CMOS byte 0x3D's
+1st-boot-device nibble to floppy (0x01) but left the 2nd-boot-device
+nibble at 0 ("not defined") -- meaning a from-cold boot with no floppy
+present hit the BIOS's own `BX_PANIC("No bootable device.")` rather than
+falling through to the hard disk. Real ATs shipped with a hard disk
+installed default to exactly "try A: first, then C:" (`rombios.c`'s own
+boot-device-code table: 0x01=floppy, 0x02=hard disk, packed low-nibble/
+high-nibble into one byte -- 0x21). Fixed by setting CMOS 0x3D to 0x21.
+Regression-tested (`MachineTest.ConstructorSeedsFactoryCmosConfiguration`'s
+new assertion on the high nibble).
+
+**End-to-end result: a genuinely bootable, from-scratch-installed 30MB
+FreeDOS 1.3 hard disk image, produced entirely by real, unmodified
+third-party software running inside this emulator -- the real BIOS, the
+real VGA BIOS, and the real FreeDOS 1.3 installer, never a hand-crafted
+filesystem.** Booting that image standalone (HDD only, no floppy) reaches
+a genuine, interactive `C:\>` prompt: `FDCONFIG.SYS`/`FDAUTO.BAT` process,
+FreeCOM reports real conventional-memory figures for `SYSTEM` (the
+FreeDOS kernel) and `COMMAND` (FreeCOM itself), and the shell's own
+welcome banner and prompt appear -- not a stub, not a mock, the actual
+software doing exactly what it does on real hardware.
+
+**Done: the scratch install-automation harness became a permanent,
+checked-in, reproducible build pipeline.** `disks/build_freedos_hdd.cpp`
+is the cleaned-up tool (fixed Step list through the first floppy swap,
+then the dynamic per-file/disk-range logic, the keypress-nag mechanism,
+and the final-completion handling, all as described above, with every
+debug trace this session's investigation needed stripped back out);
+`disks/fetch-freedos-install-set.sh` fetches and SHA-256-verifies
+`x86DSK01.img`-`x86DSK06.img` from the same official `FD13-FloppyEdition.zip`
+distribution point `fetch-freedos.sh` already used for the boot floppy,
+following the identical pinned-and-verified pattern. `make hdd-image`
+(deliberately *not* part of `check`/`test` -- see the Makefile's own
+comment -- since running the real installer takes real minutes) ties it
+together: fetch BIOS + both floppy sets, build the tool, run it, and
+produce `disks/freedos-hdd.img`. Verified by actually running the full
+pipeline from a clean checkout: it reproduced the identical result (a
+genuine MBR, `55 AA` signature, and a real, independently-verified boot to
+`C:\>`), confirming the shipped HDD image is now something anyone building
+this project can regenerate, not an artifact only this session's
+interactive debugging could produce. The Makefile's own `CHIPSET_SRCS`/
+`UNIT_TESTS` lists and its `coverage` target's source list, silently stale
+since Phase 3 (never updated when `fdc765.cpp`/`ega.cpp`/`wd1003.cpp` were
+added, so `make bios-check` and `make coverage` had been failing to link
+this whole time), were fixed as part of this same pass.
+
+**Still open, for a later phase:** CI integration for `make hdd-image`
+(Phase 8's "site integration" scope) -- the real-installer approach that
+makes this image genuinely reproducible also makes it too slow to run on
+every push; some form of caching keyed on the pinned floppy/tool inputs
+will be needed there, not attempted here.
+
+## 12. Phase 5: real planar EGA memory (write modes, read modes, latch)
+
+Phase 3's `ega.h`/`ega.cpp` treated VRAM as a flat, character/attribute-
+interleaved byte array -- observably correct for text mode specifically
+(a real EGA's odd/even chaining happens to reduce to exactly that for
+text), but not the real hardware underneath, and not enough for any
+graphics mode. This phase replaces it with the genuine 4-bitplane engine:
+256KB VRAM stored byte-interleaved as `vram[(plane_offset << 2) + plane]`,
+a 4-byte read latch, the full Write Mode 0-3 / Read Mode 0-1 state machine,
+Set/Reset, Enable Set/Reset, Data Rotate's rotate-count + ALU function,
+Map Mask, Read Map Select, Bit Mask, Color Compare/Color Don't Care, and
+the Graphics Controller's Memory Mapping field (which legacy window --
+128K@A0000, 64K@A0000, 32K@B0000 mono, or 32K@B8000 color -- is currently
+decoded; real hardware only ever answers one at a time, not all three
+simultaneously the way Phase 3's flat model implicitly did).
+
+**Source**: the memory-access algorithm (latch-on-every-read, the four
+write modes, both read modes, the odd/even-vs-map-mask gating) follows
+the IBM EGA Technical Reference. Register *values* (the standard mode-3
+and 16-color-graphics-mode table used in `tests/ega_test.cpp`'s setup
+helpers) are the IBM EGA/VGA-standard values every compatible BIOS
+reproduces, and were confirmed empirically: the regression check below
+booted the real, unmodified `vgabios` and it produced byte-for-byte the
+same screen output as Phase 3's simplified model, meaning vgabios's own
+mode-3 register programming matches what this implementation expects.
+
+**Explicitly out of scope: Chain Four (VGA mode 13h's chained-pixel
+addressing).** `VGABIOS-lgpl-latest.bin` is a full VGA-compatible BIOS (see
+§6) and will happily offer mode 13h, but Chain Four is VGA silicon, not
+EGA -- a genuine 5170-339 with an EGA card has no such mode. This device
+does not implement it, on purpose, matching CLAUDE.md's "Adding a new
+machine" rule that the emulated hardware -- not whatever the substitute
+BIOS thinks it can offer -- is what enforces the real EGA ceiling
+(640x350x16, no chained/linear-framebuffer modes).
+
+**Regression risk and how it was checked**: this is a rewrite of the one
+piece of hardware the entire, already-verified boot pipeline (Phases 2-4)
+depends on for any visible output at all, so it was checked two ways
+before being considered done, not just unit-tested in isolation:
+
+- The 6 Phase-3 `ega_test.cpp` cases were kept and still pass, but 2 of
+  them needed real changes, not just adaptation: `TextModeMemoryReadWriteRoundTrip`
+  now calls a `SetupTextMode80x25()` helper first, because a freshly reset
+  card genuinely has no planes enabled and an all-zero Bit Mask -- on real
+  hardware a bare `mem_write` right after reset, with no mode-set, *is* a
+  no-op, so the old test's implicit assumption otherwise was itself a
+  Phase-3 simplification artifact, not something to preserve.
+  `GraphicsAndMonoWindowsAreDistinctFromColorTextWindow` similarly assumed
+  all three legacy windows (A0000/B0000/B8000) are simultaneously live,
+  which no real register state produces; it's replaced by
+  `MemoryMappingSelectsWhichLegacyWindowIsDecoded`, which demonstrates the
+  real behavior (switching the Memory Mapping field changes which one
+  window answers, and the previous window's bytes are preserved but no
+  longer reachable, not aliased). 6 new tests cover the write-mode/read-
+  mode/Set-Reset/Data-Rotate/Map-Mask/Bit-Mask machinery and the odd/even-
+  routed character-generator-plane-2 quirk individually.
+- A scratch native harness (not committed -- same shape as
+  `disks/build_freedos_hdd.cpp`'s screen-reconstruction technique) booted
+  the real `BIOS-bochs-legacy` + `VGABIOS-lgpl-latest.bin` against the
+  shipped `disks/freedos-hdd.img` end to end and reached the identical live
+  `C:\>` prompt Phase 4 established, with the identical on-screen text
+  (memory-usage table, `FDCONFIG.SYS`/`FDAUTO.BAT` processing, the FreeDOS
+  banner) -- proving the new planar engine is observably indistinguishable
+  from the old flat model for everything real firmware/DOS currently
+  exercises. (The harness's own screen-reconstruction code needed a
+  matching fix along the way: it originally read `vram[]` directly with
+  Phase 3's flat offsets, which no longer describes the storage layout --
+  fixed to fold the CRT controller's own display-refresh read path,
+  character = plane 0 at `vram[(plane_offset<<2)+0]`, mirroring real
+  hardware's independent CRTC scanout path rather than the CPU's I/O read
+  path (`mem_read`), which depends on Read Map Select and would give a
+  wrong answer if a BIOS font-load routine left it pointed elsewhere.)
+
+**Deferred to Phase 7** (per the approved plan, matching this project's
+"native/testable core first, WASM front end later" pattern from every
+prior phase): the `<canvas>`-based renderer that actually paints EGA's
+character/graphics modes to the screen. This phase's scope is the real
+device semantics only.
+
+**`render_screen.cpp`** (promoted from a scratch check into a permanent
+diagnostic, same category as `bios_host.cpp`): boots the real BIOS/vgabios
+plus optional HDD/floppy images, then renders the live EGA text-mode
+screen to an actual BMP -- not the ASCII `ScreenText()` reconstruction
+`disks/build_freedos_hdd.cpp` uses for its own keystroke-matching, which
+is fine for pattern-matching prompts but tells a person nothing about
+whether the *real* character generator and palette are actually correct.
+It uses only already-public `Ega` state (`vram` for both plane 0/1 text
+data and plane 2's character-generator bitmap; a new `attr_palette()`
+accessor, mirroring the existing `cursor_offset()`/`start_offset()`
+front-end-convenience pattern, added alongside it for the live Attribute
+Controller palette registers) plus the same 6-bit EGA color decode cited
+in this section -- no separate font or color data of its own. Verified by
+actually running it against the shipped `disks/freedos-hdd.img`: produced
+a real, legible, correctly-colored screenshot of the live `C:\>` boot
+(readable glyphs confirm the plane-2 character-generator addressing
+assumption; correct colors -- cyan filenames, red CD-ROM warning, green
+FreeDOS banner -- confirm the default palette register table and 6-bit
+color decode), independent visual proof beyond the ASCII-based regression
+check above. Not gated by `check`/`test`, matching `bios_host.cpp`'s own
+precedent -- see the Makefile's comment on `render_screen`.
+
+## 13. Phase 6: PC speaker
+
+`pcspeaker.h`/`.cpp` model the real speaker circuit as what it actually is
+in hardware: a 2-input AND gate between Port 0x61 bit 1 ("Speaker Data
+Enable") and PIT channel 2's output (already gated by Port 0x61 bit 0 --
+see `pit8253.h`/§5). That one AND gate is why two unrelated real
+programming techniques both work through the same two bits: standard tone
+generation (gate the PIT on, leave data enable high, the speaker follows
+channel 2's square wave) and "digitized"/direct-toggle playback (park the
+PIT -- gate off, forcing its output permanently high -- and toggle data
+enable directly under CPU control, e.g. Access Software's RealSound and
+many disk-based PC speaker sample players). `PcSpeaker` doesn't synthesize
+audio itself (no browser exists yet -- Web Audio output is Phase 7's job,
+per the approved plan); it records a real, continuous *edge trace*
+((cpu_cycle, level) whenever the AND gate's output actually changes), the
+representation a future renderer needs to resample into PCM, and the only
+one faithful to a real speaker's continuously-variable cone position
+rather than some sample rate the native core has no business choosing.
+Bounded to 65536 pending edges (real hardware has no such limit; this only
+protects memory if a consumer never drains, dropping the oldest
+transitions the way an unread hardware FIFO would).
+
+**Two real `Pit8253` gaps found and fixed along the way**, both load-
+bearing for the digitized-playback technique specifically (nothing before
+Phase 6 needed to gate channel 2 off mid-tone, so nothing exposed them):
+gate low was freezing channel 2's counter correctly but leaving `output`
+at whatever level it happened to be, when real Mode 3 hardware forces it
+high immediately regardless of phase -- without this, a program parking
+the PIT to drive the speaker directly would inherit an unpredictable
+baseline instead of the clean high level real hardware guarantees. And
+gate's rising edge wasn't reloading the counter, when real Mode 3 hardware
+does -- without this, ungating would resume mid-phase instead of
+restarting the square wave cleanly. Both are cited, hand-verified 8253
+Mode 3 behavior (see `pit8253.h`'s updated header), covered by two new
+tests (`Gate2LowForcesOutputHighEvenMidCycle`,
+`Gate2RisingEdgeReloadsCounterInsteadOfResumingMidPhase`) that fail
+without the fix and pass with it -- confirmed by deriving both by hand
+before implementing, then checking the actual test run matched.
+
+**Verified two ways**: `pcspeaker_test.cpp`'s 6 cases exercise the AND
+gate, edge deduplication, the digitized-playback relay case, reset, and
+the overflow-drops-oldest behavior directly. And the full BIOS + vgabios +
+`freedos-hdd.img` boot (the same regression check used for Phase 5) was
+re-run after wiring `PcSpeaker` into `Chipset` and fixing the two PIT
+gaps: identical screen output, confirming no regression. That same run
+also traced Port 0x61 across the entire boot: it never changes from
+0x00, so the speaker produces zero edges for this specific boot path --
+not a bug (confirmed by tracing the actual register, not just the
+higher-level symptom): this substitute BIOS's boot sequence and a plain,
+silent `C:\>` boot apparently never call for a beep. The device logic
+itself is exercised directly by its own unit tests instead.
+
+**Deferred to Phase 7**: actually turning the edge trace into sound (Web
+Audio, matching the approved plan's "Web Audio output" phrase for this
+phase, and this project's native-core-first pattern from every prior
+phase). This phase's scope is the real circuit semantics only.
+
+## 14. Phase 7: the front end -- `web/`
+
+`ibmpc-at/web/` follows the established per-machine shape
+(`wasm_machine.cpp` Embind wrapper, `app.js`/`index.html`, own `Makefile`/
+`devserve.py`, independent theme-system copy -- see the approved plan's
+"front-end code... keep independent per-machine copies" decision). The
+top-level `Makefile` gained `wasm`/`serve` targets delegating to `web/`,
+matching `altair8800`'s and `assembler6502`'s own top-level Makefiles
+exactly.
+
+**Scope decision, stated up front**: this pass ships real, complete
+**text-mode** rendering (what the machine actually boots to and what a
+plain DOS session is), keyboard input, the two floppy bays, a status-only
+HDD LED, and a muted-by-default Web Audio speaker. CRTC-timing-driven
+**graphics-mode** scanout -- deriving the active resolution from the
+Horizontal/Vertical Display End registers for 320x200x16/640x350x16/etc.,
+which Phase 5's memory engine already fully supports at the device level
+-- is deliberately not attempted here; nothing about the plan's Phase 7
+line ("full EGA... a new canvas-based front-end renderer") specifies
+graphics modes must land in the same pass as text mode, and shipping a
+half-working graphics renderer would be worse than being explicit that
+it's still missing. A future pass extends `ega_render.h`'s single
+`RenderTextScreen` entry point with a second, CRTC-driven one.
+
+**wasm_machine.cpp**: a thin `WasmMachine` wrapping `ibmpcat::Machine`,
+exposing `loadRom`/`runCycles`/`renderFrame`/`injectScancode`/floppy
+mount-eject-status/`mountHdd`/`hddBusy`/`speakerLevel`+`speakerEdges`.
+`renderFrame` calls the same `ega_render.h::RenderTextScreen` the native
+`render_screen.cpp` diagnostic uses -- one tested C++ implementation, not
+a second copy of the pixel-decode logic re-derived in JavaScript.
+Building it surfaced one real, small gap needing new accessors: nothing
+exposed the WD1003's busy/DRQ state for an activity LED, so `Wd1003::busy()`
+was added (`ST_BSY` or an in-flight paced transfer -- see `wd1003.h`),
+covered by a new `BusyReflectsAnInFlightTransfer` test.
+
+**Firmware/HDD image placement**: the deployed site only ever stages a
+machine's `web/` directory (see CLAUDE.md/the other machines' own
+`_site/` staging), so `web/Makefile`'s `roms`/`hdd-image` targets copy
+the native-core Makefile's already-fetched/-built output into `web/roms/`,
+`web/disks/` rather than the page fetching `../roms/...` at runtime (which
+only works from a working tree, never from the deployed static site).
+`hdd-image`'s copy is gated on the parent's own output file actually being
+missing (a real file-based Make dependency, not a phony target re-invoked
+on every `make serve`) -- unlike `bios`'s recipe, which is cheap/idempotent
+(`fetch-bios.sh` checksums and skips what's already correct) and safe to
+re-run unconditionally, `hdd-image`'s recipe is a genuine multi-minute
+installer run and must not fire by accident.
+
+**Keyboard**: `app.js`'s `SET1` table maps `KeyboardEvent.code` directly
+to real IBM AT Set 1 scan codes (a plain number = one byte; a two-entry
+array = an 0xE0-prefixed extended key -- the arrow cluster, Insert/
+Delete/Home/End/PageUp/PageDown, right Ctrl/Alt, numpad Enter/Divide).
+`i8042.h`'s `inject_scancode()` is a verbatim Set-1 pass-through (see §12's
+commit and the file's own header), so this table supplies exactly what a
+real AT keyboard's own Set-2-to-Set-1 translation would hand the host --
+no separate translation stage needed or modeled.
+
+**A real, hardware-accurate constraint this surfaced, not a bug**: the
+8042's output register is a single, unqueued byte (`I8042::push_output()`
+just overwrites it) -- genuine hardware behavior, not a simplification.
+Sending a key's make code immediately followed by its break code with *no*
+CPU execution in between overwrites the make code before the CPU ever
+reads it, exactly like a real keyboard controller would drop a byte no
+one serviced in time. This was caught the hard way: an early Playwright
+smoke check using `keyboard.type()`/`keyboard.press()` with their default
+near-zero inter-event delay produced no visible effect at all, while the
+exact same check with a realistic ~80ms delay between keydown and keyup
+(matching how fast a real key can physically be pressed and released, and
+how a real browser's own native keyboard events behave) worked perfectly
+end to end -- typed `dir`, pressed Enter, got the real FreeDOS directory
+listing, screenshotted. **Phase 8's Playwright suite must use a delay
+(or `disks/build_freedos_hdd.cpp`'s own proven `SendKey()` shape: make,
+run real cycles, break, run real cycles) for synthetic keystrokes** -- this
+isn't a workaround for a bug, it's what real hardware requires too, and a
+zero-delay synthetic key event is not something any physical keyboard
+could ever generate.
+
+**Floppy bays**: functional, theme-consistent panels (file input to
+mount, per-drive motor LED polled each frame via `floppyPresent`/
+`floppyMotorOn`, an Eject that offers the modified image back as a
+download via `floppyImage`/`floppyDirty` when the session actually wrote
+to it) -- not a hand-crafted photoreal drive cabinet like `altair8800`'s
+88-DCDD graphic. A visually elaborate bay is a nice-to-have follow-up, not
+load-bearing for a correctly-emulated machine, and wasn't where this
+pass's effort went.
+
+**PC speaker, muted by default (explicit user instruction)**: the
+`#speakerEnabled` checkbox starts unchecked on every page load and is
+never restored from a saved preference -- deliberately, not merely
+because browsers block audio autoplay until a user gesture (though they
+do): the point of "off by default" is that it stays off until the visitor
+explicitly opts back in, on every visit, not just the first. When enabled,
+`pumpAudio()` drains `speakerEdges()` once per animation frame and builds
+one `AudioBuffer` covering exactly that frame's CPU cycles from the real
+edge trace (holding the last known level between edges, via the new
+`speakerLevel()` accessor for frames with none), scheduled gapless via
+`AudioBufferSourceNode.start(nextPlayTime)` -- no waveform assumption of
+its own, no deprecated `ScriptProcessorNode`, no separate `AudioWorklet`
+module. Not audible-output-verified in this pass (this specific boot
+path produces zero speaker edges at all, per §13 -- there's nothing to
+hear yet without a program that touches Port 0x61); the underlying
+`PcSpeaker` device logic has its own 6 direct unit tests, and the
+scheduling code is simple, low-risk glue. A real "does it actually make a
+sound" check is Phase 8 work, once a test program that beeps exists.
+
+**Verified**: `161/161` native tests pass (new:
+`Wd1003Test.BusyReflectsAnInFlightTransfer`). The front end was verified
+with ad hoc headless-Chromium (Playwright) checks -- not yet the formal
+Phase 8 suite, but real, running-browser proof, not just "it compiles":
+default-muted speaker checkbox confirmed unchecked; a full boot from cold
+start to a live `C:\>` prompt, screenshotted, byte-for-byte the same
+banner/memory-table/FreeDOS-welcome text as every native regression check
+in §12/§13; realistic-speed keyboard input typing `dir` + Enter and
+getting the real FreeDOS directory listing back, screenshotted; theme
+switching (Dark Modern correctly sets `data-theme="modern"
+data-mode="dark"`); floppy mount (label updates to the real filename) and
+eject (label reverts, motor LED reflects `floppyMotorOn`); the speaker
+checkbox toggling on. A `window.__test` hook (`{ machine, sendKey,
+screenEl }`, active under `?test=1`) was added for this, matching
+`altair8800`/`assembler6502`'s own established `window.__test` convention --
+ready for Phase 8's real suite to build on rather than reinvent.
+
+**Deferred to Phase 8**, per the approved plan: the formal Playwright
+suite (one spec per control/feature, shared `helpers.ts`/`fixtures.ts`),
+top-level `Makefile`/`README.md`/`index.html` integration, and
+the CI job pair. `?test=1` forcing floppy/HDD load speed to an internal
+max (CLAUDE.md's sanctioned automated-test override) is not yet wired up
+-- today's ~45-50 second real-time boot (genuine, unaccelerated 8 MHz --
+never sped up, per CLAUDE.md) is exactly as slow in the browser as in the
+native regression harness, and a test suite will want that override the
+way `fdc765`/`wd1003`'s existing credit-based transfer pacing already
+supports internally.
+
+## 15. CGA-compatible 4-color graphics mode rendering
+
+Found via real-world use, not a synthetic test: loading an actual
+commercial DOS game (The Oregon Trail, MECC, 1990 -- a legitimately-owned
+copy, built into a real FAT12 floppy image via `mtools` for testing, not
+committed to this repo) and running `OREGON CGA` produced a garbled field
+of colored blocks instead of the game's menu. Diagnosed with this
+project's standard evidence-based method -- not a guess: a native scratch
+harness booted the same way, launched the game, and dumped the actual
+Graphics Controller/Sequencer registers afterward. Confirmed precisely:
+`GR06` bit 0 (graphics, not alphanumeric) set, `GR05` bits 5-6 (Shift
+Register field) = 1 -- the real EGA/VGA "CGA-compatibility" 320x200
+4-color mode (what INT 10h mode 4/5 programs), not a bug in Phase 5's
+memory engine. §14's `RenderTextScreen` -- correctly scoped as text-only
+at the time -- was simply being asked to decode graphics VRAM as if it
+were characters and attributes; that's the garbled blocks, not a real or
+new emulation defect.
+
+**The real hardware mechanism, worked out from the actual register
+values and Phase 5's already-correct odd/even plane chaining** (see
+`ega_render.h`'s file header for the full account): a CGA-unaware
+program writes what it thinks is one flat 8000-byte bank (even scanlines
+in the first 8K, odd in the second, 80 bytes/scanline, 4 pixels/byte).
+Odd/even plane chaining -- already implemented, unmodified -- splits
+consecutive bytes across planes 0 and 1 by address parity, so each
+CGA-style byte pair lands at the same plane offset, one byte per plane.
+Real hardware's shift registers then read plane 0's byte as pixels 0-3
+and plane 1's byte as pixels 4-7 of that pair, each 2-bit value indexing
+the *live Attribute Controller palette* (registers 0-3) -- not a
+hardcoded CGA color table, matching how text mode's colors already work.
+
+**Implementation**: `ega.h` gained two small accessors matching the
+existing "host/front-end convenience" pattern (`attr_palette`,
+`cursor_disabled`, etc.) -- `graphics_mode_active()`, `gc_shift_register_mode()`
+-- reading straight from the same register arrays `in()`/`out()` already
+use, no new state. `ega_render.h`/`.cpp` gained `DetectScreenMode()`
+(reads those two registers, exactly what a real CRT controller consults,
+not a BIOS-video-mode-number guess), `RenderCgaGraphics4Screen()`, a
+`RenderedFrame{width,height,rgba}` struct, and `RenderScreen()` -- the one
+entry point `render_screen.cpp` and `wasm_machine.cpp` both now call, so
+there's a single tested implementation deciding what's on screen rather
+than each caller guessing or duplicating logic. An unrecognized graphics
+mode (Shift Register value 0 -- native 16-color EGA, needing full
+CRTC-timing-derived resolution, still not implemented; or 2, a VGA-only
+variant no genuine EGA ever sets) renders as a plain black frame -- an
+honest "not yet supported" placeholder, not a repeat of the
+garbled-block bug for a different unimplemented mode.
+
+**Front end**: `wasm_machine.cpp`'s `renderFrame`/`renderWidth`/
+`renderHeight` switched to `RenderScreen`/`RenderedFrame` (resolution
+varies by mode now, so width/height are read after each `renderFrame()`
+call, not assumed fixed). `app.js` resizes the canvas element's own
+pixel buffer to match whenever it changes, letting it display at its own
+native aspect ratio rather than stretching a lower-resolution mode into
+the text mode's box -- there's no real hardware basis to prefer one
+distortion over another, so this doesn't introduce one.
+
+**Also added while diagnosing this** (the user asked directly): real
+activity-LED behavior for the floppy motor and HDD indicators, not just
+existence. Sampling `busy()`/`motor_on` once per animation frame, *after*
+running that frame's whole cycle budget, could miss activity entirely --
+a transfer can start and finish well within one frame's ~133,000 cycles.
+`WasmMachine::runCycles()` now sub-chunks (2000 cycles at a time -- cheap;
+this emulator already interprets one instruction at a time in C++, a far
+finer granularity) and latches activity along the way; `hddBusy()`/
+`floppyMotorOn()` consume-and-clear that latch, the same "pulse-stretched
+to since last read" convention `altair8800/web/wasm_machine.cpp`'s
+`int_seen_`/`busActivityCounts()` already use for their own once-a-frame-
+polled indicators. The LEDs themselves were also made larger and
+labelled ("motor" / "activity") rather than bare, easy-to-miss dots.
+
+**Verified**: 165/165 native tests pass (10 new: `EgaRenderTest`'s mode-
+detect/CGA-decode/dispatch cases). Then, against the real, live site (not
+just the native harness): mounted the Oregon Trail floppy through the
+actual browser file picker, typed `A:` and `OREGON CGA` (a headless-
+Chromium check needed the real Shift+Semicolon key sequence for `:` --
+Playwright's high-level `keyboard.type()` doesn't reliably send one, a
+testing-tool quirk, not an app bug: a real keyboard reports Shift and the
+letter as two independent, properly-sequenced events, which is exactly
+what this page's per-key-code architecture already expects and handles
+correctly), and got the genuine MECC splash screen and Oregon Trail main
+menu rendering correctly at 320x200, canvas auto-resized, floppy motor
+LED confirmed lit during the actual load.
+
+## 16. Native 16-color EGA graphics rendering, and a real BIOS/hardware mismatch
+
+Follow-up to §15, from continued real-world use: plain `OREGON` (no `CGA`
+argument) still rendered a plain black screen even after §15's fix.
+Traced with the same evidence-based method -- boot the real game, dump the
+actual registers, don't guess -- and found something more interesting than
+a second missing mode: `GR05` Shift Register = 2, and `SEQ[4]` bit 3
+(Chain-Four) set. That's VGA's 256-color mode 13h, a mode that **doesn't
+exist on real 1984 EGA silicon at all**. It happens because this
+machine's freely-licensed BIOS substitute (`VGABIOS-lgpl-latest.bin`) is a
+full VGA BIOS -- already flagged as a real tension in §6 ("this machine's
+own EGA device is what actually enforces the real EGA ceiling regardless
+of what modes this BIOS thinks it can offer") -- and Oregon Trail's own
+auto-detect logic, seeing genuinely VGA-class capability reported, picks
+VGA's best mode instead of EGA's. A real EGA card, wired to this same
+substitute BIOS, would have exactly the same problem: the BIOS would
+offer a mode the card physically cannot display. This is a firmware/
+hardware mismatch this project already anticipated and accepted, not a
+new bug -- `OREGON CGA` (explicitly forcing the CGA-compatible path) is
+the period-correct thing to do here, precisely per the game's own
+README, and continues to work exactly as §15 verified.
+
+**Separately, and worth building regardless**: native 16-color EGA
+graphics (`GR05` Shift Register = 0 -- real modes 0x0D/0x0E/0x10,
+320x200/640x200/640x350) was still unimplemented, a real gap distinct
+from the mode-13h mismatch above. Fixed properly, grounded in verified
+real data rather than a remembered spec: this machine's own BIOS was
+invoked directly (`cpu.ax = 0x0010; cpu.interrupt(0x10);` -- a real INT
+10h injection, pushing flags/cs/ip and jumping through the real-mode IVT
+exactly like the instruction would) to set genuine mode 0x10, then the
+actual CRTC registers it programmed were read back: Horizontal Display
+End = 79 -> (79+1)*8 = 640, Vertical Display End = 349 (0x5D plus the
+Overflow register's bit 1) -> 349+1 = 350 -- exactly real mode 0x10's
+resolution, confirming the general formula (not a hardcoded mode table)
+before writing a line of the renderer. `ega.h` gained
+`crtc_horizontal_display_end()`/`crtc_vertical_display_end()` accessors
+(same "host/front-end convenience, reads straight from the existing
+register arrays" pattern as every prior addition); `ega_render.h`/`.cpp`
+gained `RenderEgaNative16Screen()` (odd/even chaining disabled in this
+mode -- linear addressing across all 4 planes; the CRT controller reads
+the same plane offset from all 4 planes every cycle, since planar VRAM
+always answers on all 4 planes at once, and combines each pixel's 4 bits
+-- plane 0 = LSB through plane 3 = MSB of the color index, the standard
+EGA/VGA convention -- into the live Attribute Controller palette, same as
+every other mode) and a new `ScreenMode::kEgaGraphics16`, distinct from
+`kUnsupportedGraphics` (which now specifically means Shift Register = 2,
+correctly documented as VGA-only rather than "not implemented yet").
+
+**Verified**: a second native probe drew an actual rectangle through the
+real Write Mode 2 path (the standard technique real EGA graphics software
+uses to plot a solid color -- CPU byte's bits select per-plane, not a raw
+`vram` poke) after invoking real mode 0x10, and the resulting frame showed
+a correctly-positioned, correctly-colored rectangle at exactly the
+expected pixel coordinates and palette color, at the correct verified
+640x350 resolution. 10 new/updated `EgaRenderTest` cases (167/167 total).
+The WASM front end needed no changes at all beyond rebuilding -- 
+`wasm_machine.cpp`'s `renderFrame`/`renderWidth`/`renderHeight` already
+dispatch through the same shared `RenderScreen()`, and `app.js`'s canvas-
+resize logic was already generic (proven by §15's CGA-mode resize)
+rather than hardcoded to particular dimensions.
+
+**Also fixed while investigating**: the local LAN preview server
+(`python3 -m http.server`, used by `make preview`/
+`preview-bg`) sent no cache headers at all, unlike every machine's own
+`web/devserve.py` -- a real, separate bug that made a stale wasm module/
+app.js indistinguishable from an actual regression after re-staging.
+Replaced with `serve_nocache.py` (same `Cache-Control: no-store`
+handler devserve.py already used), wired into all three `preview`/
+`preview-bg`/`preview-install` code paths.
+
+## 17. Site-wide theme sync, a bigger screen, the realistic front panel, and power/reset
+
+Follow-up requests: match the page theme to altair8800/assembler6502's own,
+maximize the screen, and build a real-looking front panel (drive bays,
+HDD/power LEDs) with power and reset switches, inspired by altair8800's
+front panel -- plus, explicitly, delegate well-scoped mechanical work to
+a cheaper model where it fits.
+
+**Delegation**: a Haiku subagent synced every shared theme token (colors,
+fonts, shadows for all four themes) to altair8800/web/index.html's exact
+values, scoped strictly to the four `:root`/`:root[data-theme=...]`
+custom-property blocks with an explicit "touch nothing else" instruction
+-- a genuinely mechanical, fully-specified, low-integration-risk task
+(CSS variable *values* can't rename an element ID or break a JS
+selector). The front panel's HTML/CSS and the power/reset behavior were
+done directly instead: real hardware semantics (what powering off/on and
+resetting actually do to running state) and deep integration with
+existing JS hooks (`.at-bay[data-drive]`, `[data-role=...]`, `#hddLed`)
+are exactly the kind of work this project's own CLAUDE.md guidance says
+to keep rather than delegate -- getting it wrong is expensive to catch
+later, and a fresh agent would have to re-derive context already in hand.
+
+**A real bug, initially misdiagnosed**: `.page`'s `max-width: var(--page-max)`
+computed as `none`, confirmed three ways (`getComputedStyle().maxWidth`,
+`getBoundingClientRect().width`, a screenshot) -- but the actual page
+looked *fully themed* in every other respect in that same screenshot
+(correct panel/button/titlebar colors), so the fix applied at the time
+was scoped to just this one property: swap `var(--page-max)` for a
+literal `920px`. That was a real fix for that one symptom, but it wasn't
+the disease, and the "every other respect looked themed" read turned out
+to be wrong too -- a user comparing this page side by side with
+altair8800's caught that the *entire* Windows 95 and Mid-1990s Web themes
+were rendering essentially unstyled (plain white page, no titlebar
+gradient, no panel borders), which a quick visual scan had missed by
+focusing on layout/function rather than actually comparing colors against
+the reference page. The real cause: this file's own theme-block comment
+header closed with an HTML comment terminator (`-->`) instead of a CSS
+one (`*/`) --
+
+```
+/* ---- page themes: ...
+   ... front panels. -->        <- should be */
+```
+
+-- so the CSS comment was **never closed**. Everything from that point
+was silently consumed as "still inside the comment" until the parser
+hit the next literal `*/` anywhere later in the file (which happened to
+be one line inside the *fourth* theme block, `moderndark`'s own trailing
+comment) -- meaning the `:root`, `web94`, and light-`modern` blocks (three
+of four theme blocks, the whole non-dark-mode token set) were being
+dropped by the parser on every load. Confirmed precisely by inspecting
+`document.styleSheets[0].cssRules` directly: 93 rules instead of the
+expected ~96, with rule 0 being the `moderndark` block instead of the
+base `:root`. Fixed by closing the comment correctly; `--page-max` was
+reverted back to the token-driven form (`.page { max-width:
+var(--page-max); }`, `:root[data-theme="modern"] { --page-max:
+min(1600px, 95vw); }`) now that the actual disease, not just that one
+symptom, is fixed. Take-away for next time: when a computed style comes
+back wrong, check whether the *whole* stylesheet parsed as expected
+(`document.styleSheets[...].cssRules.length` and `cssRules[0]`) before
+assuming the one property under investigation is the whole story --
+and a "looks themed" visual skim is not the same as actually comparing
+colors/chrome against the reference page pixel-for-pixel.
+
+**Screen size**: base CSS width raised from 640px to 860px (matching the
+spirit of altair8800's own 792px-wide CRT) -- still `max-width:100%` and
+still whatever the actual current-mode resolution is (640x350 text,
+320x200 CGA graphics, etc.) upscaled with `image-rendering:pixelated`,
+not a change to any real resolution.
+
+**Front panel**: one `.at-case` fascia (beige AT-plastic gradient, real
+inset/outset shadows for a moulded-plastic look) replacing the separate
+"Floppy drives"/"Hard disk" panels, holding both floppy bays (each with
+a slot + door-lip graphic and a diskette that visibly "sticks out" of
+the slot when loaded -- the same idea as altair8800's own `.dcdd-slot`,
+adapted from an 8-inch to a 5.25-inch drive's proportions) and the HDD
+activity LED together, matching how these all live on one real physical
+bezel. Every existing `data-role`/`data-drive` hook app.js already used
+was preserved exactly; only the CSS classes and the addition of a
+`.loaded` state (driven by a small `setBayLoaded()`/`setBayEmpty()` pair
+in app.js, replacing several call sites that used to poke the DOM
+directly) changed.
+
+**Power switch (default off) and reset**: a real physical-looking rocker
+switch (a visually-hidden real `<input type=checkbox">` under a styled
+`<span>`, the standard accessible-custom-control pattern -- real user
+clicks the label and it works via native label-to-input association;
+Playwright's `.check()` can't target the visually-hidden input directly
+and needs to click the label instead, a test-tooling detail worth noting
+for Phase 8, not a page bug) and a round reset button. Modeled on real
+AT hardware semantics, not just a UI nicety: powering off discards the
+whole `Machine` instance (RAM is genuinely gone the instant power is
+cut, exactly like unplugging it) and blanks the canvas; powering back on
+builds a fresh `Machine`, reloads the already-fetched firmware bytes
+(fetched once, up front, regardless of power state, since that's the web
+delivery mechanism, not anything physical), and remounts whatever
+floppy images were still "in the drive" (tracked separately in JS,
+surviving the discarded `Machine`) -- a real diskette stays seated
+whether or not the computer itself has power. A real reset button is
+different hardware: it pulses the CPU's RESET line without touching
+power, so RAM and any seated diskette are untouched -- exactly
+`Machine::reset()`'s already-existing real semantics, needing no new
+C++ at all. Floppy insert/eject now works whether the machine is
+powered on or off, matching a real mechanical drive; inserting while
+off and then powering on was verified to correctly remount it.
+
+**Verified**: 167/167 native tests (no C++ touched this pass). Headless-
+Chromium, against the live site: power switch unchecked by default;
+reset clickable while powered on; modern theme's page width measured
+920px at 2000px viewport before the fix and correctly ~1600-1330px
+(the `min(1600px, 95vw)` formula) after it, while Windows 95/web94 stay
+at the fixed 920px cap at the same viewport width; full boot to a live
+`C:\>` with the new front panel, power LED lit, screenshotted; powered-
+off state screenshotted (blank screen, dark LEDs, disabled reset);
+insert-while-off-then-power-on remount confirmed directly.
+
+## 18. Front panel, round two: closer to the genuine 5170 bezel
+
+Follow-up pass after seeing a real 5170 reference photo next to the §17
+front panel: the case fascia was right in spirit but wrong in several
+concrete details against the genuine machine, corrected here one for
+one.
+
+**No front-panel reset button.** The genuine IBM 5170 has no
+dedicated reset control at all -- the round reset button in §17's
+panel was a later clone/compatible-era convention, not period-accurate
+to this machine, so it's removed outright rather than relabelled.
+`app.js`'s `resetButton` variable, its enable/disable toggles in
+`powerOn()`/`powerOff()`, and its click handler are all deleted;
+`Machine::reset()` itself is untouched C++ (nothing else in this
+codebase calls it now, but the method stays -- it's a real, correct
+piece of machine semantics, just currently unreachable from the front
+end).
+
+**No boxed "hard disk" panel.** The real machine's HDD activity light
+is a bare LED on the bezel, not a labelled sub-panel with its own
+caption text. §17's separate `.at-hdd` box (border, "HDD activity"
+caption, drive-capacity/OS text) is gone; `#hddLed` is now just another
+dot in the same `.at-indicators` row as the power LED, unlabelled like
+its real counterpart. Same treatment for the floppy activity LEDs and
+the power LED: no more `.led-caption` spans anywhere on the panel ("bus
+drive motor", "power", etc.) -- the switch keeps its own "POWER" text
+because that's a control a user operates, not a light being explained.
+
+**Stacked bays, not side-by-side.** The reference photo shows the two
+5.25" half-height floppy bays stacked vertically, one above the other;
+§17 had them side-by-side (closer to the Altair 88-DCDD cabinet's own
+layout, which was the wrong reference to imitate here). `.at-drives`
+is now `flex-direction: column`, and each `.at-bay` is its own full-
+width horizontal strip (drive letter, slot, latch, activity LED on one
+line; filename label + Insert/Eject on the line below) rather than a
+grid cell in a shared row.
+
+**Both drives modeled as 5.25", deliberately.** The request asked for
+the drives to "look like their real counterparts (5.25 vs 3 inch
+disks)" -- worth being explicit that this build does *not* give drive
+B a 3.5" face. Per this repo's own §7/§11 scope decisions (and
+`fdc765.h`'s existing geometry, unchanged this pass), both emulated
+floppy drives are real 5.25" formats: Drive A is 1.2MB (80 cyl/2
+head/15 sec, 360 RPM), Drive B is 360KB (40 cyl/2 head/9 sec, 300 RPM).
+A real 5170 of this vintage shipped this way -- 3.5" drives didn't
+reach the PC platform until the AT-compatible clones and the PS/2 era.
+Giving drive B a 3.5" bezel here would misrepresent the hardware this
+emulator actually models, so both bays get the same slot/latch
+treatment, distinguished only by their capacity label (now suffixed
+`, 5.25″` on both, via `driveDefaultLabel()` in app.js) -- a case of
+this repo's realism rule cutting against the surface reading of the
+request rather than for it.
+
+**Vents and latches, dropped diskette-peek effect.** Added a decorative
+`.at-vents` slat block (the left-hand brand-plate/vents column mirrors
+the reference photo's proportions) and a small `.at-latch` bar per bay
+representing the real lever-style latch mechanism of this drive era.
+The previous "diskette visibly peeking out of the slot" effect
+(`.at-bay.loaded .at-slot::before { content: attr(data-label) }`) was
+dropped in this layout -- the new compact horizontal bay strip has no
+good place to hang a protruding label -- in favor of just a background
+shift on `.at-slot` when `.loaded`; the actual filename is still shown
+in the `.drive-label` text beneath each bay, so no information was
+lost, only the cosmetic peeking-paper visual.
+
+**Screen focus outline removed.** `#screen:focus` was `outline: 2px
+solid var(--link)`; changed to `outline: none` per explicit request.
+The screen has its own visible black bezel/background already, so
+losing the browser's default focus ring doesn't leave keyboard users
+without any indication of the interactive region -- the "Click the
+screen, then type" status line above already carries that instruction.
+
+**Power switch position kept on the front panel anyway.** The user
+confirmed the genuine 5170's power switch lived on the side/rear of
+the case, not the front bezel, and confirmed this is fine as-is: the
+switch stays on the on-screen front panel as a labelled web-UI
+concession (there's no "side of the browser window" to put it on),
+consistent with this repo's own opt-in-override rules -- it was never
+presented as a claim about where the real switch sat.
+
+**Verified**: 167/167 native tests (no CPU/chipset/device C++ touched
+this pass -- HTML/CSS/app.js only). Headless Chromium against the live
+site: `#screen:focus` computed `outlineStyle === 'none'`;
+`document.getElementById('resetButton')` is `null`; full power-on boot
+to a live `C:\>` prompt screenshotted with the redesigned panel visible
+-- brand plate, vents, bare green power LED + dark HDD LED, rocker
+switch, two stacked bays each showing their `empty (1.2MB, 5.25″)` /
+`empty (360KB, 5.25″)` labels, slot, latch, and Insert/Eject controls,
+matching the reference photo's layout.
+
+## 19. A real missing-background bug, plus display/panel sizing follow-ups
+
+Another real, concrete bug surfaced by a side-by-side look at the
+Mid-1990s Web theme: `:root[data-theme="web94"] body { background: ...
+url(...) repeat; }` -- the tiled "blue marble" desktop texture every
+other machine's `web94` theme uses -- was never actually copied into
+this file. The §17 Haiku-subagent sync was scoped strictly to the
+`:root`/`:root[data-theme=...]` *token* blocks, and this rule lives
+outside them (it's a `body` rule keyed off the same selector, not a
+custom-property declaration), so it was correctly out of scope for that
+sync and nobody added it by hand afterward -- the page still "looked
+themed" because the pagebar/panel chrome all come from tokens that did
+sync, so only the desktop background itself was silently plain grey.
+Fixed by copying the exact same rule (and its identical base64 JPEG
+asset) from `altair8800/web/index.html` verbatim.
+
+Three more follow-up requests, all straightforward:
+
+- **Removed** the `<p class="muted">Click the screen, then type --
+  keystrokes go straight to the keyboard controller.</p>` line entirely
+  -- the `#bootStatus` line above it already carries the operational
+  state, and the instruction was judged redundant clutter rather than
+  something to reword.
+- **Display now expands to fill the modern theme's width.** Previously
+  `#screen` was a flat 860px in every theme, stranding it small inside
+  modern's much wider `--page-max: min(1600px, 95vw)` page. Added a
+  modern-only override (`.monitor` and `#screen` both `width: 100%`,
+  `#screen` capped at `max-width: 1400px`) -- `height: auto` plus the
+  `aspect-ratio` app.js already keeps in sync with the current video
+  mode does the rest, so this is purely a bigger upscale of whatever
+  the real resolution is, never a change to any actual resolution.
+  Other themes keep the original fixed 860px CRT size.
+- **Front panel now has a fixed width** (`max-width: 640px; margin: 0
+  auto` on `.at-case`) instead of stretching to match `.page`'s width --
+  a real case fascia doesn't get physically wider just because the
+  browser window did, and the previous stretch was making the drive-bay
+  slot bars absurdly long and thin in the wide modern layout.
+- **Drive-to-grille ratio corrected**: the vents column (`.at-left`)
+  narrowed from a 140px minimum to a fixed 96px, and the floppy slot
+  itself grew from a 16px sliver to a 30px opening (with matching
+  padding/latch bumps) -- together this makes the two drive bays read
+  as substantial physical units and the ventilation grille a
+  proportionally narrow strip beside them, closer to the real case's
+  actual proportions instead of two visually-equal-weight blocks. The
+  brand-plate text was shortened to just "IBM" / "5170-339" (dropping
+  "Personal Computer AT · ") since the full string no longer fit the
+  narrower column without wrapping into several lines.
+
+**Verified**: 167/167 native tests (HTML/CSS only, no C++ touched).
+Headless Chromium: `web94` theme's `body` computed
+`background-image` is non-empty (tiled texture confirmed present); the
+removed paragraph's text no longer appears anywhere in the page;
+at a 1800px-wide modern-theme viewport, `#screen` measured 1400×765.6
+(ratio 1.829, matching 640/350 exactly) while `.at-case` held at a
+fixed 640px regardless of the 1600px-wide `.page` around it;
+screenshotted both the Mid-1990s Web theme (tiled background visible
+around the window) and the wide modern theme (full-width display,
+fixed-width front panel) to confirm visually.
+
+## 20. Front panel round three: real case proportions, and per-theme width
+
+A real reference photo made two more things obvious: the grille+badge
+cluster on a genuine 5170 is the *dominant* width of the bezel (roughly
+3/4 of it), with the two stacked floppy bays occupying a comparatively
+narrow column at the right -- not a roughly-even split, which is what
+§18/§19's flex layout (`.at-left` a fixed 96px, `.at-drives` taking
+essentially everything else) actually produced. And the front panel's
+own width policy needed to match the CRT's: stretch with `.page` in the
+Windows 95 / Mid-1990s Web / dark-default themes (all fixed around
+920px anyway, so nothing runs away), but stay capped in modern's much
+wider layout.
+
+**Ratio fix**: `.at-left` and `.at-drives` are now flex ratios (`flex:
+3 1 0%` / `flex: 1 1 0%`) instead of one fixed-width column and one
+that eats the remainder -- measured at a 1400px viewport in the
+Mid-1990s Web theme, that lands at a 71/29 split, close to the
+photo's roughly-3/4 grille width. Restored the full brand-plate text
+("IBM Personal Computer AT · 5170-339") now that `.at-left` has real
+room again -- §18's shortened "IBM 5170-339" was only ever a fix for
+the old fixed-96px column, not a considered final wording.
+
+**Width fix**: `.at-case` dropped its own `max-width` and now takes
+`width: 100%` (stretching with `.panel`/`.page` like every other
+control on the page, in every non-modern theme); a
+`:root[data-theme="modern"] .at-case { max-width: 640px; margin: 0
+auto }` override keeps it from following modern's much wider
+`--page-max` the way the CRT deliberately does.
+
+**Narrow-column fallout**: the drive-bay column is now genuinely
+narrow (~190-280px depending on theme/viewport), too tight to fit the
+capacity label and both Insert/Eject buttons on one line without
+truncating the label (`empty (1...` was the actual regression caught
+mid-fix). Changed `.at-bay-ctl` to `flex-wrap: wrap` with
+`.drive-label { flex: 1 1 100% }` so the label always gets its own full
+line and the buttons wrap to the line below, rather than fitting a
+narrower ellipsis-truncated label net to them.
+
+**Verified**: 167/167 native tests (HTML/CSS only). Headless Chromium
+at a 1400px viewport in the Mid-1990s Web theme: `.at-case` measured
+834px (matching `.page`'s fixed width), split 589.5/196.5 between
+`.at-left`/`.at-drives` (a 0.71 ratio); at a 1800px viewport in the
+modern theme, `.at-case` held at exactly 640px regardless. Both drive
+labels (`empty (1.2MB, 5.25″)` / `empty (360KB, 5.25″)`) render in
+full, unterminated, with Insert/Eject wrapped to their own line below;
+screenshotted in both themes to confirm the grille-dominant proportions
+read correctly.
+
+## 21. Front panel round four: lights/switch above the grille, wider drives
+
+Explicit follow-up: "close enough realism but function over form" --
+i.e. stop chasing the reference photo's exact proportions once the
+controls start feeling cramped, and prioritize usability. Two changes:
+
+- **Indicator lights and the power switch moved above the grille**,
+  matching the real 5170's own layout (the keylock/LED cluster sits
+  above the ventilation slats, not below them). Wrapped
+  `.at-indicators` and the `.at-switch-group` in a new `.at-toprow`
+  flex row, reordered in the markup to come right after the brand
+  plate and before `.at-vents`.
+- **Drives widened**: §20's `.at-left`/`.at-drives` flex ratio (3:1,
+  ~75/25) was true to the photo but left the drive-bay controls
+  uncomfortably tight. Eased to 2:1 (measured 63/37 at a 1400px
+  viewport), and bumped `.at-drives`'s `min-width` from 190px to
+  230px -- still grille-dominant like the real machine, just not
+  starved for it. `.at-vents`'s `min-height` trimmed from 50px to 40px
+  since the toprow now takes some of the vertical space it used to
+  have alone.
+
+**Verified**: 167/167 native tests (HTML/CSS only). Headless Chromium
+at a 1400px viewport in the Mid-1990s Web theme: `.at-left`/`.at-drives`
+measured 524px/262px (0.63 ratio, up from 0.71); modern theme still
+held `.at-case` at exactly 640px at a 1800px viewport. Screenshotted
+both to confirm the LEDs/switch now sit above the grille and the drive
+bays read less cramped.
+
+## 22. Front panel round five: square boxed lights, inset grille border
+
+Another reference-photo detail pass, this time on the LED cluster and
+the grille's own framing:
+
+- **Each indicator light now sits in its own small recessed black box**
+  (`.led-box`, 15x15px, dark background + inset shadow) instead of
+  floating bare on the case plastic -- the real panel's power/HDD
+  lights sit in individually-boxed instrument-style cutouts, not plain
+  dots. `#powerLed`/`#hddLed` are unchanged elements (still toggled by
+  id in app.js, oblivious to the new wrapper), just now wrapped in a
+  `<span class="led-box">` each.
+- **The lights themselves are square, not round** -- `.at-indicators
+  .drive-led { border-radius: 1px }` overrides the shared circular
+  `.drive-led` shape (which stays round everywhere else it's used, i.e.
+  the floppy-bay activity LEDs -- those aren't the lights the reference
+  photo shows, so left as-is).
+- **The grille now has a visibly wider left and bottom border** than
+  its top/right (`margin: 0 4px 14px 16px` on `.at-vents`), matching
+  the real bezel's own plain-plastic framing around the vent field --
+  previously the vents ran flush to the edges of `.at-left` on every
+  side.
+
+**Verified**: 167/167 native tests (HTML/CSS only). Rebuilt and
+screenshotted the Mid-1990s Web theme at a 1400px viewport; a cropped
+close-up of the panel confirms two square green/dark boxed lights next
+to the power switch, and a clearly inset grille with extra left/bottom
+margin, matching the reference photo's proportions.
+
+## 23. A real default-state bug: the power LED was lit before power-on
+
+A close-up screenshot surfaced a genuine bug, not a style tweak: the
+power LED markup had `class="drive-led power-on"` baked into the HTML
+from the very first front-panel draft (§17) -- lit green on page load,
+before the user ever flips the switch, even though `#powerSwitch`
+itself correctly defaults unchecked. `app.js`'s `powerOn()`/
+`powerOff()` toggle the class correctly once the switch is touched, but
+nothing calls `powerOff()` on load to establish the starting state, so
+the markup's own initial class was the only thing setting it -- and
+that initial class was wrong. Fixed by dropping `power-on` from the
+markup; the LED now starts dark like `#hddLed` always did, and app.js's
+existing toggle logic (unchanged) takes over correctly from the first
+`change` event.
+
+Two more requested tweaks in the same pass: removed the `"O I"`
+rocker-switch legend (`.at-switch::before`) entirely -- it was reading
+as clutter next to the "POWER ON" text label rather than adding
+clarity -- and reworded the switch's own label from "Power" to
+"Power On" (clearer about what the switch does in its unchecked/
+default state, matching the imperative-label convention buttons on
+this panel already use, e.g. "Insert…"/"Eject").
+
+**Verified**: 167/167 native tests (HTML/CSS only). Headless Chromium
+at page load, before touching the switch: `#powerLed.classList` no
+longer contains `power-on`; `.at-switch::before`'s computed `content`
+is `none`; the switch label reads "Power On". Screenshotted and
+cropped to confirm both indicator lights render dark at load and the
+switch face is now unlabelled chrome.
+
+## 24. Dropped the display header and boot-status text; sound moved under the screen
+
+Requested simplification of the display panel: removed the "Display ·
+EGA 80×25" `<h2>` and the `#bootStatus` paragraph below the screen
+("Loading firmware…" / "Ready -- flip the power switch." / "Booting…" /
+"Powered off." / "Failed to load: …") entirely, and moved the "Enable
+sound" checkbox (previously its own separate "PC speaker" panel further
+down the page) to sit directly below the display instead.
+
+`bootStatus` wasn't purely decorative -- `app.js` used it for a real
+error path (`"Failed to load: " + err` when the firmware/HDD-image
+fetch fails) as well as routine status. Rather than leave a dead
+element or a null-reference crash, the underlying signals it carried
+were folded into controls that already existed:
+
+- **Loading vs. ready** was already visible independently: the power
+  switch is `disabled` while firmware is fetching and enables the
+  instant it's ready (`app.js` line ~309) -- no separate text was
+  adding information here.
+- **Powered off** is already shown by the power LED being dark and the
+  screen being blanked (`clearScreenToBlack()`) -- again redundant with
+  the text.
+- **A load failure** now has no on-page surface (the power switch
+  simply never enables) -- `console.error(err)` still fires for
+  diagnosis, but a real end-user has no visible explanation beyond "the
+  switch never turns on." Accepted as a reasonable trade for this
+  hobby project rather than re-adding a status line whose normal-case
+  text was exactly what got asked to be removed; worth revisiting if a
+  real firmware-fetch failure in the wild turns out to be silent enough
+  to confuse someone.
+
+Removed the now-dead `.boot-status` CSS rule and the `bootStatus`
+variable/all six call sites in `app.js` along with it, rather than
+leaving unreachable code -- matches this repo's own coverage-tooling
+convention of not carrying dead paths.
+
+**Verified**: 167/167 native tests (HTML/CSS/JS only). Headless
+Chromium: "EGA 80" no longer appears anywhere in the page text,
+`#bootStatus` and `#speakerCard` are both absent from the DOM,
+`#speakerEnabled` still present (now inside `#displayCard`); powered on
+through a full real boot to the VGABIOS splash with no console/page
+errors from the removed references. Screenshotted to confirm "Enable
+sound" now renders directly under the display, centered, with its
+existing explanatory text intact.
+
+## 25. Persisting C: across power cycles (IndexedDB), and a blank-drive option
+
+Two related requests: let the browser actually remember what's on the
+hard disk instead of reverting to pristine factory FreeDOS on every
+power cycle, and add a way to mount a genuinely blank C: so a visitor
+can install a real DOS themselves from floppy, the authentic way.
+
+**The gap this closes**: `powerOff()` always discarded the whole
+`Machine` instance -- correct for RAM (real hardware fact: cut the power
+and it's gone) but wd1003's `image` vector went with it too, and every
+`powerOn()` re-mounted the same pristine bytes fetched once at page
+load. A real fixed disk doesn't do that -- it keeps whatever was last
+written to it, power or no power. That gap was real, not a deliberate
+simplification, and is what this section fixes.
+
+**C++/WASM additions**, mirroring fdc765's own existing
+dirty/image-readback convention for its floppy drives exactly (`wd1003.h`
+gained `image(int)`, `dirty(int)`, `clear_dirty(int)`; `wasm_machine.cpp`
+gained `hddDirty()`, `clearHddDirty()`, `hddImage()` -- the last built
+the same `Uint8Array.new_()` + `typed_memory_view` copy-out idiom
+`floppyImage()` already uses, not a new pattern). `mount()` itself is
+unchanged -- it never cared what the source of its bytes was, only that
+the front end decides that now (factory image, a blank buffer, or a
+saved one), documented in the file's own top-of-file JS-surface comment.
+
+**Persistence (`app.js`)**: a single-record IndexedDB object store
+(`ibmpcat-hdd`/`hdd`/key `"c-drive"`) with plain-promise
+open/get/put/delete helpers -- no library, IndexedDB natively stores a
+`Uint8Array` via structured clone. Loaded once, in parallel with the
+firmware/HDD fetch, at page load (`Promise.all` alongside the existing
+three `fetch()` calls). `powerOn()`'s `mountHdd()` call now prefers this
+saved image over the pristine fetched one when present. `powerOff()`
+checks `machine.hddDirty()` *before* discarding the Machine (the last
+possible moment the data still exists anywhere) and, if anything
+changed, pulls `hddImage()` and both keeps it in memory (so the very
+next power-on in the same tab sees it immediately, no async round trip
+needed) and writes it to IndexedDB (so it survives a reload/new visit
+too). A failed IndexedDB open/read/write only ever `console.error`s --
+matches this page's existing no-on-page-error-surface convention (see
+§24) rather than blocking the machine on a storage-quota/private-mode
+edge case.
+
+**New "Hard disk" panel**: a status line ("Using: factory FreeDOS
+(default)" / "Using: saved state ..." / "Using: blank drive,
+unformatted ...") plus two buttons -- **Reset to factory FreeDOS**
+(clears the saved state) and **Mount blank drive...** (saves an
+all-zero buffer sized to match the real image exactly, i.e. a drive
+that's never been partitioned or formatted, precisely what a genuine
+30MB fixed disk looked like before FDISK/FORMAT ever touched it). Both
+are disabled whenever the machine is powered on -- a real fixed disk
+isn't swappable at all, let alone while running, so both actions are
+scoped to "takes effect next power-on" rather than attempting any kind
+of live remount.
+
+**Verified**: 167/167 native tests (wd1003.h's new accessors are thin
+wrappers over already-tested state, no new test file needed -- the
+existing `Wd1003Test.MountedMediaSurvivesControllerReset` etc. already
+exercise the underlying `image`/`dirty` fields these just expose).
+Against the live site: wrote a marker file to C: from a genuine booted
+FreeDOS session, confirmed `hddDirty()` flips `true`, powered off,
+confirmed the status line updates and IndexedDB actually holds a
+31,900,160-byte record (the exact image size); loaded the page fresh in
+a brand-new tab in the same profile, confirmed the status line reads
+"Using: saved state (from a previous visit)" *before* ever powering on,
+then powered on and read the marker file back successfully -- a genuine
+round trip across a full page reload, not just an in-memory carry-over
+within one tab. Separately confirmed both buttons: enabled while
+off/firmware-ready, disabled the instant power comes on, re-enabled on
+power-off, and each produces the correct status text and IndexedDB
+state (a blank-drive mount writes a fresh all-zero record; a reset
+deletes the record entirely).
+
+(One iteration of the verification script itself sent a keyboard
+make/break pair in a single synchronous `page.evaluate()` call with no
+real wall-clock time between them -- since this machine's CPU only
+advances in `requestAnimationFrame`'s own real-time-paced loop, and JS
+is single-threaded, that loop literally cannot run between two
+back-to-back synchronous calls, so the guest never got a chance to see
+the make code before the break code overwrote it. Splitting into
+separate awaited calls with a short real delay between them fixed it --
+a test-tooling lesson worth recording alongside the existing
+Shift+Semicolon/separate-down-up-for-Enter quirks already in §15/§17.)
+
+## 26. MS-DOS 3.30 install floppies -- no conversion needed
+
+Follow-up request: turn a downloaded MS-DOS 3.30 (5.25") archive into a
+floppy image usable with the blank-drive option above. Turned out to
+need no conversion at all -- the archive
+(`Microsoft MS-DOS 3.30 (5.25).7z`) already contains two raw sector
+dumps, `DISK01.IMG`/`DISK02.IMG`, both exactly 368,640 bytes.
+`minfo`/`mdir` confirm real MS-DOS 3.30 media: 40 cylinders/2 heads/9
+sectors-per-track, boot sector banner `"MSDOS3.3"` -- byte-for-byte the
+same geometry this emulator's Drive B (360KB) already implements, and
+volume labels `MS330PP01`/`MS330PP02` ("Program disk 1/2"). Disk 1 is
+the bootable one (`COMMAND.COM`, `FDISK.COM`, `FORMAT.COM`, `SYS.COM`
+-- everything needed to partition and format a blank C: from scratch,
+the authentic 1987 installation path); Disk 2 carries `GWBASIC.EXE`,
+`DEBUG.COM`, `LINK.EXE`, driver/codepage files, and the rest of the
+retail set. Both extracted to the user's own `~/Downloads/` -- floppy
+media, nothing added to the HDD image, matching this session's own
+"default to floppy, only touch the HDD image when asked" convention --
+never committed to the repo, ready to insert into Drive B via the front
+panel's own Insert control exactly as downloaded.
+
+## 27. A real bug: a 360KB diskette in Drive A hung instead of booting
+
+Found using the two MS-DOS 3.30 floppies from §26: `DISK01.IMG` in
+Drive B produced `FATAL: No bootable device.`; the same image in Drive
+A got as far as `Booting from Floppy...` and then hung. Both symptoms
+were real and worth separating -- only one was a bug.
+
+**Drive B never booting is correct, not a bug.** Confirmed directly:
+with A: empty and `DISK01.IMG` in B:, the BIOS logs `Booting from
+Floppy... Boot failed: could not read the boot disk`, then `Booting
+from Hard Disk... Boot failed: not a bootable disk`, then `FATAL: No
+bootable device.` -- it tries A: (empty) and C: (blank), and never
+touches B: at all. That's genuine period PC/XT/AT BIOS behavior: INT
+19h's boot device search was always "floppy drive 0, then the fixed
+disk" -- a second floppy drive was never a boot candidate on real
+hardware of this era, full stop. No fix needed or appropriate here.
+
+**Drive A hanging on a 360KB diskette was a real bug**, and a real
+5170 could do exactly what the user expected: a genuine 5.25"
+high-density (1.2MB) drive is mechanically and magnetically able to
+read a double-density 360KB diskette too (a different data rate and
+step timing programmed via the FDC's own commands, not a different
+drive) -- this was a completely ordinary AT-era capability, not a
+stretch. `fdc765.cpp`'s `mount()` didn't model that: it picked
+cylinders/heads/sectors-per-track purely from which bay the image went
+into (`drive == 0` -> hardcoded 80/2/15, full stop), so a 368,640-byte
+(360KB, 40/2/9) image mounted in A: kept A:'s 1.2MB geometry regardless
+of what was actually on the disk. The boot sector itself loaded fine
+(cylinder 0/head 0/sector 1 is offset 0 under any geometry, so that one
+read is always right by coincidence), but the very next read -- loading
+the rest of the DOS boot chain -- used CHS values valid for a 15-
+sector track on a disk that only actually has 9, so `offset_for()`
+computed a wildly wrong byte offset. `transfer_image_ptr()` correctly
+bounds-checks that offset against the image's real size and returns
+`nullptr` when it's out of range, but `chipset.cpp`'s DMA loop treats a
+null pointer as "nothing to copy" and still calls `finish_transfer()`
+-- from the FDC's own status registers, that read looks like a normal
+success with zero indication anything was wrong. A real controller
+facing this same mismatch would instead report a genuine ID-not-found/
+no-data error the boot loader could see and act on; this emulator's
+version just handed the boot loader a buffer of stale/zeroed memory and
+called it done, which is exactly why it hung instead of erroring out or
+crashing loudly.
+
+**Fix**: `mount()` now derives cylinders/heads/sectors-per-track (and
+the matching data-rate/step-timing constants) from the mounted image's
+actual size -- `<= 368640` bytes is 360KB geometry, otherwise 1.2MB --
+instead of from the drive slot. Drive A can now correctly read either
+media, matching real hardware. Drive B mounting a 1.2MB image still
+isn't rejected (a genuine 360KB-only drive physically can't read
+high-density media at all, a real incompatibility this emulator still
+doesn't enforce -- consistent with the file's existing scope note that
+mounted images always arrive pre-formatted with no physical
+media-compatibility checking); that's a pre-existing, narrower gap, not
+something this fix needed to also solve.
+
+**Verified** (per explicit request: no new unit or E2E tests, just run
+it and look): 167/167 existing native tests still pass unmodified --
+every existing `Fdc765Test` case already mounts a correctly-sized image
+for whichever drive it exercises (`MakeImage(80,2,15)` for A:-shaped
+tests, `MakeImage(40,2,9)` for the one B:-shaped test), so none of them
+were exercising the buggy drive-index branch to begin with, and
+deriving geometry from size instead doesn't change any of their
+expected results. Against the live, rebuilt site: `DISK01.IMG` inserted
+into Drive A now boots all the way through the real MS-DOS 3.30 boot
+chain -- date/time prompts, the genuine `Microsoft(R) MS-DOS(R) Version
+3.30 (C)Copyright Microsoft Corp 1981-1987` banner, and a live `A>`
+prompt -- confirming the exact user-reported hang is gone.
+
+## 28. Downloadable/uploadable HDD image, and a real navigation-loss bug
+
+Prompted by the user actually losing their hard disk state to an
+accidental trackpad swipe-navigation. Two related additions.
+
+**Download/upload C:** two new controls in the Hard Disk panel,
+alongside Reset/Mount blank. **Download image...** grabs whatever is
+*actually* current -- the live image via `machine.hddImage()` if the
+machine is running, otherwise whatever's staged (`savedHdd`) or the
+pristine factory image -- and offers it as a real file via the same
+Blob + `<a download>` pattern the floppy eject flow already uses (works
+even while powered on, since it's read-only). **Upload image...**
+accepts a previously-downloaded (or otherwise obtained) image file and
+stages it as C: for the next power-on, disabled while running like
+Reset/Mount blank. Unlike the floppy controller (§27), WD1003's
+geometry is fixed in CMOS regardless of media -- a real fixed disk
+doesn't change shape depending on what's written to it -- so an
+uploaded image of the wrong size is refused up front with a clear
+message (`wd1003.cpp`'s own bounds check would otherwise report a
+genuine, real, but far more confusing IDNF disk error deep into a
+boot, rather than a clear "wrong size" message at the moment of
+upload).
+
+**The real bug this surfaced**: C:'s only save point was `powerOff()`
+-- closing the tab, following a link, or a browser gesture-based
+navigation (a trackpad swipe back/forward, what actually happened to
+the user) while still powered on skips it entirely, silently
+discarding every write made since the machine was last powered off
+correctly. Added a `beforeunload` handler that prompts before letting
+that happen, gated on `poweredOn && machine.hddDirty()` specifically --
+not just "powered on" alone, so it doesn't nag on a session with no
+disk writes yet, and not unconditionally, so it fires precisely when
+something real would actually be lost. Documented, not silently
+assumed to be a complete fix: some browsers' gesture-based navigation
+(reportedly including the exact trackpad-swipe case that prompted this)
+can bypass `beforeunload` entirely -- a known, unfixable-from-JS browser
+behavior, not a gap in this implementation -- which is exactly why
+**Download image** exists as a durable, browser-independent backup
+alongside the automatic IndexedDB persistence rather than instead of a
+prompt.
+
+**Verified** (existing suite only, no C++ touched this pass): 167/167
+native tests pass unmodified. Against the live site: downloaded the
+factory image and confirmed its size matches exactly (31,900,160
+bytes); uploaded a wrong-sized file and confirmed it's rejected with
+the expected message and the status line stays unchanged; uploaded a
+correctly-sized file and confirmed it's accepted, staged, and persisted
+to IndexedDB. For `beforeunload`: confirmed no prompt when powered off,
+no prompt when powered on with no writes yet, and a genuine
+`beforeunload` dialog *only* after a real write was made while
+powered on -- reload was blocked until the dialog was dismissed, and
+the page's own state (still powered on) survived exactly as expected.
+
+## 29. A real bug: text-mode descenders (g, y, p, q, j) silently clipped
+
+User-reported, screenshotted directly off the BIOS's own POST banner:
+"sourceforge", "nongnu", "vgabios" all showed lowercase g's with the
+descender loop missing. Diagnosed with this project's standard
+evidence-based method: extended the existing `render_screen` native
+diagnostic (a temporary debug print, removed once done) to dump the
+live CRTC's actual Maximum Scan Line register and character 'g''s raw
+plane-2 font bytes after a real boot -- not a guess.
+
+**Confirmed precisely**: `crtc_max_scan_line() = 15` (16 scan
+lines/row) and `crtc_vertical_display_end() = 399` (400 total lines) --
+this machine's freely-licensed BIOS substitute is a full VGA BIOS (see
+§6) and programs VGA's own native 640x400 16-line-per-row text mode,
+not genuine EGA's 640x350 14-line convention. `RenderTextScreen`
+(`ega_render.cpp`) hardcoded `ch_h = 14` regardless -- every glyph's
+last two scanlines were computed and then simply never drawn. For most
+letters that's invisible (blank padding rows), but the VGA 8x16 font
+draws g/y/p/q/j's descenders specifically in rows 12-15, so those
+letters lost their tails. Character 'g's actual font bytes confirmed
+it directly: row 14 was `0x78` (real descender pixels), never reached
+by a loop bounded at 14.
+
+**This is a genuine renderer bug, not another instance of the
+documented BIOS/hardware ceiling mismatch** (contrast §16's mode 13h,
+which real 1984 EGA silicon truly cannot display at all). Nothing here
+asks the hardware to do something impossible -- the CRTC registers are
+just real values the renderer wasn't reading, exactly the class of bug
+`RenderEgaNative16Screen` (§16) already avoids by deriving its own
+resolution from real Horizontal/Vertical Display End registers instead
+of a hardcoded mode table. Text mode simply predated that discipline
+(Phase 3/4, before it was established) and never got the same
+treatment.
+
+**Fix**: `RenderTextScreen` now takes `int &width, int &height` out-
+params (matching `RenderEgaNative16Screen`'s existing shape) and
+derives scan-lines-per-row from `ega.crtc_max_scan_line() + 1` instead
+of a hardcoded 14 -- trusting the real register, the same "read real
+CRTC state, don't guess a mode number" rule every other mode already
+follows. A freshly-reset `Ega` (`crtc_[0x09] == 0`, no BIOS has run
+yet) would compute a nonsensical 1-line-per-row frame, so that specific
+value falls back to the classic 14-line default rather than being
+taken literally -- no real text mode ever actually uses 1 line/row.
+`RenderScreen`'s text-mode dispatch case now takes its `out.width`/
+`out.height` from what `RenderTextScreen` actually reports rather than
+the `kTextRenderWidth`/`kTextRenderHeight` constants (which still exist
+as the classic-EGA default/fallback size, e.g. for the graphics-mode
+placeholder frame, just no longer hardcoded into the text path).
+
+**Verified**: 168/168 native tests (1 new:
+`RowHeightAndFrameSizeFollowTheRealMaxScanLineRegister`, programming
+Max Scan Line=15 directly and confirming both the reported 640x400
+frame size and that a font row 14 pixel -- the exact row the old code
+never reached -- actually renders); every pre-existing `EgaRenderTest`
+case updated for the new out-param signature but otherwise unchanged,
+confirming the reset-default 14-line/640x350 behavior is preserved
+byte-for-byte. Native `render_screen` diagnostic re-run against the
+real boot: frame reports 640x400 (previously always 640x350), and a
+pixel-level crop of "sourceforge"/"nongnu"/"vgabios" shows full,
+correctly-shaped g's with intact descenders. Rebuilt the WASM module
+and confirmed live: the canvas's own internal resolution now reads
+640x400 during a real boot (`wasm_machine.cpp` needed no changes at
+all -- `renderWidth()`/`renderHeight()` already read whatever
+`RenderScreen` reports each frame, and `app.js`'s existing "resize the
+canvas to match" logic, built for the graphics modes, handles text
+mode's now-variable height for free).
+
+## 30. On-screen keyboard supplement: F-keys, extended keys, and Ctrl+Alt+Del
+
+Mac keyboards have no discrete keys for Insert, Print Screen, Scroll Lock, Pause/Break, or forward-Delete, and F-keys are often intercepted by macOS system shortcuts. A new panel in `index.html` provides a button row for F1–F12, Ctrl+Alt+Del, and the missing keys (Insert, Delete, Home, End, Page Up/Down, Print Screen, Scroll Lock, Pause/Break, Num Lock), all properly wired to inject real AT keyboard scan codes via the existing `sendKey()` mechanism in `app.js`.
+
+**Print Screen and Pause/Break scan codes**: Both break the standard "array of bytes + set bit 7 on the last for break code" convention. Real AT hardware encodes them as fixed byte sequences:
+
+- **Print Screen**: 4-byte make (`0xE0, 0x2A, 0xE0, 0x37`) and distinct 4-byte break (`0xE0, 0xB7, 0xE0, 0xAA`). No modifiers, no variable bits, just these exact byte pairs.
+- **Pause/Break**: Single fixed 6-byte sequence (`0xE1, 0x1D, 0x45, 0xE1, 0x9D, 0xC5`) sent on make. Genuinely has **no break code at all** — a real, documented AT keyboard controller quirk, not an emulator approximation.
+
+To support both patterns, `SET1` now accepts a third entry shape: `{ make: [...], break: [...] }` objects. `sendKey()` detects this shape and injects the `make` or `break` sequence directly, bypassing the bit-7 modification applied to normal keys.
+
+**Ctrl+Alt+Del implementation**: The button injects the classic warm-boot key sequence directly: Ctrl make (0x1D), Alt make (0x38), then Del make (0x53). Critically, this uses the **non-extended** Delete scancode (0x53, the original numpad Del/period key), not `SET1.Delete` (which is the 101-key extended [0xE0, 0x53] forward-Delete). This matches the BIOS's own Ctrl-Alt-Del check, which (like all x86 BIOSes) looks for this specific, pre-extended code — anything else won't trigger a warm reboot. The real BIOS's own keyboard ISR already implements the check and reboot sequence; no new C++ needed, just the right scan codes.
+
+**UI integration**: Buttons are disabled while the machine is off (no keyboard input to a powered-down device); enabled once `poweredOn && machine` is true. The Ctrl+Alt+Del button is styled with `var(--warn)` border and text for visual distinctness. With a 50ms delay between make and break, a single click mimics a real, if fast, key press — quick enough for interactive use, slow enough that the break code lands as a separate event in the guest's single-threaded frame loop.
+
+**Verified**: 168/168 native tests (no C++ changes); live Playwright test confirmed: buttons disable before boot, enable post-boot, F-key clicks succeed without errors, Ctrl+Alt+Del triggers a real warm reboot (BIOS POST re-runs within seconds), buttons disable again on power-off. Panel buttons wrap naturally via the existing `.row { flex-wrap: wrap }` CSS rule, readable in all four themes (Windows 95, Mid-1990s Web, Modern, Dark Modern).
+
+## 31. A real bug: Ctrl+Alt+Del silently did nothing once actually tried live
+
+§30's Ctrl+Alt+Del button, tested against a fresh boot straight to a `C:\>` prompt, never actually rebooted the machine when the user tried it for real. Root cause: the emulated 8042 (`i8042.h`) has exactly one single-byte output register, matching real hardware — `inject_scancode()` calls `push_output()`, which unconditionally overwrites `output_buf_`. A real keyboard can't outrun that; it clocks one bit at a time over a slow serial line, so the guest's IRQ1 handler always reads byte N before byte N+1 exists. But the button's click handler injected Ctrl-make, Alt-make, and Del-make as three back-to-back `injectScancode()` calls with **no delay between them** — all three ran in the same synchronous JS turn, so nothing ever gave the emulator's real-time run loop (rAF-paced `runCycles()`) a chance to execute and read the buffer in between. Only the last byte (Del) ever reached the guest; the BIOS's keyboard ISR saw a lone Del press with no Ctrl/Alt held and never recognized the combo.
+
+This is the exact same class of bug §25 already flagged for *test-harness* code (sending make+break in one synchronous `page.evaluate()` starves the rAF loop) — it just turned out the shipped button code had the identical bug for real, not only in a test script. Confirmed by direct reproduction: sending the same 6 bytes through `injectScancode()` one at a time with real `waitForTimeout` gaps between every byte (not just between make and break) *did* trigger a real warm reboot (POST banner and GPL license text reappeared); sending them in the original bursts did not.
+
+**Fix**: added `injectScancodeSequence()` to `app.js` — walks an array of scancodes via chained `setTimeout` (20ms apart), so every byte gets its own real gap regardless of how many bytes are in the sequence. `sendKey()` now routes both the plain-array and `{make, break}` cases through it instead of a tight `for` loop, and the Ctrl+Alt+Del handler sends all 6 bytes (3 make + 3 break) through one call to it. This wasn't only a Ctrl+Alt+Del bug: every **multi-byte** Set 1 sequence — every E0-prefixed extended key (arrows, Home/End/Page Up/Down, Insert/Delete, Numpad Enter/Divide, Ctrl Right/Alt Right), Print Screen's 4-byte sequences, and Pause's 6-byte sequence — had the same latent bug in `sendKey()`'s internal byte loop, just less likely to be *noticed* than a dead Ctrl+Alt+Del button (a dropped leading `0xE0` prefix silently turns an extended key into an unrelated plain key, e.g. Insert's `[0xE0, 0x52]` losing its prefix reads as Numpad 0's make code). Single-byte keys are unaffected (and un-delayed — `injectScancodeSequence` returns immediately for a 1-byte sequence).
+
+**Verified**: live reproduction of the bug (bursted injection → no reboot), live reproduction of the fix (spaced injection → real reboot, GPL banner reappears), then the actual button click end to end after the `app.js` fix → real reboot confirmed again. No C++ changes, so the existing 169 native tests are unaffected; JS-only fix, no committed Playwright suite exists yet for this machine (per CLAUDE.md's roadmap, front-end test infra is a later phase) so verification here was live/manual, matching how §27's fix was verified.
+
+## 32. Investigating a real bug report: Oregon Trail's "Look at map" screen renders as scrambled noise
+
+A user report: MECC's *The Oregon Trail* (1990, run as `OREGON CGA` per its own README's EGA guidance) renders every screen correctly — title splash, wagon/family portrait, Independence street scene, Matt's General Store, the oxen graphic — **except** the "Look at map" option from the trail-status menu, which renders as dense, glyph-like green-on-black noise instead of a recognizable map.
+
+**What was ruled out**: this is not a repeat of §29's descender bug or a generic CGA/text-mode regression — every other graphics screen in the same game, using the same renderer, decodes perfectly, including screens at least as visually complex (the wagon/family portrait). Two real, independent gaps were found and fixed along the way (both cited from the CRTC registers a real 6845/EGA CRT controller actually uses, not guessed):
+
+- `RenderTextScreen` (`ega_render.cpp`) hardcoded 80 text columns instead of reading the CRTC's own Horizontal Displayed register (R01) the way `RenderEgaNative16Screen` already did for graphics resolution. Real 40-column text (BIOS mode 0/1) is genuine hardware; hardcoding 80 there would scramble any real 40-column screen by reading every row after the first from the wrong VRAM offset. Added `EgaRenderTest.ColumnCountAndFrameWidthFollowTheRealHorizontalDisplayedRegister`.
+- `RenderEgaNative16Screen` derived its per-scanline VRAM stride from the displayed width instead of the CRTC's Offset Register (R13, `ega.crtc_scanline_stride()` — a new accessor, real hardware specifies this in words/2-bytes). The two are usually equal but are genuinely independent registers on real hardware; software panning or blitting into a wider logical scan line than it displays needs them to differ.
+
+Both are real, defensible hardware-accuracy fixes (169/169 tests pass with the new one added) but **neither was the map screen's actual bug** — confirmed by dumping the live register state (via temporary Embind bindings, removed afterward) at the exact moment the corrupted frame renders: `hDisplay=79, vDisplay=399` (640×400), Offset Register already equal to the displayed width (no mismatch), Start Address 0, odd/even chaining genuinely disabled (true linear planar addressing, not a text/CGA-style access pattern). The one real anomaly found: the Graphics Controller's Memory Mapping field reads **3** (32K window at 0xB8000, the CGA/color-text-compatible window) while the Shift Register field simultaneously reads **0** (native 4-plane 16-color addressing) — a combination no legitimate BIOS mode-set for a native 16-color mode produces (those always select Memory Mapping 1, the 64K window at 0xA0000). Forcing the same VRAM through the CGA-compatible 4-color decoder instead produces pure noise too, ruling out "it's actually CGA data being misread as native EGA."
+
+This points to the game driving the Graphics Controller/Sequencer directly for this one screen (a common era technique — full BIOS mode-sets are slow) while relying on whatever Memory Mapping was already left over from its earlier CGA-mode-4 screens, rather than a complete, self-consistent mode-set. Whether that specific combination is well-defined on genuine 1980s EGA silicon, or is itself a period compatibility bug in a game whose only two shipped graphics drivers are `CGA.BGI` and `VGA256.BGI` (no true `EGA.BGI` — the game's own README tells EGA owners to run in CGA mode entirely, for every screen) is still unresolved. Not yet fixed; left as an open investigation rather than a guessed-at "fix" that isn't backed by a confirmed root cause.
+
+## 33. Boot automatically on page load; keep the screen focused through every control click
+
+Two UX changes, both `app.js`-only:
+
+- **Auto-boot**: the power switch used to start disabled-then-enabled, requiring the visitor to click it themselves once firmware finished loading. It now flips itself on (`powerSwitch.checked = true; powerOn();`) the instant the async firmware-fetch block resolves, landing the visitor straight at a running machine instead of an inert front panel. The switch and `powerOn()`/`powerOff()` themselves are unchanged and still fully functional -- a visitor can still power off and back on by hand exactly as before; only the very first boot is now automatic.
+- **Persistent screen focus**: every button on the page (F-keys, Ctrl+Alt+Del, floppy Insert/Eject, HDD controls, the power switch) steals keyboard focus onto itself when clicked, exactly like any button on any page -- which would otherwise silently swallow the visitor's next keystroke instead of routing it to the guest, since a real AT keyboard has no notion of "the front panel has focus." A document-wide `click` listener now refocuses the `#screen` canvas after every click, once the machine is powered on.
+
+**Verified live** (no committed Playwright suite exists yet for this machine, per CLAUDE.md's roadmap -- same as §31's verification): loaded the page fresh with the power switch never touched at all -- `powerSwitch.checked` flips to `true` within ~2s of load (as soon as firmware fetch resolves) and the machine boots all the way to a `C:\>` FreeDOS prompt unattended; clicking an F-key button and checking `document.activeElement` immediately afterward confirms it's back on `#screen`, not the button.
+
+## 34. Full Playwright integration suite (`ibmpc-at/web/tests/`)
+
+Closes the gap §32/§33 both noted ("no committed Playwright suite exists yet"), matching altair8800/assembler6502's own depth: `boot.spec.ts`, `keyboard.spec.ts`, `floppy.spec.ts`, `hdd.spec.ts`, `speaker.spec.ts`, `theme.spec.ts`, `home.spec.ts`, plus the usual `playwright.config.ts`/`tests/helpers.ts`/`tests/fixtures.ts` scaffolding. Two additions worth recording:
+
+- **`Machine::textScreen()`** (`web/wasm_machine.cpp`, test-only convenience, gated by nothing beyond the existing `?test=1`-only JS exposure of `window.__test`): this machine has no serial-terminal text buffer the way altair8800/assembler6502 do -- its output is an EGA-rendered canvas -- so there was no way for a test to assert "the screen shows X" without either OCR or a scrape. Added a method that reads the live text-mode VRAM back into a plain string (25 rows, one line each), using the exact same character-cell addressing `ega_render.cpp`'s `RenderTextScreen` already uses (live CRTC Horizontal Displayed register for column count, live start offset, plane-0 byte per cell). Returns `""` outside text mode. No real-hardware counterpart -- a person just looks at the CRT -- purely a test seam, like `window.__test` itself.
+
+- **A real, if narrow, keyboard-timing gap found while writing `keyboard.spec.ts`**: typing `page.keyboard.type("DIR")` followed by `page.keyboard.press("Enter")` reproducibly left the typed command sitting on the prompt line forever -- Enter never submitted it, even after 2 real minutes. Root cause is the same single-byte 8042 output register §31 documents for Ctrl+Alt+Del, but reached a different way: `page.keyboard.press()` fires a key's `keydown` and `keyup` DOM events with **no delay at all** between them by default, and screenEl's own keydown/keyup listeners call `sendKey()`/`injectScancode()` synchronously on each -- so Enter's own break code can silently clobber its own still-unread make code before the guest's IRQ1 handler ever sees it. Separately, typing an uppercase letter via `page.keyboard.type("DIR")` fires Shift's `keydown` and the letter's `keydown` essentially back to back too, so Shift's make code loses the same race and every "uppercase" letter arrives lowercase (harmless for DOS, which is case-insensitive, but a real, reproducible drop). The test suite works around both (typing lowercase; splitting Enter into `keyboard.down()`/`waitForTimeout()`/`keyboard.up()`), matching the same real-gap discipline `app.js`'s own `injectScancodeSequence()` and the F-key button handlers already use. Whether this is reachable from an *actual* physical keyboard is a real hardware question, not a test-only one: a genuine AT keyboard is a slow serial device (one bit at a time) that physically cannot deliver two bytes closer together than real hardware allows, so the CPU is always scheduled in time on real silicon -- this emulator's `inject_scancode()` binding has no equivalent rate limit, and a fast enough chorded keypress (or any programmatic key dispatch, which is exactly what tripped this) could in principle drop a byte the same way. Not fixed here -- doing so properly means giving the emulated 8042 a real serial receive rate (queue + drain, not an instant single-call latch) rather than adding JS-side delays to genuine keydown/keyup handling, which is a real design change, not a test-writing one. Left as a known gap for a future session.
+
+## 35. A real bug: the shipped FreeDOS HDD image build hung indefinitely -- the installer-automation harness was reading video memory that was never the real video memory
+
+The `hdd-image` build target (`disks/build_freedos_hdd.cpp` -- drives the real, unmodified FreeDOS 1.3 installer end to end, see §11) had apparently never actually been run to completion in a genuinely fresh environment: it failed identically both in CI (§34's new `ibmpcat-web-test` job, its first-ever real run) and reproduced locally from a clean `disks/` -- `FAILED: cycle budget (60000000000) exhausted before the installer reported completion`, with a **completely blank** `Last screen` dump even at 1B+ emulated cycles (over two real minutes of 8MHz time -- BIOS POST alone should show *something* well before that).
+
+Root cause: `build_freedos_hdd.cpp`'s own `ScreenText()` helper (used only by this build-time tool to watch for the installer's prompts, not by the real emulator or its front end) computed VRAM addresses as `0x18000 + start_offset()*2 + (row*80+col)*2`, masked to `0x3FFFF` -- a flat, byte-pair model with an arbitrary `0x18000` base that corresponds to nothing this EGA implementation actually does. The real, documented layout (`ega.h`'s file header, and what `ega_render.cpp`'s `RenderTextScreen` -- the renderer real screenshots and §32's own investigation used -- actually reads) is planar: `vram[(plane_offset << 2) + plane]`, `plane_offset = (start_offset() + row*cols + col) & 0xFFFF`, plane 0 = character byte, plane 1 = attribute, no fixed base at all. `ScreenText()` was reading zeroed, never-written VRAM the entire time; every "screen" the automation ever saw was blank, so none of its `Step` prompts (`"Do you want to proceed"`, `"Insert diskette #2"`, etc.) ever matched, and the harness just burned its whole cycle budget waiting for text that could never appear this way.
+
+**Fix**: rewrote `ScreenText()` to the same `(plane_offset << 2) + 0` addressing `ega_render.cpp` uses (cited above), dropping the bogus base/stride entirely. **Verified**: rebuilt `build_freedos_hdd` clean (no new warnings), ran the real installer from scratch -- `install reported complete at cycle 40930099181` (~68% of the 60B budget, consistent with this file's own "tens of billions of cycles" estimate), produced the correct 31,900,160-byte image; all 169 native GoogleTest cases still pass; all 28 Playwright specs (§34) pass end to end against the newly-built image and wasm module, including `boot.spec.ts`'s real unattended boot to a live `C:\>` prompt.
+
+This predates this session -- introduced in the original Phase 4 "HDD boot" commit -- and is unrelated to anything else changed alongside it (the `assembler6502` machine's own, separate CI failure that surfaced at the same time is a different bug in a different codebase; see `CGOAC6502_REVIEW.md`).
+
+## 36. A test-only CPU speed multiplier, so the suite stops paying real ~45s boots
+
+§34's suite works, but every one of its 28 specs pays a genuine real, wall-clock-paced ~45s 8 MHz POST + FreeDOS boot cost (`app.js`'s `frame()` feeds `dtSeconds * 8000000` real cycles per real second -- there was, deliberately, no other option; see `CLAUDE.md`'s "Never speed these up"). That's the actual dominant cost in this suite's runtime, unlike assembler6502's (`CGOAC6502_REVIEW.md` §14, where the CPU itself was never the bottleneck -- see that section's own analysis of what *was*).
+
+This is a real, explicit policy change, not a bug fix -- authorized directly by the user ("smoke tests at real speed, rest multiplied up") after I flagged the conflict with the previous "the CPU stays at real 2 MHz [8 MHz here] under test, no cycle multiplier" wording. `CLAUDE.md`'s "Current sanctioned overrides" now documents the resulting rule; this section is the implementation record.
+
+**Mechanism** (`web/app.js`): a module-level `TEST_CPU_MULTIPLIER`, read once from `?test=1&fast=1` (both params required -- `?test=1` alone, or a bare page load, still runs real 8 MHz), applied to `frame()`'s per-frame cycle credit (`dtSeconds * 8000000 * TEST_CPU_MULTIPLIER`). Picked `20`: real ~45s boots land around 2-3s, comfortably under `waitForScreen`'s existing generous timeouts, without single-frame cycle counts (up to ~4M cycles/frame at a 60Hz rAF cadence) getting large enough to risk a "page unresponsive" stall from one synchronous `runCycles()` call.
+
+**The one thing this could have silently broken**: `pumpAudio()` computed its Web Audio buffer duration as `cyclesThisFrame / 8000000` -- exactly right when cycles map 1:1 to real seconds at 8 MHz, wrong by a factor of `TEST_CPU_MULTIPLIER` otherwise. Left as-is, a fast-mode frame feeding ~20x the real cycle count would have scheduled audio buffers claiming ~20x the frame's real duration, running `nextPlayTime` far ahead of `audioCtx.currentTime` with nothing to bring it back (the existing resync only catches falling *behind*, not getting too far *ahead*) -- a growing backlog of scheduled buffers, not a crash, and not something any current test asserts on (`speaker.spec.ts`'s tests don't inspect audio timing), but a latent bug waiting for the next person to write one. Fixed by deriving both the buffer duration and the edge-to-sample conversion from the frame's *real* elapsed `dtSeconds` (now passed into `pumpAudio()`) instead of the fixed 8 MHz constant -- correct at any multiplier, and identical to the old behavior when the multiplier is 1.
+
+**Smoke test** (`tests/smoke.spec.ts`, new): the one spec that passes `realtime: true` to `boot()` (skipping the default `fast=1`), then samples `machine.totalCycles()` across a real 2-second `waitForTimeout`, asserting the measured cycles/real-second lands near 8,000,000 (bounded `4M`-`12M`, generous for CI scheduling jitter). This is the concrete "verify the clock itself" check the override rules require -- mirrors altair8800's existing disk/tape "a few tests select `Realistic` on purpose" convention, extended to the CPU.
+
+**`helpers.ts`'s `boot()`** now defaults every call to `fast=1` (an added `realtime?: boolean` option opts back out) -- every existing spec picked this up for free, no per-file changes needed beyond the new smoke test.
+
+Not touched: `disks/build_freedos_hdd.cpp`, the native build-time tool that produces the shipped `freedos-hdd.img` (§35). It already runs unthrottled (no wall-clock pacing to begin with -- its ~15 real minutes is genuine interpreter throughput, not a removable delay), and the `actions/cache@v4` step already wired into CI (keyed on the native source/build-script files) means it only actually runs when one of those files changes, not on every push -- confirmed via a live CI run showing the build step `skipped` (cache hit) on a push that didn't touch ibmpc-at.
+
+altair8800 and assembler6502 don't get this flag: neither suite's cost is genuinely CPU-bound (altair8800's was already solved via the existing disk/tape `Max`-speed override; assembler6502's turned out to be per-test browser/wasm startup and 2-worker CI contention, not clock speed -- see `CGOAC6502_REVIEW.md` §14). Add it there, following this same pattern, only if a real CPU-bound bottleneck shows up.
+
+## 37. Two real bugs found live: a tall EGA canvas and a crackly PC speaker
+
+Both reported live by the user while actually playing Prince of Persia (EGA mode, sound on) rather than caught by the existing suite -- neither had a test before this section.
+
+**Tall canvas**: `RenderEgaNative16Screen()` trusted Vertical Display End (`ega.h`'s `crtc_vertical_display_end()`) literally. This machine's substitute BIOS is VGA-heritage (see the Chain-4/overflow-bit notes elsewhere in this file), and its 320x200x16 mode-set programs the CRTC for a full ~400-line doubled raster, then sets CRTC R09 bit 7 ("Scan Doubling") to fold it back down to a 200-line picture -- a real VGA hardware feature genuine 1984 EGA silicon never had (same story as the R07 overflow bits and Chain-4). Confirmed live: Prince of Persia's EGA mode left Vertical Display End at 399 (carried over verbatim from the prior 640x400 text mode) with the doubling bit set; without honoring it, the renderer drew the real 200-line playfield in the top half of a 400-line canvas and left the rest black. Fixed by adding `crtc_scan_doubling()` and halving the computed height in `RenderEgaNative16Screen()` when it's set -- VRAM only ever holds one copy of each row, so rendering at the logical (halved) height directly reproduces the doubled picture exactly.
+
+**Crackly speaker**: the first fix attempt (making the per-frame `AudioBufferSourceNode` scheduling in `app.js`'s `pumpAudio()` sample-accurate -- advancing `nextPlayTime` by the buffer's actual realized duration instead of the raw, unquantized `dtSeconds`) turned out to be necessary but not sufficient; the user still heard it. The real problem was the architecture itself: chaining many one-shot buffer-source nodes together, one per animation frame, is fragile regardless of how precise the scheduling math is -- any main-thread stall (a GC pause, the periodic HDD autosave's array copy) leaves the previously-scheduled node's audio running out with nothing queued behind it, silence, then an abrupt jump back to a nonzero level on the next frame. Replaced with a single persistent `AudioWorkletNode` fed by a ring buffer (`kSpeakerWorkletSrc`, registered from a Blob URL): the worklet's `process()` callback runs continuously on the real-time audio thread regardless of the main thread, holding the last sample on underrun instead of clicking. Also removed the `nextPlayTime`/resync bookkeeping the old approach needed entirely, since there's no scheduling clock left to keep in sync.
+
+Neither fix has a Playwright test (no reliable way to assert on actual audio output or rendered canvas pixels from this suite), verified live instead via a temporary diagnostic (`debugEga()`/`debug_raw_crtc()`, added to `wasm_machine.cpp`/`ega.h` for the investigation and removed once the real cause was confirmed) and the user's own manual retest.
+
+## 38. Fullscreen mode, and the Esc key browsers won't let through
+
+Added a fullscreen toggle (expands `#bezel` -- CRT frame, vignette, power LED -- not the bare canvas, so it still reads as hardware) plus a corner Esc button and a one-time hint dialog, all pure web-UI convenience with no hardware precedent (no real 5170 monitor has a "fullscreen mode"), following the same "labelled, opt-in, defaults to the realistic path" shape CLAUDE.md's overrides use even though this isn't really an override of anything simulated.
+
+**The real finding**: asked the user to verify live whether Escape, while fullscreen, actually reaches DOS before the browser exits fullscreen on the same press (my first assumption, written into a code comment, was that it did). It doesn't -- confirmed live, the browser reserves the physical Esc key entirely and never dispatches it to the page while using it to exit fullscreen; DOS gets nothing, it's not merely "also" exiting fullscreen. There's no way for page script to reclaim it from the Fullscreen API. Fixed by adding a dedicated Esc button (visible only while fullscreen -- that's the only place the problem exists at all) that injects the real scancode directly via the existing `sendKey()`/`data-key` click-tap mechanism (§30), bypassing the native key event this problem lives in entirely.
+
+**The hint dialog** explains this to a first-time visitor *before* fullscreen engages (not after -- entering fullscreen first and explaining it afterward, an earlier iteration, meant the visitor could hit Esc and get bounced out before ever reading why). Tracked via a versioned `localStorage` key (`retro8080.fsEscHintSeen` + `FS_ESC_HINT_VERSION`) rather than a plain seen/unseen flag, specifically so the hint's own content can change later without every past visitor's browser silently suppressing it forever -- bump the version string and everyone who saw an older one sees it again.
+
+**A second real bug found via this work**: a pre-existing document-wide `click` listener (§33) refocused `#screen` after every click on the page once the machine was running, meant to keep the visitor's next keystroke routed to the guest instead of being swallowed by whatever button they'd just clicked. In practice this made every other control effectively unusable via keyboard immediately after clicking it (a checkbox couldn't be toggled with Space right after clicking it, since focus had already bounced back to the canvas) -- removed per explicit user report ("I changed my mind of the auto focus of the screen, that is annoying!"). `#screen`'s own click-to-focus handler is untouched; only the page-wide steal-it-back listener is gone. `tests/boot.spec.ts`'s existing focus test (previously asserting the old, now-reversed behavior) is updated to assert the new one instead.
+
+**Tests** (`tests/fullscreen.spec.ts`, new): first-click-shows-the-hint-without-entering-fullscreen, dismissing it enters fullscreen and reveals the Esc button, the hint doesn't reappear once its current version has been seen, a stale stored version does re-show it (the cache-bust, planted directly via `localStorage`), exiting fullscreen hides the Esc button and resets the toggle's label, and the Esc button actually clearing a typed command line at the DOS prompt while fullscreen (proving the scancode really reaches the guest, not just that the button exists).
+
+## 39. Google Drive sync -- removed
+
+The bring-your-own-storage Google Drive HDD sync that lived here (OAuth via GIS, `#gdriveSyncBtn`, boot-time pull, 10-minute auto-upload, `shared/gdrive.js`) was removed. C: persistence is IndexedDB in this browser only, plus Download/Upload image for a portable file backup.
+
+
+## 40. A real bug: the 80286 core's cycle-cost model was 4 generic buckets, not real per-opcode timings
+
+Loaded a real period CPU benchmark, Landmark System Speed Test v2.00 (1990,
+Landmark Research International Corp — `SPEEDCOM.EXE`), off a hand-built 360KB
+floppy image (`mformat -f 360` / `mcopy`, not committed — proprietary 1990
+shareware, matching the CLAUDE.md rule on not bundling copyrighted material;
+inserted at runtime via the browser's own floppy-insert picker like any other
+user-supplied disk image). It reported an apparent ~11.5–14 MHz CPU, against
+this machine's real, wall-clock-paced 8 MHz (`app.js`'s `frame()` — see
+CLAUDE.md's "Never speed these up"). Confirmed this wasn't a stale-cache
+artifact (SHA-256 of the local build vs staged `_site/` vs a live `curl` of
+the running preview server all matched; `Cache-Control: no-store` present).
+
+Root cause: `cpu80286.cpp` charged only 4 generic bucket costs — 2
+register-operand / 7 memory-operand / 7 taken-branch / 3 not-taken —
+regardless of which specific opcode ran, rather than real per-instruction
+Intel 80286 timings. `total_cycles_` (the wall-clock-paced budget
+`Machine::run_cycles()` spends by repeatedly calling `cpu.step()`) is itself
+correctly anchored to real time; the bug meant the *wrong instructions* were
+completing within that correctly-paced budget — badly undercosting some
+opcodes (MUL/DIV/IDIV, REP-prefixed string ops, shift/rotate groups) and
+overcosting others (register-operand ALU-immediate, PUSH reg16), so more or
+less real 80286 work landed in each real second than genuine hardware would do.
+
+Fixed by replacing the 4-bucket model with per-opcode, per-operand-width,
+per-addressing-mode costs, cited against the Intel iAPX 286 Programmer's
+Reference Manual / 80286 data sheet timing appendix (via the "Art of
+Assembly", Randall Hyde, Appendix D reference table) at each constant in
+`cpu80286.cpp`: `grp3_unary` (TEST/NOT/NEG/MUL/IMUL/DIV/IDIV), `grp2_shift`
+(shift/rotate, including the CL- and imm8-count cases), `string_op` and
+`io_string_op` (REP-prefixed MOVS/CMPS/STOS/LODS/SCAS/INS/OUTS, scaling with
+actual iteration count including REPE/REPNE early termination),
+`loop_group` (LOOP/LOOPE/LOOPNE/JCXZ taken vs not-taken), PUSHA/POPA/
+PUSHF/POPF/ENTER/LEAVE, INT/INTO, IN/OUT, several MOV variants, `grp1_immed`
+(ADD/OR/ADC/SBB/AND/SUB/XOR/CMP r/m,imm), and PUSH reg16. New dedicated
+regression suite `tests/cpu80286_timing_test.cpp` (41 `TEST_F` cases) pins
+these down; `cpu80286.h`'s stale `step()` doc comment (referencing a
+`kBaseCycles8/16` table that was never actually implemented) was rewritten to
+describe the real model and explicitly flag the AT's own memory wait-state
+penalty as a known, deferred gap rather than silently claiming it solved.
+
+**Finding the actual hot opcodes**: static disassembly of `SPEEDCOM.EXE` (via
+`ndisasm`) cost real effort navigating to two wrong regions of the binary
+before landing on the right one — Landmark's CPU-speed methodology
+reprograms PIT channel 0 into free-running mode 2 and takes PIT-timestamped
+snapshots around a workload, not a naive tight MUL/DIV loop as first assumed.
+Rather than continue guessing from static disassembly, added a *temporary*
+per-opcode execution histogram (`opcode_histogram` in `cpu80286.h`/`.cpp`,
+exposed via throwaway `resetOpcodeHistogram()`/`opcodeHistogram()` WASM
+bindings) and a throwaway Playwright spec that booted the real machine,
+mounted the real floppy image, ran `SPEEDCOM`, and read back which opcodes
+actually executed — empirical ground truth instead of further static
+navigation. This found `0x83` (ALU-with-sign-extended-immediate, e.g. a
+loop-bound `CMP reg,imm8`) as the single hottest opcode (~18% of all executed
+instructions), still flat-costed at the register-operand cost of 7 when the
+real 80286 cost for a register operand is 3 — an overcost, not an undercost,
+missed by the first pass. Fixed `grp1_immed` and PUSH reg16 the same way.
+All diagnostic plumbing (the histogram field, its WASM bindings, the
+throwaway spec) was removed once the investigation concluded — it did its
+job and had no place in the permanent core or public API.
+
+**Outcome and an open question deliberately left open**: after both fixes,
+215 native + 41 Playwright tests pass with no regressions, and every new
+per-opcode timing is independently cited against real Intel figures and
+covered by its own test — which is the actual, defensible goal here (real
+per-instruction accuracy), not "Landmark's own number reads exactly 8 MHz."
+Re-running the histogram diagnostic after the `grp1_immed`/PUSH fixes showed
+*more* total instructions completing per fixed cycle budget (correcting an
+overcost speeds up wall-clock throughput, same as correcting an undercost
+would slow it down) — so Landmark's self-reported MHz reading was not
+re-verified against a specific target number, deliberately: a 1990-era
+benchmark's own PIT-based self-timing has known era-specific quirks, and
+there's no citable reason to expect it to land on exactly "8.00" even on
+genuine period hardware. The per-opcode costs are now real and tested; if
+Landmark's own displayed number is later worth chasing to a specific value,
+that's a separate, narrower investigation into Landmark's measurement
+method itself, not evidence of a remaining core bug.
+
+## 41. A labelled prefetch-queue-refill tax for taken control transfers, and a real bug it caught along the way
+
+Follow-up to §40. The next candidate lever for closing the remaining gap
+between this core's per-opcode costs and Landmark/Norton SI's own readings
+was effective-address (EA) calculation cost — on the 8086/8088, memory
+operands pay a separate, addressing-mode-dependent EA time on top of the
+opcode's own base cost, and Intel's own Appendix D table marks this
+explicitly with a `+EA` suffix. Checked this directly against the table
+before implementing anything: **the `+EA` suffix appears only in the 8088
+and 8086 columns, never in the 80286 column, across every memory-operand
+instruction checked** (ADC, ADD, AND, CMP, MOV, DIV, IMUL, JMP, LEA, and
+more). This matches the real hardware difference — the 8086/8088 shared
+their address adder with instruction execution and had to serialize EA
+calculation on top of the base cost; the 80286 moved address calculation to
+dedicated hardware that overlaps with execution, so Intel's published 80286
+timings are already the total cost. Implementing an EA add-on for the 80286
+would have been porting an 8086-specific quirk onto a chip whose own
+published numbers don't work that way — a real near-miss caught by checking
+the source before coding, not by testing after. No code change; recorded
+here as a checked negative result so it isn't re-investigated (or wrongly
+"fixed" into an actual regression) later.
+
+The next real lever was prefetch-queue-empty stalls: the 80286 has a 6-byte
+prefetch queue that's invalidated by every taken/unconditional control
+transfer and must refill before the next opcode can be decoded. Unlike
+every other timing fixed in §40, this one has no single citable number —
+Intel's own Appendix D table gives *ranges*, not fixed values, for every
+taken branch/call/return on the 80286 (Jcc-short-taken 7-10, LOOP/JCXZ-taken
+8-11, CALL/JMP near 7-10, CALL/JMP far 11-14/13-16, RET 11-14, RETF 15-18,
+IRET 17-20, INT/INT3 23-26, INTO-taken 24-27) — Intel is telling us the exact
+cost depends on how full the queue happens to be when the flush occurs, and
+doesn't publish the underlying formula.
+
+Genuinely simulating this (tracking real queue-fill state, modeling the BIU
+as a bus-fetch unit running concurrently with execution) would be a
+significant architectural change — this core is an aggregate-cost-per-
+`step()` interpreter with no notion of overlapped fetch/execute at all, not
+a cycle-stepped pipeline. Given that scope, went with a scoped, clearly
+labelled approximation instead of a simulation: a single named constant,
+`kQueueRefillTax` (`cpu80286.h`, = 2), added on top of each instruction's
+already-cited floor-of-range cost for every queue-flushing control transfer
+— Jcc taken, unconditional JMP (short/near/far), CALL (near/far), RET/RETF
+(with and without an imm16 stack-adjust), IRET, INT3/INT/INTO-taken, and
+LOOP/LOOPE/LOOPNE/JCXZ taken. Verified case by case that floor+tax lands
+inside Intel's documented range for every one of these before committing to
+the single constant — not assumed. Not-taken branches are untouched (no
+flush occurs on the fall-through path, so no tax). This is explicitly
+documented in `cpu80286.h`'s comment as an approximation, not a claim of
+simulating the real queue mechanism, per this repo's override-labelling
+rules.
+
+**A real bug caught along the way**: auditing every queue-flushing opcode
+against its cited Intel range (to confirm the tax wouldn't push any of them
+outside their documented range) turned up that CALL near (`0xE8`) was
+charging a flat 11 cycles — *above* the top of Intel's own 7-10 range for
+that opcode, an overcost bug unrelated to the queue-tax question, sitting
+right next to JMP near (`0xE9`, already correctly floored at 7). Fixed to
+the same floor(7)+tax as its sibling opcodes.
+
+14 new `tests/cpu80286_timing_test.cpp` cases cover every changed opcode
+(Jcc taken/not-taken, JMP short/near/far, CALL near/far, RET/RETF with and
+without imm16, IRET, INT3/INT nn/INTO-taken, LOOP/JCXZ-taken) — 229/229
+native tests and 41/41 Playwright tests pass, no regressions.
+
+## 42. A "Click to focus" hint for when the screen doesn't have keyboard focus
+
+Reported directly: typing would silently go nowhere after a page refresh
+until clicking the screen first. Traced to a real gap: `powerSwitch`'s
+auto power-on at boot (`powerSwitch.checked = true; powerOn();`, once
+firmware finishes fetching) never calls `screenEl.focus()` -- nothing does,
+on a fresh load, until the visitor clicks the CRT themselves. A real AT
+keyboard has no such state at all (it's always "connected"); this is purely
+a consequence of the page having several other focusable controls (bays,
+switches, buttons) that are easy to click before typing.
+
+Presented four options (dim+overlay like a VM console's capture indicator,
+a passive bezel glow ring, a dedicated LED next to the power LED, or a
+focused/unfocused cursor-style change) -- picked a variant of the first,
+then iterated on it live: a semi-transparent orange banner reading "Click
+to focus", spanning the full width of the bezel flush to its bottom edge
+(`.focus-hint` in `index.html` -- no dimming of the screen itself, and no
+fullscreen-specific inset override needed the way `.crt-overlay` needs one,
+since it's flush to the container's edges in both cases already), shown
+only while `poweredOn` is true and `document.activeElement !== screenEl`
+(`updateFocusHint()` in `app.js`,
+wired to the screen's own focus/blur events and called again from both
+`powerOn()`/`powerOff()` so the auto power-on case is covered immediately,
+not just later focus changes). `pointer-events: none` so the banner never
+steals the very click meant to focus the screen underneath it. Pure web-UI
+convenience, not governed by CLAUDE.md's realism rules -- same footing as
+the fullscreen button.
+
+New test in `tests/keyboard.spec.ts`: confirms the hint is already visible
+right after `boot()` (which, like the real auto power-on path, never
+focuses the screen -- this is exactly the gap it exists to cover), hides on
+`focusScreen()`, returns when focus moves elsewhere, and disappears again
+once powered off regardless of focus state. Full 42-test Playwright suite
+passes.
+
+Not done (a separate, judgment-call fix rather than an indicator, so left
+for a future request rather than assumed): having the auto power-on grab
+focus itself, which would avoid the problem outright on a fresh load rather
+than just flagging it.
+
+## 43. POPF/IRET: IOPL/NT round-trip is more PRM-accurate but breaks FreeDOS
+
+**Corrected in §44.2.** The always-0 behaviour this section reverted to is
+the real 286, not a workaround, and the CheckIt result came from PUSH SP
+(§44.1). The bisection below stands as a record of what was tried.
+
+A CheckIt (TouchStone Software) DOS diagnostic run misidentified this
+machine as an "80188, 0.74 MHz" instead of an 80286 @ 8 MHz. Root-caused to
+`cpu80286.cpp`'s POPF/IRET masking FLAGS bits 12-15 to always-0 regardless
+of the popped value -- neither the real 8086-family signature (always-1,
+unimplemented) nor the real 80286 signature (IOPL/NT genuinely settable in
+real mode, no CPL to gate them the way protected mode's "POPF only loads
+IOPL/IF if CPL<=IOPL" rule does -- Intel iAPX 286 PRM). This always-0
+behavior is also exactly the classic period technique DOS diagnostics
+(CheckIt, MSD, Norton) used to distinguish an 8086-family chip from a real
+286 with no CPUID instruction available.
+
+Implemented the PRM-accurate fix (let IOPL/NT round-trip, only bit 15 stays
+reserved-0) and added GoogleTest coverage. Pushed. CI's `ibmpcat-web-test`
+then started failing `make ibmpcat.js hdd-image` with a **deterministic**
+`Runtime error 200 at 10C2:3D6D` partway through FreeDOS 1.3's installer
+(extracting `FREEDOS.SAF`, right after "Insert diskette #2... Press a key
+to continue") -- same address every single run, ruling out CI-runner-speed
+flakiness outright.
+
+Bisected empirically via `disks/build_freedos_hdd.cpp` (rebuilt + re-run
+locally against the real install floppies, ~10min/attempt to reach the
+crash point):
+- Full revert (both POPF and IRET back to always-0): install completed.
+- POPF fixed, IRET reverted: still crashed at the identical address.
+- POPF reverted, IRET fixed: still crashed at the identical address.
+
+This isolates the break to POPF's mask specifically -- first suspected
+IRET (real hardware performs a hardware task-switch return via the TSS
+back-link when NT=1 at IRET, machinery this real-mode-only core never
+implements; a genuinely-set NT reaching IRET would silently do a plain
+return while the guest believes a task switch happened), but that theory
+was directly falsified by the second bisection result above. The actual
+mechanism is still unconfirmed -- something downstream reads FLAGS back
+(PUSHF/SAHF or similar) and reacts differently to a genuinely-nonzero
+IOPL/NT it was never able to observe before this change existed. Not
+investigated further given the cost per attempt.
+
+Reverted POPF and IRET to the always-0 behavior (verified: matches the
+original, install-completing code byte-for-byte). CheckIt will still
+misreport the CPU family as a result -- a real, known, accepted gap. This
+core also powers the live shipped machine (same file backs both the
+offline HDD-image build and the browser's own wasm build), so a passing
+edge case in one third-party diagnostic isn't worth a broken installer.
+`Cpu80286Test.PopfAndIretAlwaysClearIoplAndNt` documents this as
+deliberate, not an oversight, so a future pass doesn't re-attempt the same
+fix without knowing it regresses FreeDOS.
+
+## 44. CPU parity: PUSH SP, a 286 that can't run 386 code, exceptions, single-step
+
+Items C1-C9 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md). C10 (protected
+mode) and C11 (the reset state that comes with it) stay open.
+
+### 44.1 PUSH SP
+
+`push_reg()` pushed the decremented SP and called that the 286. It's the
+other way round. The 8086 and 80186 push the decremented value; the 286
+pushes SP as it was before the instruction (Intel iAPX 286 PRM,
+"Instruction Set Differences from the 8086"). `PUSH SP / POP AX / CMP
+AX,SP` is how period software told an 8086 from a 286, so every detector
+saw an 8086-class part. With PUSHA, BOUND and the mod-32 shift count
+saying 186, that's the likely cause of CheckIt's "80188" in §43.
+
+### 44.2 FLAGS bits 12-15 were already right
+
+§43 called the always-0 IOPL/NT a workaround. It's the chip: "bits 12-15
+of FLAGS are always clear on the Intel 286 processor in real-address
+mode", and a 386 lets them stick (Intel AP-485, CPU identification). The
+§43 attempt to let them round-trip made software see a 386. The FreeDOS
+installer then took a 386 path on a core that only half-runs 386 code,
+which fits its runtime error 200 better than anything reading FLAGS
+downstream. The code stays; its comment and test now say it's correct.
+
+### 44.3 The 386 layer runs only from ROM
+
+The `0x66` prefix with 32-bit registers, Jcc rel16, SETcc, MOVZX/MOVSX and
+two-operand IMUL ran everywhere because `BIOS-bochs-legacy` needs them
+(§7). A 286 raises #UD (INT 6) on all of them, and programs probe for a
+386 by trying one. `Cpu::firmware_at` now decides per instruction from
+its physical address, and `Machine` points it at the chipset's ROM map
+(`Chipset::is_rom`), which covers the system BIOS and the video BIOS. Code
+from ROM keeps the 386 layer. Anything else gets #UD. Unknown opcodes
+fetched from ROM stay a reported no-op through `on_unimplemented`.
+
+Undefined opcodes that used to fall through as 2-cycle no-ops now raise
+#UD, with IP on the instruction: `63h` (ARPL is protected mode only),
+`64h`, `65h`, `67h`, `0F 00`, `0F 02`, `0F 03`, `0F 01 /5` and `/7`; a
+register operand to LEA, LES, LDS, BOUND, or far CALL/JMP; `MOV CS`; and
+`FF /7`. `D6h` is SALC, undocumented but present on every Intel part from
+the 8086 on (Ralf Brown's OPCODES.LST). `F1h` stays a no-op, since no
+source settles what a 286 does with it.
+
+### 44.4 The real-mode system instructions
+
+Once unknown `0F` opcodes raise #UD, the ones a 286 accepts in real mode
+can't stay silent no-ops, so they're implemented:
+
+- **SMSW / LMSW.** MSW resets to FFF0h. LMSW loads MP, EM and TS. It can't
+  set PE, because there's no protected mode to enter (C10). It reports
+  the attempt through `on_unimplemented` and leaves PE clear.
+- **CLTS** clears TS.
+- **LGDT / LIDT / SGDT / SIDT** load and store a 24-bit base and a limit.
+  SGDT and SIDT write FFh in the sixth byte where a 386 writes 00h, another
+  period 286-or-386 test (Intel386 PRM, SGDT/SIDT, 80286 compatibility).
+  The IDT resets to base 0, limit 3FFh, and real-mode INT n now vectors
+  through IDTR's base, so LIDT moves the vector table as it does on the
+  chip. The IDT limit isn't checked yet.
+- **ESC with EM or TS set** raises #NM (INT 7), and so does WAIT with MP
+  and TS set. With MSW as the BIOS leaves it, an ESC still does nothing,
+  as on an AT with no 80287 fitted.
+
+`0F 05` (LOADALL) is a reported no-op. It needs the descriptor caches that
+come with C10.
+
+### 44.5 Faults restart the instruction
+
+A word access at offset FFFFh, or a dword past FFFCh, now raises #GP
+(INT 13), or #SS (INT 12) when the segment is SS. So does an instruction
+that runs past FFFFh or is longer than 10 bytes (Intel iAPX 286 PRM,
+real-address-mode exceptions 12 and 13). The fault is found
+mid-instruction, so the core drops any further bus traffic for that
+instruction, puts back the registers it started with, and vectors with IP
+on the first prefix. #UD and #NM use the same path. Divide errors and
+BOUND also restart at the first prefix now, not at the opcode.
+
+A REP string op saves its registers at each iteration, so a fault partway
+through keeps the iterations already done, as the chip does.
+
+Exceptions and the single-step trap cost an INT n (23 clocks plus
+`kQueueRefillTax`).
+
+### 44.6 Single-step and the interrupt shadow
+
+TF never trapped, so DEBUG's `T` ran free. Now an instruction that starts
+with TF set is followed by INT 1, with the next instruction's address
+saved. A POPF that sets TF runs untrapped; one that clears it still
+traps. INT n, INT3 and INTO enter their handler untrapped. A faulting
+instruction doesn't trap.
+
+STI (from IF clear), MOV SS and POP SS hold off INTR and the trap for one
+instruction, so `MOV SS / MOV SP` can't take an interrupt onto a
+half-loaded stack. `Cpu::interrupt_shadow()` exposes it and
+`Machine::run_cycles()` checks it before polling the PIC. Same design as
+`PC486_REVIEW.md` §40.4-§40.5.
+
+### 44.7 A REP can be interrupted
+
+A REP ran its whole count in one `step()`. A 64KB REP MOVSW is about
+131,000 clocks, 16 ms at 8 MHz, with no IRQ0, keyboard or disk in
+between. The 286 takes interrupts between iterations and resumes after
+IRET. `Cpu::rep_yield_cycles`, which `Machine` sets to one PIT clock (6
+cycles at 8 MHz), is the budget: a REP that reaches it puts IP back on its
+first prefix and returns, the machine services its devices and any
+interrupt, and the next step continues. A continuation is charged only its
+own iterations, so an uninterrupted REP still costs exactly its published
+5+4n. REP LODS has no published per-iteration figure and doesn't yield.
+
+Under TF a REP runs one iteration per step and traps after each, with IP
+still on the instruction until the last one. Same design as
+`PC486_REVIEW.md` §45.3.
+
+### 44.8 Checks
+
+- 260 native tests (230 before). New cases cover each item above, plus
+  three `Machine` cases: 386 opcodes run from ROM but #UD from RAM, MOV SS
+  holds off a pending IRQ for one instruction, and a 64KB REP yields
+  after one PIT clock.
+- The shipped HDD image boots to `C:\>` on the new core. A probe that logs
+  every exception vector taken saw no INT 6, 7, 12 or 13 and nothing
+  reported as unimplemented.
+- The real FreeDOS 1.3 installer (`disks/build_freedos_hdd`, the run that
+  failed in §43) completes, at cycle 37,591,270,713, and its image boots
+  with no exceptions. It now detects a 286 and writes the 286 menu to
+  `FDCONFIG.SYS`: `DOS=HIGH`, and `FDXMS286.SYS` as the default choice.
+  On this machine FDXMS286 prints "Extended memory is too small or not
+  available. Driver won't be installed.", which is what a 640KB AT with
+  no extended memory shows, and the boot carries on. The old image held
+  the 8086 menu.
+- Playwright against the rebuilt wasm: 41/41 in three full runs. A fourth
+  run, made while the installer build had the host busy, failed once in
+  the extended-key panel test (`^C` from Pause/Break, then no response to
+  typing). It didn't come back in 15 isolated runs, 10 more with every
+  core pegged, or the three full runs. Unexplained. The likeliest cause is
+  K1 in `IBM_PCAT_PARITY.md`: the 8042 overwrites an unread byte, and a
+  late frame can deliver two bytes of the Pause or Num Lock sequence
+  back to back.
+
+## 45. The real reset vector, the A20 gate, and F1h
+
+Items C11 and C12 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md).
+
+### 45.1 The first fetch is FFFFF0h
+
+After RESET the 286 sets CS to F000h but its hidden base to FF0000h, so
+the first fetch is FFFFF0h, near the top of the 24-bit address space. The
+base stays there until the first far transfer that loads CS (Intel iAPX
+286 PRM, "Reset"). The core started at F000:FFF0 with the ordinary base,
+so the first fetch was FFFF0h. Now `Cpu::reset()` sets `cs_high_`, code
+fetches use FF0000h as the base while it's set and CS is still F000h,
+and JMP/CALL far, RETF, IRET, the indirect far forms and every
+interrupt entry clear it. A fault restores it with the other registers.
+
+That fetch only finds code because the AT decodes its 64KB system ROM
+twice, "at the top of the first and last 1M address space (0F0000 and
+FF0000)" (IBM PC/AT Technical Reference, ROM subsystem). `Chipset` mirrors
+F0000-FFFFF at FF0000-FFFFFF, read-only. Anything in the alias without ROM
+behind it reads open bus.
+
+A data access through a `CS:` override while the high base is in force
+still uses F000h's ordinary base. The BIOS's first instruction is a far
+jump, so nothing exercises it.
+
+### 45.2 The A20 gate holds only A20
+
+`Chipset` masked closed-gate addresses to 20 bits, which folds everything
+into the first megabyte. The real gate holds A20 low and passes A21-A23
+through, so FFFFF0h with the gate closed is EFFFF0h, where nothing
+decodes. That's why rebooting a PC with A20 closed can hang it. It's now
+`addr &= ~0x100000`.
+
+So the first fetch needs A20 open, and the 8042 gives it: its port 2
+comes out of reset high (Intel UPI-41A/42 data sheet), releasing the
+reset line and opening A20. The output port starts at FFh instead of
+00h. The 0xAA self-test also leaves A20 open (OS/2 Museum, "IBM PC/AT
+8042 Keyboard Controller Commands").
+
+### 45.3 Closing A20 before boot, for the stand-in BIOS
+
+IBM's POST opens A20 to test memory and closes it before handing over to
+the operating system (Wikipedia, "A20 line"), so DOS sees the 8086's 1MB
+wrap. `BIOS-bochs-legacy` sends the 0xAA self-test and never closes the
+gate: a probe of every 8042 and port 92h write during a FreeDOS boot saw
+no 0xD1. Without help, DOS would run with A20 open, and EXEPACK-packed
+programs loaded low fail with "Packed file is corrupt".
+
+`Machine::run_cycles()` covers it: when code fetched from ROM lands at
+0000:7C00, it closes A20 through the 8042, which is where IBM's POST
+leaves it. That's a labelled stand-in for missing BIOS behaviour, not
+hardware. It re-arms on every boot, cold or warm. A boot sector's own
+jump to 7C00h (an MBR handing to a VBR) runs from RAM and doesn't
+trigger it.
+
+### 45.4 F1h
+
+`F1h` was a 2-cycle no-op. On a real 286 it's a prefix that does nothing
+to the instruction after it, the same LOCK alias it is on the 8086
+(hardware tests in rep lodsb, "Intel 286 secrets: ICE mode and F1 0F
+04"). The 80186 raises #UD on it and the 386 treats it as ICEBP. It's
+now decoded as a prefix. `F1 0F 04` is STOREALL, which dumps state and
+waits for an in-circuit emulator. Without one the machine hangs, and
+the dump layout isn't published, so it isn't modelled; `0F 04` stays #UD
+outside ROM.
+
+### 45.5 Checks
+
+- 265 native tests (260 before): the ROM alias, the bit-20-only gate,
+  A20 open at reset and after 0xAA, the first fetch at FFFFF0h and back
+  to F0000h after the far jump, the boot-sector shim from ROM but not
+  from RAM, and F1h as a prefix.
+- Both the shipped HDD image and §44.8's freshly installed one boot to
+  `C:\>` with A20 closed at the prompt and no INT 6, 7, 12 or 13.
+- The FreeDOS installer completes at cycle 37,591,270,713, the same as
+  in §44.8, and its image boots the same way.
+- 41/41 Playwright against the rebuilt wasm.
+
+## 46. Bus timing: wait states, the prefetch queue, refresh, the EGA raster
+
+Items T1-T5 and T8 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md), plus
+P5 and E11, which come out of the same signals.
+
+### 46.1 The AT's bus cycles
+
+The per-opcode costs (§40) are Intel's figures, which assume "bus cycles
+do not require wait states" and an instruction already in the prefetch
+queue (80C286 data sheet, Instruction Clock Count Assumptions). The AT
+doesn't meet either. Its Technical Reference ("System Performance"):
+
+- A bus cycle "requires 3 clock cycles (which includes 1 wait state)".
+- "Eight-bit bus operations to 8-bit devices take 6 clock cycles (which
+  include 4 wait states)."
+- "Sixteen-bit bus operations to 8-bit devices take 12 clock cycles."
+
+That TR edition describes the 6 MHz board. The 339's announcement letter
+gives the same RAM, 150 ns access and 275 ns cycle. A zero-wait cycle at
+8 MHz is 250 ns, too short for it, and one wait state is 375 ns, so the
+339 runs one wait state too. That's derived, not quoted.
+
+`Chipset::mem_clocks` is a 4KB-page table of byte-cycle lengths: 3 for
+system-board RAM, the system ROM and its alias; 6 for the EGA's memory
+and ROM (an 8-bit card) and for empty slot space, where no card claims a
+16-bit cycle. Ports are all 6 except the WD1003 data register at 1F0h,
+the one 16-bit port. `Cpu` charges each data cycle's clocks over the 2
+the published count includes: a byte or aligned word to RAM +1, an odd
+word +4 (two cycles), a byte to an 8-bit device +4, a word +10. Port I/O
+goes through the same accounting. The unit-test fixtures leave the
+tables unset, so they still check Intel's numbers exactly.
+
+### 46.2 The prefetch queue
+
+With wait states, the bus unit can't always keep the 6-byte queue ahead
+of execution. `Cpu::prefetch()` models it after each instruction: the
+instruction's bytes come out of the queue, and if it's short, the CPU
+stalls while the missing words are fetched at the code's cycle length.
+Whatever part of the instruction's own time its data cycles leave the bus
+idle goes to fetching the next words, carried over between instructions
+so a fetch can straddle two of them. A full queue stops the bus unit.
+
+A taken transfer empties the queue (Intel iAPX 286 PRM, bus unit), even
+`JMP $+2`. The published transfer counts already include fetching the
+target's first bytes at zero wait states, so the next instruction pays
+only the wait states on those words. Every taken transfer goes through
+`Cpu::flush()`, which adds `kQueueRefillTax` and marks the flush;
+indirect transfers and interrupts mark it too.
+
+Checks it lands on: a run of 3-byte, 2-clock `MOV AX,imm16` costs 4.5
+clocks each, the rate 1.5 three-clock word fetches allow, and a run of
+13-clock MULs costs exactly 13, with the fetches hidden.
+
+### 46.3 Refresh
+
+"The refresh controller steps one refresh address every 15 microseconds.
+Each refresh cycle requires 5 clock cycles", about 5% of the bus (IBM
+PC/AT Technical Reference, "System Performance"). PIT channel 1 is the
+refresh request generator, "programmed as a rate generator to produce a
+15-microsecond period signal". Channel 1's rising edges now reach the
+chipset, which steals 5 clocks for each one (`Chipset::take_held_clocks`)
+and toggles port 61h bit 4 with it (P5). That bit used to flip on every
+CPU step.
+
+IBM's POST starts refresh early with `OUT 43h,54h` and `OUT 41h,12h`
+(channel 1, LSB only, mode 2, count 18, per the TR's BIOS listing).
+`BIOS-bochs-legacy` programs only channel 0; a probe of every PIT write
+during a FreeDOS boot saw `43h <- 34h` and two writes to 40h, nothing
+else. A real AT left like that would never refresh. `Machine::start_refresh()`
+writes IBM's two bytes at power-on and on reset, labelled as standing in
+for the BIOS. Software that reprograms channel 1 later still gets what it
+asked for.
+
+### 46.4 The EGA raster
+
+`Ega::tick` ran a fixed 60 Hz frame with an 8% retrace window, and no
+horizontal timing. Now `recompute_timing_()` derives it on any write to
+Misc Output, the sequencer or the CRTC, per the IBM EGA Technical
+Reference:
+
+- Dot clock: Misc Output bits 2-3, `00` the 14.318 MHz I/O-channel clock,
+  `01` the on-board 16.257 MHz. Clocking Mode bit 3 halves it.
+- Characters are 8 or 9 dots by Clocking Mode bit 0.
+- Horizontal Total is "the total number of characters less 2";
+  Horizontal Display Enable End is one less than the displayed count.
+- Vertical Total "represents the number of horizontal raster scans ...
+  including vertical retrace", with bit 8 in Overflow bit 0. Vertical
+  Display Enable End and Vertical Retrace Start take bit 8 from Overflow
+  bits 1 and 2. Vertical Retrace End is a 4-bit compare.
+
+IBM's 350-line text parameters check it: 93 characters of 8 dots at
+16.257 MHz is the EGA's 21.85 kHz line, and 364 lines make 60.04 Hz.
+
+Input Status 1 bit 3 is vertical retrace from that raster, and bit 0 is
+now live too (E11): it reads 1 whenever display enable is off,
+horizontally or vertically. The TR's text says "logical 0 indicates the
+CRT raster is in a horizontal or vertical retrace interval", the reverse.
+The CGA reads 1 there, CGA software polls for it to avoid snow, and the
+EGA runs that software, so this follows the CGA. Unprogrammed or
+implausible registers (outside 30-120 Hz) fall back to a 60 Hz raster.
+
+The stand-in VGA BIOS programs VGA mode values. Read as an EGA reads them,
+`67h` in Misc Output selects 16.257 MHz and a 449-line VGA frame comes out
+at about 42 Hz, which is what the probe below measured. A real EGA given
+those values would run at that rate too. It's E1 in the parity doc, not
+this timing.
+
+### 46.5 Hardware interrupts
+
+`Machine` took IRQs without charging them. `Cpu::hardware_interrupt()`
+now costs INT n's 23+m (80C286 data sheet; m as `kQueueRefillTax`), plus
+the two INTA bus cycles that read the vector from the 8259s, timed as the
+8-bit device they are, plus the wait states on the three pushes and the
+vector fetch. `interrupt()` itself no longer adds a stray 45 to
+`cpu.cycles`.
+
+### 46.6 DMA
+
+The FDC's DMA copied each block for free. "All DMA data-transfer bus
+cycles are 5 clock cycles or 1.66 microseconds", with the DMA controller
+at 3 MHz on the 6 MHz board (IBM PC/AT Technical Reference, "System
+Performance"), and the CPU is off the bus for each one. The 3 MHz is half
+the CPU clock; on the 8 MHz board that relationship gives 10 CPU clocks a
+transfer, which is an inference from the 6 MHz figures. Each byte the
+FDC moves now holds the CPU off for 10 clocks, through the same
+`Chipset::take_held_clocks()` as refresh. The bus-control handover the TR
+leaves out isn't charged.
+
+### 46.7 Checks
+
+- 279 native tests (265 before): each cycle length in the table, word and
+  odd-word costs, ports, the fetch-bound and execute-bound queue cases, a
+  jump to the next instruction still flushing, IRQ cost on both buses,
+  refresh at 5 clocks per channel 1 period, port 61h bit 4 following it,
+  and the EGA raster against IBM's 350-line parameters, including the
+  retrace lines and the halved dot clock.
+- The shipped HDD image boots to `C:\>` at 455.6M cycles, up from
+  342.4M, with no exceptions. About 57 s at 8 MHz against 43 s. Fixed
+  real-time waits like FreeDOS's boot-menu countdown don't change, so
+  CPU-bound work slowed more than that, consistent with one wait state,
+  6-12 clock EGA accesses and refresh.
+- The FreeDOS installer completes at cycle 50,216,919,471, up from
+  37,591,270,713 (§45.5), and its image boots to `C:\>` at 469.1M cycles
+  with no exceptions. That's within `build_freedos_hdd`'s old 60-billion
+  default but close, so the default is now 120 billion.
+- 41/41 Playwright against the rebuilt wasm, including the real-speed
+  smoke check.
+- Not checked against a period benchmark. Landmark and Norton SI are
+  proprietary and not in the repo; running one from a floppy is the
+  next calibration step (T7 in the parity doc, done in §47).
+
+## 47. EGA memory contention and a TOPBENCH calibration
+
+Items T6 and T7 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md). T7 turned
+up P1-P3, a REP LODS undercount and a missing EA clock on the way.
+
+### 47.1 The reference: TOPBENCH
+
+TOPBENCH, the Oldskool PC Benchmark (Jim Leonard), is MIT-licensed with
+published source (github.com/MobyGamer/TOPBENCH) and ships a database of
+results measured on real machines. Two entries matter here:
+
+| Entry | MemTest | MemEA | Opcodes | VidMem | 3DGames | Score |
+|-------|--------:|------:|--------:|-------:|--------:|------:|
+| IBM PC/AT 319 or 339, 8 MHz, EGA | 923 | 514 | 397 | 1470 | 388 | 13 |
+| IBM PC/AT, 6 MHz (01/10/84 BIOS), EGA | 1245 | 705 | 542 | 1477 | 526 | 11 |
+
+Each test is a fixed instruction sequence timed in microseconds with
+Abrash's precision Zen timer (PIT channel 0, mode 2, count 0, latched and
+negated). VidMem copies 160 words out of B800h, writes two, and copies
+160 back. It's the same on both boards, so the EGA sets its speed, not
+the CPU clock. None of TOPBENCH is in the repo; the runs below put
+`TOPBENCH.EXE` 0.40c on a scratch copy of the HDD image and drove its
+menus from a native probe.
+
+### 47.2 The PIT was a square wave in every mode (P1-P3)
+
+The first run read about 28,000 µs for every test. `Pit8253` ran every
+mode as mode 3 and counted down from half the reload, so a mode 2 count
+of 0 read back from 32768 and the Zen timer saw 32768 extra ticks
+(27.5 ms) every time. §40's Landmark readings went through the same
+mode 2 readback. The AT's timer is an 8254-2 (IBM PC/AT Technical
+Reference, "System Timers"), and `pc486` already had one: all six modes,
+BCD, counter latch, read-back and status (Intel 8254 data sheet, "Mode
+Definitions", "Read-Back Command"). `pit8253.cpp` is now that port, with
+channel 1's rising edges still reported for refresh (§46.3) and its test
+suite brought over too.
+
+One test moved: the 8254 spends one clock loading a count, so channel 1's
+first refresh request lands 19 clocks after `OUT 41h,12h`, not 18.
+
+### 47.3 EGA processor memory cycles (T6)
+
+The EGA TR's sequencer "allows the processor to access memory during
+active display intervals by inserting dedicated processor memory cycles
+periodically between the display memory cycles", and Clocking Mode bit 1
+gives the split: "CRT memory cycles occur on 4 out of 5 available memory
+cycles", or 2 of 5 for the medium-resolution modes. It doesn't give the
+cycle length. Five cycles have to fetch four characters in high
+resolution, one 32-bit fetch per character, so five memory cycles are
+32 dots of the undivided dot clock (36 with 9-dot characters). The same
+32 dots give exactly two fetches in the 320-wide modes, where the halved
+dot clock makes each character 16 dots, which is the TR's 2 of 5. That
+length is derived, not quoted.
+
+The CPU slot is the fifth cycle; in 2-of-5 mode the CPU gets three of the
+five, placed at cycles 1, 3 and 4 since the TR doesn't say which. Pages
+A0000-BFFFF are flagged `Bus::kMemSlotted`, and each byte access the
+EGA's window decodes asks `Ega::cpu_access_clocks()` for the next free
+slot after the access starts. The cycle costs the longer of that and the
+6-clock 8-bit bus cycle (§46.1). A word is two byte cycles, each waiting
+for its own slot. Back to back, that's one byte per 1.97 µs at
+16.257 MHz, against the 2.0 µs per byte the 6 MHz and 8 MHz entries both
+imply.
+
+### 47.4 Results
+
+After the PIT port, before any timing change, against the 339 entry:
+MemTest 874 (-5%), MemEA 476 (-7%), Opcodes 380 (-4%), VidMem 643 (-56%),
+3DGames 374 (-4%), score 18 against 13.
+
+- VidMem: 1500 with the slots under the VGA BIOS's 9-dot mode 3. Nothing
+  was fitted, but the match was partly luck: see the note under the table.
+- Score: 13, the same as the real machine. TOPScore counts full-suite runs
+  in 50 ms, and VidMem was most of the gap.
+- MemTest is all string instructions. The data sheet's REP counts plus a
+  wait state per bus cycle and §46.3's refresh add up to about 929 µs by
+  hand. The emulator read 874 because REP LODS cost a flat 5 clocks; the
+  80C286 data sheet gives `5 + 4n`, and the comment that there was no
+  cited formula was wrong. Fixed: 941, +2%.
+- The data sheet's asterisk (`(Note 1)` in the scanned copy) adds one
+  clock "if offset calculation requires summing 3 elements". The decoder
+  never charged it. It does now, for base + index + displacement.
+- MemEA didn't move with that clock: it sits on the bus limit. The kernel
+  is 1368 code bytes and 520 data cycles, 3612 clocks at three clocks a
+  cycle, 471 µs with refresh. The emulator reads 476. The real 339 read
+  514, so the real 286 leaves its bus idle about 0.85 clocks an
+  instruction somewhere the data sheet doesn't describe. Opcodes (-5%)
+  and 3DGames (-4%) are likely the same thing. That's T9 in the parity
+  doc. A fitted constant would close it but isn't a source.
+
+| Test | Real 339 | Emulator | |
+|------|---------:|---------:|--:|
+| MemTest | 923 | 941 | +2% |
+| MemEA | 514 | 476 | -7% |
+| Opcodes | 397 | 379 | -5% |
+| VidMem | 1470 | 1500 | +2% |
+| 3DGames | 388 | 373 | -4% |
+| Score | 13 | 13 | |
+
+The submitter's monitor isn't recorded. Both IBM AT entries (6 MHz and
+8 MHz) are modem7's, with `VideoAdapter=EGA` and nothing about the
+display. VidMem depends on it, because a memory cycle is a fixed number
+of dots (§47.3): character width over dot clock. Under §48's EGA BIOS,
+IBM's mode 3 is 8-dot, so:
+
+| Display (switches) | Mode 3 clock | VidMem | vs 1470 |
+|--------------------|-------------:|-------:|--------:|
+| Enhanced Display, high resolution (9, shipped) | 16.257 MHz | 1335 | -9% |
+| Colour Display, 200 lines (7) | 14.318 MHz | 1514 | +3% |
+
+The VGA BIOS's 9-dot mode at 16.257 MHz (1500) happened to land between
+the two. With a 200-line display the slot model matches the real machine
+as well as everything else does, and score is 13. With an Enhanced
+Display it's 9% fast, and either the 32-dot memory cycle derived in
+§47.3 is short or the real run used a 200-line monitor. The TR doesn't
+give the cycle length, so this stays open until a 5170-and-5154 reading
+turns up. The shipped machine, with the Enhanced Display, scores 14.
+
+### 47.5 Checks
+
+- 313 native tests (279 before): the 8254 suite from `pc486` plus the Zen
+  timer's mode 2 readback and channel 1's refresh rate, REP LODS, the
+  three-element EA clock, a slotted word asking the device once per byte,
+  and the EGA's slot spacing in both bandwidth modes, after an idle gap
+  and outside the mapped window.
+- The shipped HDD image boots to `C:\>` at 458.0M cycles, up from
+  455.6M, with no exceptions. The probe's INT 1 count is a resident
+  program chaining INT 2Ah to DOS's default handler, which INT 1 and
+  INT 3 share; the same count shows up with the EGA slots switched off.
+- The FreeDOS installer completes at cycle 50,234,086,633 and its image
+  boots to `C:\>` at 472.2M cycles. `build_freedos_hdd` used to type an
+  answer the moment its prompt appeared; with slower EGA writes,
+  "ready to install FreeDOS" lost its `y` to the prompt's keyboard flush.
+  It now answers once the screen has been still for half a second, and
+  arms a swap's "Press a key" straight away since both lines print
+  together.
+- 41/41 Playwright against the rebuilt wasm, including the real-speed
+  smoke check.
+- TOPBENCH: repeat runs land within 2 µs of the §47.4 table.
+
+## 48. The EGA: an EGA BIOS, and the CRTC and attribute rules
+
+Items E1-E14 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md) (E11 was
+§46). The renderer and the BIOS changed together, since the old VGA BIOS
+leaned on two VGA-only bits the renderer had to honour.
+
+### 48.1 An EGA BIOS stand-in (E1)
+
+`VGABIOS-lgpl-latest.bin` answered INT 10h AH=1Ah as a VGA, set VGA's
+400-line text with scan doubling, and turned the cursor off through a
+VGA-only bit. Programs that probe for a VGA found one. IBM's EGA BIOS is
+IBM's copyright, and no maintained open EGA-only BIOS exists, so
+`roms/egabios/egabios.asm` is a new one: about 2,200 lines of nasm,
+286-only, written to the INT 10h interface of the IBM EGA Technical
+Reference (August 1984). No copy of that Technical Reference was
+available while writing it or since (§49.1), so the interface details
+below are as the author knew them, not checked against it. None of IBM's
+code is copied.
+
+- **Parameter table.** The 23 64-byte VIDEO_PARMS entries are laid out
+  in the order of IBM's table (modes 0-7, the reserved 8-0Ch, D-10h for
+  64KB and again for more, then 0-3 for the Enhanced Display). Mode set
+  reaches them through the save pointer at 40:A8, so a program can hand
+  the BIOS its own table. Unsourced: the register values in those
+  entries. No primary source for them is on file, and they were not
+  checked against the EGA Technical Reference.
+- **Switches.** Power-on reads the four DIP switches through Input
+  Status 0, one clock select at a time, and stores them in 40:88. Switch
+  setting 9 (Enhanced Display, high resolution, EGA primary) picks the
+  350-line text entries and the 8x14 font. The TR's two switch tables
+  give the full map.
+- **Cursor.** AH=01h follows IBM's documented emulation: CGA-style
+  start/end values above line 4 move down five lines in a 14-line cell,
+  the end register is one past the last line and wraps to 0 at the cell
+  height, and CX=2000h becomes 1E00h since the EGA has no cursor-off bit.
+  40:87 bit 0 turns the emulation off.
+- **Functions.** 00h-13h as the TR lists them, AH=1Ah absent. Character
+  generator calls 00-03h, 10-12h (with the documented ROWS, POINTS,
+  CRT_LEN and CRTC 09h-0Bh, 12h recalculation), 20-23h and 30h. AH=12h
+  BL=10h reports a colour EGA with 256KB and the switch setting, and
+  BL=20h installs a print-screen routine that prints every row. Graphics
+  characters, dots and scrolling cover modes 4-6 and D-10h.
+- **Fonts.** The 8x8 and 8x14 sets are `VGA-ROM.F08` and `VGA-ROM.F14`
+  from Yossi Gil's `fntcol16.zip` font collection (Simtel, msdos/screen;
+  its file list describes them as the VGA built-in font). `fetch-bios.sh`
+  fetches the zip from a Simtel mirror and pins its SHA-256
+  (`ee875bb96a5be0cb70f87e1fc3ce85aa4c0c1ed78f958bb8160f9023a25d32a6`),
+  and `mkfont.py` reads the two files out of it. There is
+  no 9x14 alternate set; AH=11h AL=30h BH=5 returns an empty list.
+- **Labelling.** The ROM prints `EGA BIOS: open stand-in for IBM's ROM`
+  after its mode set.
+
+The build is `make -C roms/egabios` (nasm plus a checksum byte).
+`tests/egabios_test.cpp` boots the ROM on the emulated machine with no
+system BIOS and calls INT 10h directly: 26 tests across the header,
+power-on, cursor emulation, pages, characters, scrolling, strings, the
+three graphics families, palettes, fonts and AH=12h.
+
+Writing it turned up an `Ega` bug. The Data Rotate function (AND, OR,
+XOR) applied only to CPU data in write mode 0. On the EGA it applies to
+Set/Reset data and write mode 2 data as well, and IBM's documented XOR
+dots use write mode 2.
+
+The 386-opcode concession for firmware (§7) now covers the system-board
+ROM space, E0000-FFFFF, only. The EGA BIOS runs as plain 286 code.
+
+### 48.2 Renderer (E2-E7, E12, E14)
+
+`ega_render.cpp` is a port of `pc486`'s renderer with the EGA's rules in
+place of the VGA's:
+
+- Start address and the 9-bit Line Compare (CRTC 18h plus Overflow bit 4)
+  in every mode (E2, E4). Preset Row Scan and AR13 pel panning, with the
+  9-dot sequence 8, 0-7 (E3). No byte panning and no pan-split; AR10 has
+  bits 0-3 only.
+- Text rows come from Vertical Display End and Max Scan Line, so the
+  43-line mode draws 43 rows (E5). AR10 bit 3 picks blink or bright
+  backgrounds, and blinking characters and the cursor both toggle every
+  16 frames (E6).
+- SR03 character maps A and B at 16KB banks in plane 2, only map 0
+  without Memory Mode bit 1 (E7).
+- CRTC 17h bits 0 and 1 put row scan bits 0 and 1 on MA13 and MA14, which
+  is how modes 4-6 reach the CGA's interleaved banks (E12). Bit 7 clear
+  holds the CRTC in reset, drawn black.
+- Graphics blink (AR10 bit 3 set): the pixel passes Color Plane Enable,
+  then the blink logic, then the palette (IBM VGA/XGA Technical
+  Reference, May 1992, Figure 2-3 p.2-10; Enable Blink field p.2-93).
+  A pixel with bit 3 set drops it in the off phase. Unsourced: that bit 3
+  is the blinking bit, that the on phase forces bit 3 to 1, and that
+  with plane 3 disabled nothing blinks (the masked bit 3 is 0).
+- Cursor skew and the underline location, with underline only under
+  monochrome attributes (E14).
+- GR05 bit 5 picks the CGA 2-bit shift. Bit 6 and R09 bit 7 (VGA's
+  256-colour shift and scan doubling) and CRTC 0Ah bit 5 (VGA's cursor
+  off) are gone, since nothing on an EGA sets them.
+
+### 48.3 Ports (E8-E10)
+
+- Only CRTC 0Ch-0Fh read back, plus 10h-11h, the light pen latch, which
+  reads 0 with no pen (E8). Everything else reads open bus. 3C1h isn't
+  decoded, and 3CAh and 3CCh are the write-only Graphics 1 and 2
+  Position registers. Programs tell an EGA from a VGA this way.
+- Input Status 0 returns the switch the clock select picks in bit 4 and
+  the vertical interrupt in bit 7 (E9). The interrupt latches at the start
+  of vertical retrace when CRTC 11h bit 5 is clear and bit 4 is set,
+  clears when 11h is written with bit 4 clear, and arrives on IRQ9 (E10).
+
+### 48.4 Screen (E13)
+
+The 5154 is a 4:3 tube in every mode. `app.js` scales each frame by a
+whole factor per axis into a backing canvas and lets the browser smooth
+that to a 4:3 box, so 640x350 and 320x200 both fill the same shape.
+
+### 48.5 Checks
+
+- 356 native tests, including the 26 INT 10h tests and the write mode 2
+  Data Rotate test.
+- The shipped HDD image boots to `C:\>` at 640x350 under the new BIOS.
+- The FreeDOS installer completes under it at cycle 50,177,611,554, and
+  that image boots to `C:\>` too.
+- 46/46 Playwright, including a new check that the boot frame is
+  640x350.
+
+## 49. EGA addressing, latches and the monochrome ports
+
+Items E15-E17 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md), found while
+doing §48.
+
+### 49.1 Odd/even addressing (E15)
+
+`Ega` stored odd/even data by shifting the CPU address right one. The
+EGA keeps the address whole and substitutes a different bit for A0. With
+Graphics Miscellaneous bit 1 set, A0 becomes the inverted page select
+(Miscellaneous Output bit 5), or A16 in the 128KB map. With Memory Mode
+bit 1 clear, each plane is 16KB. Plane selection is split the way the
+card splits it: Memory Mode bit 2 gates writes to the odd or even
+planes, and Graphics Mode bit 4 puts A0 on the read map.
+
+Sources: IBM Personal System/2 Video Graphics Array (VGA/XGA) Technical
+Reference (May 1992, bitsavers `IBM_VGA_XGA_Technical_Reference_Manual_May92.pdf`):
+Graphics Miscellaneous register p.2-86, where the Odd/Even field "directs
+the system address bit, A0, to be replaced by a higher-order bit" and the
+Memory Map field 00 selects A0000 for 128KB; Memory Mode register p.2-54,
+where Extended Memory "enables the video memory from 64KB to 256KB", so
+clear means 64KB total, 16KB a plane.
+
+Unsourced: that the substituted bit is the inverted Miscellaneous Output
+bit 5, that it is A16 in the 128KB map, and the 0x3FFF mask itself. The VGA
+manual leaves Miscellaneous Output bit 5 undefined, and no copy of the IBM
+EGA Technical Reference was available to check these against. The same
+holds for §48.1: the EGA BIOS parameter-table values are unsourced.
+
+The display side is `Ega::display_address()`. In byte mode (CRTC 17h bit
+6) the CRTC address is the plane offset. In word mode it shifts up one,
+with MA15 in bit 0, or MA13 when 17h bit 5 is clear. 17h bits 0 and 1
+clear then put row scan bits 0 and 1 on offset bits 13 and 14. Every renderer path, the page's `textScreen()`
+and the installer's screen reader all fetch through it, so what the CPU
+writes and what the CRTC reads agree by construction, not by both using
+the same shortcut.
+
+With IBM's tables the page bit is always set, so text and modes 4-6 look
+the same as before. Character n of a text page sits at plane offset 2n
+now, not n. A program that turns odd/even off to read text or attributes
+straight from the planes now finds them where a real card keeps them.
+
+Modes 4 and 5 now take a character clock as 4 pels from plane 0 and then
+4 from plane 1, with planes 2 and 3 as the high colour bits.
+
+### 49.2 The Bit Mask merges with the latch (E16)
+
+Bits the Bit Mask leaves out used to come from the byte already at the
+write address. They come from the latch, loaded by the last read wherever
+it was. Code that
+reads first, which includes the BIOS and every well-behaved program,
+gets the same result. Code that doesn't copies the stale latch bits, as
+on the real card.
+
+### 49.3 The monochrome I/O addresses (E17)
+
+Miscellaneous Output bit 0 moves the CRTC and Input Status 1 between 3B4h,
+3B5h and 3BAh and 3D4h, 3D5h and 3DAh (IBM EGA TR). Only the selected set
+is decoded. The register resets to 0, so a bare card answers at 3Bxh until
+the BIOS programs it. With monochrome switch settings (4, 5, A, B) the
+renderer drives a 5151: palette bit 3 is video and bit 4 is intensity
+(EGA TR, Direct Drive Connector), shown on green phosphor. The stand-in
+BIOS's mode 7 now reaches the CRTC and renders 720x350.
+
+No page control sets the switches, so the shipped machine is still the
+Enhanced Color Display. Monochrome is native-only.
+
+### 49.4 Checks
+
+- 364 native tests: A0 and the page bit, the Graphics Mode read select,
+  16KB planes, byte and word display addressing with both row-scan
+  banks, latch merging, the 3Bx/3Dx port switch, a CPU text write landing
+  where the CRTC fetches it, the monochrome palette, and the stand-in
+  BIOS's mode 7 on a monochrome setting.
+- The shipped HDD image boots to `C:\>` and looks as before.
+- The FreeDOS installer, whose screen reader now goes through
+  `display_address()`, completes at the same cycle as in §48.5,
+  50,177,611,554.
+- 46/46 Playwright.
+
+## 50. The 8259A and 8237A in full
+
+Items P4, P6 and P9 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md), plus
+the rest of both chips, which the backlog didn't list. Sources are the
+Intel 8259A data sheet (231468-003) and the Intel 8237A-5 data sheet
+(231466).
+
+### 50.1 The 8259A
+
+The PIC knew fixed priority, normal EOI and the IRR/ISR read, and nothing
+else. Two of its gaps were bugs any DOS program could hit:
+
+- **No fully nested mode.** The resolver only looked at IRR and IMR, so a
+  handler that re-enabled interrupts could take a lower or equal level
+  before its own EOI. "While the IS bit is set, all further interrupts of
+  the same or lower priority are inhibited." The resolver now walks the
+  levels in priority order and stops at the first IS bit. `pc486` fixed
+  the same thing in its §13.
+- **Requests were pulses, not levels.** Devices called `raise()` on a
+  rising edge, and the request stayed in IRR forever. On the chip the
+  request latch is a transparent D latch behind the edge sense latch
+  (Figure 9, "Be sure to note that the request latch is a transparent D
+  type latch"). Devices now drive their IR line with `set_line()`. IRR is
+  the line ANDed with the edge latch, which sets while the line is low and
+  clears when that level's IS bit sets. A line that drops before INTA
+  withdraws its request. If that happens after INT went out, the INTA gets
+  the default IR7 with no IS bit, as in "Edge and Level Triggered Modes".
+  The visible effect: an IRQ0 square wave that rises and falls while the
+  CPU runs with IF clear loses that tick, as it does on the real board.
+
+The rest of the command set is new: rotation on non-specific and specific
+EOI, set priority, rotate in AEOI, special mask mode, special fully
+nested mode, LTIM level triggering, buffered mode's M/S bit, and the
+MCS-80/85 vector byte. The AT never programs most of these, but programs
+that take over the PIC do.
+
+Special mask mode needs one reading of the data sheet. It says a masked
+level "enables interrupts from all other levels (lower as well as
+higher)", and that "an IS bit that is masked by an IMR bit will not be
+cleared by a non-specific EOI" in that mode. Both hold if the priority
+logic sees ISR ANDed with the inverse of IMR, so that is the model, for the
+resolver and for the EOI alike.
+
+**P4, poll.** OCW3 with P=1 makes the next read of either port an
+interrupt acknowledge. It returns bit 7 set and the level in bits 2-0,
+and sets the IS bit. "Polling overrides status read when P = 1, RR = 1."
+With nothing pending, the data sheet only defines bit 7 as 0, so the
+other bits read 0 here.
+
+**P6, ICW1.** The data sheet lists what ICW1 resets: the edge sense
+latches, IMR (cleared, not masked), IR7 to lowest priority, the slave
+address to 7, special mask mode, the read select back to IRR, and every
+ICW4 function when IC4=0. The old code cleared IRR and ISR and nothing
+else. All of the list is now done, and IRR follows from the edge sense
+reset: a line already high has to fall and rise again.
+
+ISR isn't on Intel's list, and Figure 9 doesn't run master clear to the
+IS latch. Leaving it set broke Ctrl+Alt+Del, though. The stand-in BIOS's
+INT 9 handler jumps to POST without an EOI. POST's ICW1 left IRQ1 in
+service, that blocked IRQ6, and the reboot hung at "Booting from
+Floppy...". So ICW1 clears ISR here. That's an inference from how the
+stand-in BIOS warm-boots, not something
+Intel documents. A real 8259A's answer, or IBM's AT BIOS listing showing
+whether its CAD path sends an EOI, would settle it.
+
+Left out: the MCS-80/85 sequence's third INTA, which a 286 never sends,
+so AEOI does nothing in that mode and the chip isn't left waiting for
+the pulse.
+
+### 50.2 The cascade
+
+`Chipset::poll_interrupt()` runs one INTA sequence the way the board
+wires it. The slave's INT pin is the master's IR2 line. The master's
+`cascades()` checks its ICW3 bitmap, so IR2 vectors through the slave
+only when ICW3 says so. The slave answers only when its ICW3 ID matches
+the CAS code; a mismatch leaves the data bus undriven, read as FFh. The
+slave can give its own default IR7 (vector 77h on the AT) when its
+request is gone by the time the master forwards INTA.
+
+"If a higher priority interrupt occurs between the two INTA pulses, the
+INT line goes inactive immediately after the second INTA pulse." The
+slave's INT therefore drops after each sequence, which re-arms the
+master's IR2 edge latch. Without that, an IRQ8 arriving while IRQ14 is in
+service would never reach the CPU after both EOIs.
+
+### 50.3 The 8237A
+
+The DMA controller had the register file, and the FDC copy indexed
+`mem[(addr + i) & 0xFFFFF]` with the page register ORed into a 20-bit
+address.
+
+**P9.** The 8237's Current Address register is 16 bits, and the AT's page
+register is a separate 74LS612 that never counts. A transfer crossing a
+64KB boundary wraps to the bottom of the same page. This is why DOS's
+DMA boundary checks exist. The copy now runs one transfer cycle per byte
+through `Dma8237::transfer()`, and the 24-bit address goes to the bus
+behind the A20 gate. DMA drives the address lines itself, so the gate
+doesn't apply, and a page above 0Fh reaches memory above 1MB (none is
+fitted yet, P8) rather than wrapping onto low memory. DMA into the EGA
+window now goes through the EGA's planar logic, as a real write would.
+
+The rest of the chip:
+
+- **Transfer type.** Write (I/O to memory), read (memory to I/O) and
+  verify come from the mode register. "Verify transfers are pseudo
+  transfers ... the memory and I/O control lines all remain inactive." A
+  BIOS verify used to copy the sector into RAM. When the mode and the
+  FDC's direction disagree, no data moves.
+- **Terminal count.** TC sets the channel's status bit and clears its
+  software request. Without autoinitialize it sets the mask bit; with it,
+  the base address and count reload and the mask stays. TC is also EOP,
+  so the FDC's transfer stops there.
+- **Decrement**, from mode bit 5.
+- **Base registers**, written alongside the current ones and never
+  changed by a transfer.
+- **Status.** Bits 0-3 are the TC latches, cleared by the read. Bits 4-7
+  are live DREQ ORed with the request register.
+- **Command register** bit 2 disables the controller.
+- **Master clear and reset** clear command, status, request, temporary
+  and the flip-flop, and set all four mask bits. They no longer zero
+  address, count, mode and the page registers, which aren't on Intel's
+  list (the page registers aren't even in the 8237).
+- **Write-only registers.** The mask register isn't readable on an 8237A
+  (Figure 6 lists those reads as illegal), so port 0Fh reads FFh, not the
+  mask. Port 0Dh reads the temporary register.
+
+Two pieces of AT wiring come with it. DMA1's HRQ goes to DMA2's channel 0
+(system channel 4), so DMA1 transfers only while that channel is in
+cascade mode and unmasked, and DMA2 is enabled. The stand-in BIOS sets
+this up in POST. The FDC's DRQ is gated by DOR bit 3, like
+its INT (IBM PC/AT Technical Reference, diskette adapter).
+
+Not modelled: software-requested block transfers and memory-to-memory,
+since nothing on this board starts one; command bits 3, 5, 6 and 7
+(compressed timing, extended write, DREQ and DACK polarity); rotating
+DMA priority, with only one active channel. These are P11 in the parity
+doc.
+
+### 50.4 The FDC drops INT on reset
+
+Levels exposed a bug in `Fdc765`. Holding it in reset through the DOR
+left INT high, so after the reboot above IRQ6 never fell, and the
+re-initialized PIC never saw an edge. "The RESET input places the FDC in
+the idle state. ... INT and DRQ also go low" (NEC uPD765A data sheet).
+Reset now clears both.
+
+### 50.5 Checks
+
+- 407 native tests (364 before): the 8259A suite (fully nested
+  blocking, edges and lost requests, default IR7, LTIM, poll on both
+  ports, every OCW2 rotation, special mask and special fully nested, the
+  ICW1 reset list, single mode, buffered M/S, the MCS-80 vector), the
+  8237A suite (page wrap, decrement, autoinit, status, TC mask, verify,
+  disable, master clear, the write-only mask, DMA2's port aliasing), and
+  chipset cases for the 64KB wrap, verify, the A20 gate, the DMA2 cascade
+  gate, DOR bit 3, slave nesting, the slave's default IR7, ICW3 and the
+  CAS ID, a timer tick lost under CLI, and the FDC reset edge.
+- The shipped HDD image boots to `C:\>`, and the FreeDOS floppy boots to
+  the installer.
+- The FreeDOS installer completes at cycle 50,177,611,554, the same as
+  §49.4.
+- 47/47 Playwright, including the Ctrl+Alt+Del reboot that caught §50.1's
+  ISR question.
+
+
+## 51. Storage: the WD1003 command set, FORMAT on both controllers, the data rate
+
+Items S1-S4 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md). Sources are
+the WD1003-WA2 OEM manual (preliminary, 3/06/86, bitsavers
+`pdf/westernDigital/pc_disk_controller/WD1003/`), the Seagate ST4038
+product manual (36012-001D, 3/86, bitsavers `pdf/seagate/mfm/ST-4038/`)
+and the NEC uPD765A data sheet. The WD1003-WA2 is the combined
+Winchester and floppy board, so its manual covers 3F2h, 3F6h and 3F7h as
+well as the task file.
+
+### 51.1 The WD1003 command set (S1)
+
+Table 5-1 lists eight commands: Restore 1xh, Seek 7xh, Read Sector 20h,
+Write Sector 30h, Format Track 50h, Read Verify 40h, Diagnose 90h and Set
+Parameters 91h. The first four and Set Parameters were here. New:
+
+- **SEEK** completes with an interrupt, like RESTORE.
+- **READ VERIFY** reads the sectors without sending data to the host,
+  with "a single interrupt ... upon completion of the command". It's
+  paced at the disk rate like a read. Past the end of the disk it reports
+  IDNF.
+- **FORMAT TRACK** takes a 512-byte buffer holding a (flag, sector
+  number) pair per sector. "Command completion will leave all data
+  fields initialized to zeroes. The completion interrupt is generated
+  after each track has been formatted." It takes one revolution: the
+  ST4038 spins at 3,600 RPM (product manual 1.3), so 16.7 ms.
+- **DIAGNOSE** puts 01h ("no errors") in the error register, sets the
+  write precomp register to 32, the sector count to 1, and the cylinder
+  and SDH registers to 0, then interrupts.
+
+**Bad blocks.** A flag of 80h in the format table marks that sector bad.
+Read, verify and write then stop at it with BB (error bit 7), after
+moving any sectors before it. A raw image has nowhere to store the mark,
+so marks live in memory only. They survive a reset, and a remount or page
+reload clears them.
+
+**Write precomp.** Writing 1F1h loads the write precomp register, which
+is separate from the error register you read there (Figure 6-1). Before,
+the write landed in the error register and read back as an error code.
+
+**IDENTIFY.** ECh is an ATA command, and a real WD1003 aborts it. It stays
+because the stand-in BIOS's `ata_detect()` sizes the drive with it. The
+code says so where the command is dispatched.
+
+**Long mode.** The L bit (22h, 23h, 32h, 33h) sends 512 data bytes plus 4
+ECC bytes. The manual gives the polynomial but not the seed or the bit
+order, and the image can't hold a bad ECC that WRITE LONG put there. These
+codes still abort. They're open as S6.
+
+### 51.2 Per-sector read interrupts and the IEN latch
+
+Two more from the same manual, both under READ SECTOR and the Fixed Disk
+register:
+
+- "Interrupts occur as each sector is ready to be read by the system. No
+  interrupt is generated at the end of the command." The controller now
+  reads a sector (BSY), raises DRQ and IRQ14, and starts on the next one
+  once the host has drained the buffer. Before, a multi-sector read was
+  timed as one block and raised a single interrupt. The stand-in BIOS
+  waits for BSY to clear between sectors (`ata_cmd_data_io()`), so it
+  follows along.
+- WRITE SECTOR still commits the whole request at once and interrupts at
+  the end. The manual interrupts per sector there too, but the BIOS's
+  write loop checks for DRQ right after each `outsw` without waiting for
+  BSY, so a per-sector BSY would fail it. That stays a labelled concession.
+- IEN- (3F6h bit 1) "does not clear the interrupt level in the disabled
+  state. A pending interrupt would occur when the interrupt is enabled
+  again." The controller now latches the interrupt whatever IEN- says, and
+  IEN- only gates the line. Before, a command finishing with IEN- set
+  dropped its interrupt for good.
+
+### 51.3 FORMAT on the floppy (S2)
+
+FORMAT A TRACK answered at once with no data and no interrupt. The
+stand-in BIOS's INT 13h AH=05h waits for IRQ6, so every format timed out.
+Now it runs as the data sheet describes. DMA supplies C, H, R and N for
+each sector (4 x SC bytes, mode 4Ah from the BIOS), the data fields are
+filled with the D byte, and the result phase and IRQ6 follow one
+revolution later (index to index): 1/6 s in the 360 RPM A: drive, 1/5 s
+in the 300 RPM B: drive.
+
+Where the sectors land needs one call. The 765 formats the track under
+the head, and the IDs it writes are whatever the table says. The stand-in
+BIOS never seeks before AH=05h. On this FDC the first run put all 40
+cylinders of a FreeDOS FORMAT onto cylinder 0. A raw image can only hold
+a sector at its ID's address, though, and READ DATA here already finds
+sectors by the C/H/R it's given rather than by head position. So each
+sector goes where its ID says, the one placement the image can represent.
+IDs off the image's geometry, or with N other than 2, are skipped.
+
+### 51.4 The data rate (S3)
+
+3F7h, when written, is the Floppy Control register: 00 = 500 kbps, 01 =
+300, 10 = 250, 11 = 125 kbps FM, with 500 kbps the default after reset
+(WD1003-WA2 manual, Table 6-2). It was dropped. It's now latched and
+cleared to 500 kbps by reset.
+
+It isn't enforced. The stand-in BIOS never writes 3F7h. Its media sense
+fills in the BDA's media state from the CMOS drive type and never touches
+the register. With the check, B: and any 360KB disk in A:
+would never read. Transfers keep pacing at the media's real rate, not the
+latched one. Pacing at 500 kbps would read a 360KB disk twice as fast as a
+real AT. The strict check is open as S7.
+
+### 51.5 IRQ6 and DOR bit 3 (S4)
+
+"FDMAEN ... Setting this bit to 1 gates floppy disk DMA and interrupt
+requests to the I/O interface. Setting to 0 disables the DMA and interrupt
+request drivers" (Table 6-2). The FDC's own INT is unaffected, so an
+interrupt raised with the bit clear shows up when it's set. `Fdc765` now
+gates its IRQ output with the bit, the same way §50.3 gated DRQ, and
+holds INT internally. Before, a seek or a reset raised IRQ6 with the bit
+clear, and a transfer that finished with it clear lost its interrupt.
+
+### 51.6 Drive B: was invisible to DOS
+
+Testing S2 from the page turned up an older bug. CMOS 14h is the
+equipment byte, and `rombios.c` copies it straight into the BDA equipment
+word at 40:10. The factory CMOS set it to 01h: diskettes fitted, bits 7-6
+= 00, which means one drive. DOS therefore treated B: as a phantom of A:
+("Remove diskette in drive A:"), and no disk in B: ever read. It's now
+41h: two drives, and bits 5-4 = 00 for a display adapter with its own
+BIOS, the EGA. Source: IBM PC/AT Technical Reference, CMOS equipment byte.
+§8 describes the original 01h, which was only checked for "a floppy is
+installed".
+
+### 51.7 What FreeDOS FORMAT does now
+
+`FORMAT B: /U` on a blank 360KB disk runs all 80 tracks through INT 13h
+AH=05h and reaches "100 percent completed". It then writes the boot
+sector, which reads back (`DIR B:` shows the new serial number). The next
+write, the first FAT sector, comes back from INT 26h with 0207h. FORMAT
+retries with AL | 80h, and the kernel rejects that as unit 81h ("unknown
+unit for driver"). In the FreeDOS kernel, `blockio()` returns that code
+when the sector is past the drive's BPB size, so the kernel's BPB for the
+new disk is wrong. That's the kernel, and possibly the stand-in BIOS's
+INT 13h AH=08h, 15h and 16h answers (AH=16h always says "changed"), not
+the controller. It's open as S5.
+
+### 51.8 Checks
+
+- 424 native tests (407 before): WD1003 SEEK, READ VERIFY timing and
+  IDNF, DIAGNOSE, the precomp register, per-sector read interrupts and
+  the BSY gap between sectors, FORMAT TRACK's timing and zero fill, bad
+  blocks on read, verify and write, bad blocks cleared by a reformat and a
+  remount, the IEN- latch, and Long mode aborting. FDC FORMAT timing in
+  both drives, fill, ID placement and skipped IDs, the data-rate latch,
+  and DOR bit 3 holding INT. A chipset case formats a track through DMA
+  mode 4Ah and takes IRQ6. The machine test checks 14h = 41h.
+- `COPY` to and `DIR` of a disk in B: work.
+- The FreeDOS installer completes at cycle 50,167,844,209, 9.8 million
+  cycles (0.02%) earlier than §50.5's 50,177,611,554. Only the hard disk's
+  timing changed on that path (§51.2), and the change wasn't attributed
+  any further.
+- 48/48 Playwright, including a new `FORMAT B:` test that checks the fill
+  byte on the last track.
+
+## 52. Storage: ECC and Long mode, the turning platter, and FreeDOS FORMAT
+
+Items S5, S6 and the rotation half of S8 from
+[`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md). New sources: the WD2010-05 and
+WD11C00-13 data sheets in WD's 1986 Storage Management Products Handbook
+(bitsavers `components/westernDigital/_dataBooks/`), the FreeDOS FORMAT
+source (`FDOS/format`, `createfs.c` and `hdisk.c`), and a 5170 owner's
+notes on the IBM adapter (retrocmp.de, `ibm/5170/5170-t3.htm`).
+
+### 52.1 The ECC (S6)
+
+The WD1003-WA2 puts its data-field ECC in a WD11C00, a 32-bit shift
+register with the polynomial x^32+x^28+x^26+x^19+x^17+x^10+x^6+x^2+1.
+The WD11C00 sheet gives the rest. The register is preset to FFFFFFFF
+before the A1 F8 data mark, "As the first data byte is reached, the
+polynomial control logic will have generated ECC bytes B517894A", and it's
+read out most significant byte first. A plain MSB-first shift of A1 F8
+from FFFFFFFF gives exactly B517894A, which pins the bit order. Data plus
+its four ECC bytes leaves a zero syndrome. `Wd1003::data_ecc()` is that
+register, and a test checks it against a value computed separately.
+
+### 52.2 READ LONG and WRITE LONG
+
+With the L bit set (22h, 23h, 32h, 33h), "no ECC or CRC characters are
+generated or checked ... the 4 ECC bytes are handled as an additional 4
+bytes of data" (WD2010 sheet). They're sent a byte at a time after the 512
+data bytes (WD1003 manual 5.2.3). READ LONG returns the sector's recorded
+ECC. WRITE LONG records the host's four bytes. If they don't match the
+data, the mismatch is kept per sector in memory, like the bad-block marks,
+since a raw image only holds data. A normal write, a FORMAT TRACK of that
+track, or a remount clears it.
+
+### 52.3 Correction
+
+A normal READ or READ VERIFY of a sector whose recorded ECC doesn't match
+works out the syndrome. "Data errors up to 5 bits in length will be
+automatically corrected", and "For ECC errors, eight Read retries are made
+... ECC correctable data errors are corrected after two consecutive
+matching ECC syndromes" (WD1003 manual 5.2.3, 5.2.6). So:
+
+- **Correctable.** If some burst of 5 bits or less anywhere in the 516-byte
+  record gives that syndrome, the controller rereads once (one
+  revolution), flips those bits in what it hands over, and sets CORR,
+  status bit 2. The data on the platter is left as it is, the same as on
+  the drive.
+- **Uncorrectable.** After eight rereads (eight revolutions) it sets ERR
+  and error bit 6. "If an uncorrectable error occurs, the data transfer
+  will still take place. A multi-sector read, however, will terminate
+  after the sector in error is read by the system." READ VERIFY stops
+  there too.
+
+The search tries every start bit and the 16 bursts that begin there, and
+it's linear in the syndrome, so a table of single-bit syndromes is enough.
+
+The manual's text on the T bit is garbled in the scan ("verify the sector
+for ten disk revolutions, if T is set to 1"). The reading used here: T
+limits the WD2010's ID search (10 revolutions, 2 with T set, before IDNF),
+and the eight ECC rereads happen either way. The WD2010 sheet describes T
+on the bare chip, where it stops correction entirely. The WD1003's
+firmware does its own correction, so that doesn't carry over.
+
+One conflict: the WD2010 sheet says FORMAT fills data fields with FFh,
+and the WD1003 manual says the board leaves them zeroed. The board manual
+is the product being modelled, so it's still zeroes.
+
+### 52.4 The platter turns (S8, rotation)
+
+The disk used to read every sector in a fixed 0.82 ms. Now the platter's
+angle follows the cycle count at 3,600 RPM, with index at angle 0 and 17
+sector slots a track. A read waits until its sector's slot has passed
+under the head, so a single sector takes anywhere from one slot to one
+revolution plus a slot, depending on where the platter is.
+
+Which slot a sector sits in is the interleave. The owner's notes say the
+IBM adapter's "default interleave is 3", and that it can't go below 2:1,
+so the factory layout is 3:1, sector r in slot 3(r-1) mod 17. FORMAT TRACK
+replaces that per track with the table's order, and a sector left out of
+the table has no ID, so reading it searches for 10 revolutions and then
+reports IDNF. A test shows why AT drives weren't formatted 1:1. With the
+next sector in the very next slot, the host can't empty the buffer in
+time, and a two-sector read costs a whole extra revolution.
+
+Writes still commit at once, for the BIOS reason in §51.2. Seeks are still
+instant, which is the other half of S8 and stays open.
+
+### 52.5 FreeDOS FORMAT (S5)
+
+A trace of every INT 13h, 25h, 26h and 21h/44h call during `FORMAT B:`
+settled §51.7. FORMAT writes the boot sector itself with INT 13h AH=03h,
+which succeeds. Then the first INT 26h returns 0207h without the kernel
+issuing any INT 13h, so no hardware is involved. The kernel has never
+built a drive parameter block for B:, and its FAT32 guard in
+`int2526_handler()` rejects the write.
+
+FreeDOS 1.3 ships FORMAT 0.91v (`FORMAT.EXE` dated 2017-09-19). FORMAT's
+own source calls `Force_Drive_Recheck()` (INT 21h AH=0Dh and AH=32h) right
+after writing the boot sector, with this note: "from 0.92, if we don't do
+this then formating changes floppy disk paramters then first time
+attempting to format can fail if no previous format". The trace shows no
+AH=0Dh or AH=32h. With DOS having read B: once first, FORMAT 0.91v runs to
+"Format complete" with 368,640 bytes total, on this emulator as it would
+on an AT. It's a FreeDOS bug fixed upstream, not an emulator gap.
+
+### 52.6 Checks
+
+- 435 native tests (424 before): the WD11C00 generator against an
+  independent value, READ LONG returning data then its ECC, WRITE LONG
+  with a matching ECC, a 5-bit burst corrected after one reread with CORR
+  set, a two-place error left uncorrectable after eight rereads with the
+  data still delivered, a multi-sector read stopping after it, READ VERIFY
+  correcting and reporting, a normal write and a remount clearing a
+  stored ECC, the 3:1 factory interleave in READ VERIFY's timing, a read
+  waiting for its sector, the busy time to the next sector, FORMAT
+  starting at index, the 1:1 interleave miss, a sector left out of the
+  format table, and the 10-revolution IDNF search.
+- The FreeDOS installer completes at cycle 59,543,817,039, up from
+  §51.8's 50,167,844,209. That's about 19.5 emulated minutes more, all
+  reads waiting for their sectors at 3:1.
+- The shipped image boots to `C:\>` at 57.3 s of emulated time, 54.9 s
+  before.
+- 48/48 Playwright. The `FORMAT B:` test now runs the whole command: DIR,
+  FORMAT, "Format complete" with 368,640 bytes, the BLANK label, and the
+  fill byte on the last track.
+
+## 53. Keyboard and RTC: the keyboard's buffer, typematic, commands, and a ticking clock
+
+Items K1-K5 and R1 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md). Most
+of it ports `pc486` (`PC486_REVIEW.md` §40.1-40.2), with the AT's own
+differences. New sources: the IBM Keyboard Technical Reference (6523261,
+as quoted on geekhack, "Rollover, where keyboard data might go"), HelpPC's
+8042 page for the AT input port and command byte, and Chapweske's "The
+AT-PS/2 Keyboard Interface" for the link timing.
+
+### 53.1 The keyboard holds its own bytes (K1)
+
+`push_output()` wrote every keyboard byte straight into the 8042's single
+output register, so a second byte before INT 9 read the first destroyed
+it, and the page spaced each byte 20 ms apart on its own timer. Two keys'
+timers could interleave, which is how `pc486` got stuck keys.
+
+The real keyboard has "a 16-byte first-in-first-out (FIFO) buffer ... that
+stores the scan codes until the system is ready to receive them". The
+model now has that buffer, and each byte crosses the link as an 11-bit
+frame, 825 us at the middle of Chapweske's 10-16.7 kHz clock range. A byte
+only starts when the output register is empty and the controller isn't
+holding the clock low (command byte bit 4, which ADh and AEh set and
+clear). Three things follow:
+
+- IRQ1 drops when INT 9 reads port 60h and rises again a frame later, so
+  every byte is a new edge for the edge-triggered 8259. Delivering the
+  next byte on the read itself would have held the line high and lost the
+  interrupt.
+- The Bochs INT 9 handler brackets its read with ADh and AEh. A key
+  pressed inside that window waits in the keyboard. Before, it was
+  dropped.
+- "An overrun code replaces byte 17. If more keys are pressed before the
+  system allows keyboard output, the additional data is lost." The code
+  is Set 2's 00h, which the 8042 translates to FFh.
+
+A response to a command (ACK, echo, ID, BAT) goes ahead of buffered keys,
+and the controller takes it even with the clock inhibited, since it's
+waiting for it. A command written while a key byte is in flight restarts
+that byte. The controller's own answers (55h, the command byte, the ports)
+still go straight into the register with no link delay.
+
+The page now puts each sequence in at once (`injectScancodeSequence` is a
+plain loop) and the keyboard paces it. The F-key buttons keep their 50 ms
+make-to-break gap, which is a human press, not a workaround.
+
+The BAT itself still arrives one frame after power-on, not after the real
+self-test's few hundred milliseconds.
+
+### 53.2 Typematic (K2)
+
+Ported from §40.2: the most recently pressed key repeats after 500 ms at
+10.9 cps, `F3` changes both, `F5`, `F6` and `FF` restore them, a grey key
+repeats with its `E0`, Pause never repeats, and a break matched on its
+code alone ends the repeat. The timing runs in cycles against the 8 MHz
+clock. One AT-specific rule from 6523261: "If a key is pressed and held
+down while keyboard transmission is inhibited, only the first make code is
+stored in the buffer", so no repeats are generated while the clock is held
+low.
+
+The repeat period `(8+A) * 2^B * 4.17 ms` (+-20%) and the 250 ms delay steps
+come from the IBM PC AT Technical Reference (6139362, Sep 1985) p.4-7,
+"Set Typematic Rate/Delay (Hex F3)".
+
+The page drops the browser's `keydown` repeats and tracks held keys.
+Leaving the screen (blur, or the tab hiding) sends a break for each, or a
+key whose `keyup` went elsewhere would repeat forever.
+
+The Bochs BIOS doesn't implement INT 16h AH=03h (AH=09h reports it
+absent), so `MODE CON RATE=` has no effect under the stand-in. Software
+that sends `F3` itself works.
+
+### 53.3 Keyboard commands (K3)
+
+`ED` and `F3` ACK their argument too, and a command byte (bit 7 set) in
+place of an argument runs as a command. `EE` echoes `EE`. `F2` answers
+`FA AB 41`, the Enhanced Keyboard's `AB 83` with the 8042 translating 83h
+to 41h; the 339 shipped with the Enhanced Keyboard. `F4` clears the buffer
+and starts scanning, `F5` restores defaults, clears the buffer and stops
+scanning, `F6` restores defaults and clears the buffer. `F7`-`FD` (Set 3
+key types) are ACKed. `FE` resends the last byte the keyboard sent. `FF`
+ACKs, resets and sends `AA`. Anything else gets `FE`. `F0` takes its
+argument but sets nothing, since only Set 1 is modelled. LED state is
+held, not shown on the page.
+
+### 53.4 Status bit 4 and the keylock (K4)
+
+Status bit 4 is the front-panel keylock, 1 = not inhibited (HelpPC, "1=
+keyboard enabled, 0=keyboard disabled (via switch)"). It read the other
+way, tied to ADh. It now reads 1, since the keylock is open. ADh and AEh
+set and clear command byte bit 4 instead of a private flag, so writing
+the command byte directly has the same effect, as on the chip. The keylock
+itself isn't a control on the page yet. `pc486` still has the inverted
+bit.
+
+### 53.5 Input port and test inputs (K5)
+
+`C0` returns BFh: keylock open (bit 7), colour display (bit 6 low, the
+EGA drives an Enhanced Color Display), no manufacturing jumper (bit 5),
+512KB on the system board (bit 4, "1=enable 2nd 256K"), and bits 0-3 high,
+since they're unconnected and the 8042's quasi-bidirectional port pulls
+them up. `E0` returns T0 (keyboard clock) and T1 (keyboard data): 03h
+idle, 02h while the controller holds the clock low.
+
+### 53.6 The RTC ticks (R1)
+
+`CmosRtc` is §40.1's MC146818A: its own 32.768 kHz time base in guest
+time, UIP 244 us before each update, the 1984 us update, BCD and binary,
+12- and 24-hour, SET, the divider's half-second, the every-fourth-year
+leap rule, the alarm's don't-care bytes, the periodic rate from register
+A, and IRQ8 on slave line 0 while an enabled flag is set, until register C
+is read. It stays 64 bytes, the 5170's part, so 40h-7Fh alias 00h-3Fh.
+
+The old part also never ran `reset()` in the live machine. Registers A, B
+and D read 00h, so the divider was off, the clock was in 12-hour mode and
+the battery-good bit was clear. The constructor now resets it.
+
+Each power-on loads the visitor's local time (`Machine.setRtc` from
+`app.js`), since a real AT's battery kept the clock running. Native
+harnesses start at 1986-01-01 00:00:00, a Wednesday.
+
+### 53.7 Checks
+
+- 472 native tests (435 before). The 8042 suite (33) covers the link
+  delay, IRQ1 dropping between bytes, the inhibit holding keys, responses
+  jumping the queue, the overrun on byte 17, each keyboard command, the
+  input port, the test inputs, status bit 4, and the typematic cases,
+  including held keys under inhibit. The RTC suite (19) is `pc486`'s at
+  8 MHz with the 64-byte alias and the power-on registers. `chipset_test`
+  checks the periodic interrupt reaching IRQ8 and register C dropping it.
+- Bochs POST gets through `keyboard_init` (POST code 77h).
+- 52/52 Playwright. New: a held key repeats at the prompt and stops on
+  release, browser repeat events don't reach the guest, leaving the screen
+  stops a held key, and `DATE` shows today's date (`rtc.spec.ts`).
+- The FreeDOS installer run (`make hdd-image`) wasn't repeated. Its
+  `SendKey` waits 2.5 ms between make and break, well over a frame.
+
+## 54. Test parity: a smoke boot, the thin native suites, every control, and coverage
+
+Items X1-X4 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md). X5 waits on
+C10.
+
+### 54.1 Smoke boots and types (X1)
+
+`smoke.spec.ts` only measured real-speed pacing, which needs the machine
+running but not booted. It now also boots to `C:\>` under the fast-test
+multiplier, types `ECHO SMOKE` and waits for COMMAND.COM's output on its
+own line: a boot plus one real interaction, as the smoke rules ask. The
+real-speed check stays.
+
+### 54.2 Test typing repeated keys
+
+The first run of that case printed `veer` for `VER`. The `tap()` helper
+sent a key's make, waited 40 ms of wall time, then sent its break. Under
+`fast=1` that's about 800 ms of guest time, past the keyboard's 500 ms
+typematic delay (§53.2), so the key repeated whenever a frame boundary
+landed in the gap. The keyboard was right; the helper was holding the key
+down. `tap()` now injects make and break in one call and lets the
+keyboard pace them, so a tap lasts the same guest time at any multiplier.
+Earlier specs didn't notice because they only waited for a prompt.
+
+The page's own F-key buttons hold for 50 ms, a human press at real speed
+(§53.1). Under `fast=1` that also repeats, so the button tests check the
+bytes each button sends, and the end-to-end check uses keys where a
+repeat is harmless.
+
+### 54.3 Native suites (X2)
+
+- `machine_test` (13): RTC IRQ8 reaches a CPU handler at vector 70h
+  through the slave and the master's IR2, with the AT BIOS's ICWs, ten
+  times in 10 ms at 1024 Hz. Leaving out either PIC's EOI stops it after
+  one, since that PIC's in-service bit holds the next.
+- `fdc765_test` (20): SEEK takes 3 ms a cylinder on the 1.2MB drive with
+  the drive-busy bit up and reports the new PCN, SENSE DRIVE STATUS shows
+  track 0 only at cylinder 0, READ ID returns the cylinder under the head,
+  a multi-sector read runs R to EOT on head 1, a 360KB disk transfers at
+  half the 1.2MB rate, and a DOR reset abandons a transfer in progress.
+
+### 54.4 Every control (X3)
+
+- `hddLed`: lights during the boot, stays dark at an idle prompt, lights
+  for a `DIR` of an unread directory, and goes out at power-off.
+- Floppy LEDs had no test either. A:'s lights for `DIR A:` and goes out
+  when the BIOS stops the motor, and B:'s stays dark. A:'s motor is still
+  running down from the boot probe when the prompt first appears, so the
+  test waits for it first.
+- The F-key and extra-key rows: each button sends its exact Set 1 make
+  and break (`E0` pairs, Print Screen's four-byte sequences, Pause's six
+  bytes with no break), and the test fails if a button is added without
+  an entry. F3 recalls the last line in COMMAND.COM, and Home and End
+  move its cursor. Esc is covered in `fullscreen.spec.ts`.
+- **Upload image** was only checked for its disabled state. A full-size
+  image with a marker in its last sector mounts at the next power-on and
+  boots, and a wrong-size file gets the geometry alert and isn't mounted.
+
+### 54.5 Coverage (X4)
+
+No figures were recorded before this backlog started, and the native
+code has changed under every section since, so this is the first
+baseline, not a before-and-after.
+
+- Native (`make coverage`, llvm-cov): 89.3% lines, 79.8% branches, 94.1%
+  functions over the chip and machine sources (88.7% / 79.3% without
+  §54.3's tests). `fdc765.cpp` went from 86.9% to 94.6% lines. The
+  weakest file is `cpu80286.cpp`, at 74.6% lines and 68.6% branches.
+- `app.js` (`make -C web coverage`, V8): 85.0% lines, 71.7% branches,
+  81.1% functions.
+
+### 54.6 Checks
+
+- 480 native tests (472 before).
+- 62/62 Playwright, run once with coverage on one worker. The new cases
+  also passed three times each on three workers.
+
+## 55. CPU test coverage, and four bugs it found
+
+Every reachable region and function in `cpu80286.cpp` now runs under a
+test. Writing them turned up three behaviour bugs and one measurement bug.
+
+### 55.1 The coverage report skipped the timing suite
+
+`make coverage` ran every unit-test binary except `cpu80286_timing_test`,
+which wasn't in the Makefile's `UNIT_TESTS` list. Its runs counted for
+nothing, so §54.5's CPU figure was low. With it added, the starting point
+for this section was 77.0% lines and 70.9% branches.
+
+### 55.2 AAA and AAS used the 8086's arithmetic
+
+"On the 80286 and later processors, the first addition is performed on AX
+instead of AL, incrementing the AH register if a carry is generated out of
+AL. ... If AX contains 00FFh, executing AAA on an 8088 will leave AX=0105h.
+On an 80386, the same operation will leave AX=0205h" (Hummel, PC Magazine
+Programmer's Technical Reference: The Processor and Coprocessor, AAA). The
+core added 6 to AL alone. AAA now adds 106h to AX. AAS now takes 6 from AX
+and then 1 from AH, as in the Intel SDM's pseudo-code. Hummel's note
+covers AAA only, and the AAS change rests on the SDM and on the two
+instructions sharing the change. Valid ASCII digits give the same result
+either way. Only an out-of-range AL (FAh-FFh for AAA, 00h-05h for AAS)
+tells the two apart.
+
+### 55.3 16-bit IDIV of -2^31 by -1
+
+The 16-bit IDIV computed `int32 / int16` in C++, and `INT32_MIN / -1`
+overflows. ARM returns INT32_MIN, which then failed the quotient check and
+raised #DE as a 286 does, so the native tests passed. wasm's `i32.div_s`
+traps on that overflow, so in the browser a program dividing DX:AX =
+8000:0000 by FFFFh would have aborted the module. The divide now runs in
+64 bits. The 32-bit form had the same problem with `INT64_MIN / -1` and
+now checks for it first.
+
+### 55.4 LOOPE and LOOPNE timing
+
+Not taken, LOOPNE cost 5 clocks and LOOPE 6. Both are 4 on the 286
+(HelpPC 2.10, LOOPE and LOOPNZ: "no jump 5 4 ? 6" for the 8086, 286, 386
+and 486). The old numbers were the 8086 and 486 columns. All four loop
+instructions now cost 4 when not taken. TOPBENCH (§47.4) wasn't re-run;
+none of its tests are built on these loops.
+
+`FE /2` to `FE /7` still do nothing. That's open as C13, without a test,
+so the current behaviour isn't locked in.
+
+### 55.5 What the tests cover
+
+Twelve real 286 instructions had never run in any test: CBW, CWD, SAHF,
+LAHF, CMC, STD, XLAT, WAIT, XCHG r/m16, TEST AX imm16, PUSH imm8 and POP
+r/m16. Line coverage hid them. In the long `else if (op == ...)` chain the
+test and the body share a line, so the line counted as covered even when
+the body never ran. Branch coverage showed it. The new tests also cover
+BCD adjusts in every carry state, every rotate both ways in all three
+widths, the Jcc conditions, LOOPE and LOOPNE, the group 3 and group 5
+forms in register and memory, the divide errors on both sides, DF=1
+strings, REP with CX=0, a fault in the middle of a REP, REP INS yielding
+and resuming, the descriptor-table operand checks, and the 0x66 forms the
+BIOS ROM uses.
+
+Three conditions could never be false, so they're gone: the `is_rep`
+re-test at the bottom of both REP loops, the lower bound of the INC, DEC,
+PUSH and POP ranges (every lower opcode is dispatched first), and
+`string_op`'s `default`.
+
+### 55.6 Checks
+
+- 548 native tests (480 before). `cpu80286.cpp`: 100% regions and
+  functions, 99.5% lines, 99.7% branches. The 6 lines are closing braces
+  after a `break`, which llvm-cov counts as separate regions. The 4
+  branches are C13, a switch with no default whose reachable opcodes all
+  have a case, and the prefetch model's safety net in `prefetch()`, which
+  only fires if a control transfer forgets `flush()`.
+- All native: 97.8% lines, 93.9% branches.
+- Playwright smoke, boot, keyboard and floppy specs (25) pass on the
+  rebuilt wasm, including FreeDOS FORMAT B:.
+
+## 56. The last flat instruction costs
+
+Items T10-T12 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md). §40 gave
+the hot groups their own figures, but about twenty opcodes still charged
+`CYC_REG` (2) or `CYC_MEM` (7). Every figure here is the 286 column of
+HelpPC 2.10, which follows the iAPX 286 PRM appendix (the same table
+§55.4 used).
+
+### 56.1 The opcodes (T10)
+
+| Instruction | Was | 286 |
+|-------------|----:|----:|
+| NOP, XCHG AX,reg | 2 | 3 |
+| XCHG reg,reg / reg,mem | 7 | 3 / 5 |
+| LEA | 2 | 3 |
+| ALU acc,imm, TEST acc,imm | 2 | 3 |
+| TEST r/m,reg, memory | 7 | 6 |
+| CMP reg,mem and CMP mem,imm | 7 | 6 |
+| PUSH imm | 2 | 3 |
+| PUSH sreg | 7 | 3 |
+| PUSH mem | 7 | 5 |
+| POP reg, sreg, mem | 7 | 5 |
+| DAA, DAS, AAA, AAS | 2 | 3 |
+| XLAT | 7 | 5 |
+| BOUND | 7 | 13 |
+| IMUL r,r/m,imm | 7 | 21 reg, 24 mem |
+| INC/DEC through `FE`/`FF`, register | 7 | 2 |
+| JMP / CALL near indirect | 7 | 7 reg, 11 mem, plus the refill tax |
+| JMP / CALL far indirect | 7 | 15 / 16, plus the refill tax |
+
+The `FF` transfers set `transfer_` for the prefetch model but never paid
+`kQueueRefillTax` like every other taken transfer (§41). They do now.
+CMP's memory forms are a clock cheaper than the other ALU ops because
+nothing is written back; CMP mem,reg stays 7, as the table has it.
+
+### 56.2 Shift cost used the raw count (T11)
+
+`grp2_shift` masked the count inside the shift itself but charged 5+n
+with the raw CL or imm8, so `SHL AX,CL` with CL=200 cost 205 clocks. The
+286 masks the count to 5 bits before it runs (Intel iAPX 286 PRM), so n
+is at most 31. The count is now masked once, before both.
+
+### 56.3 Divide errors and BOUND paid nothing for the interrupt (T12)
+
+#DE from DIV, IDIV and AAM 0, and #BR from BOUND, called `interrupt()`
+directly. Faults found through `raise()` add INT n's 23 clocks plus
+`kQueueRefillTax` in `step()`; these didn't. `Cpu::exception()` now
+vectors and charges the same. They stay off the `raise()` path, which
+can't carry vector 0 and would roll back registers for no reason.
+
+### 56.4 TOPBENCH
+
+Re-run with §47's method: `TOPBENCH.EXE` 0.40c on a scratch copy of the
+shipped HDD image, its Realtime screen read from a native probe.
+
+| Test | Real 339 | Before | After | |
+|------|---------:|-------:|------:|--:|
+| MemTest | 923 | 939 | 940 | +2% |
+| MemEA | 514 | 476 | 476 | -7% |
+| Opcodes | 397 | 380 | 375 | -6% |
+| VidMem (Enhanced Display) | 1470 | 1335 | 1335 | -9% |
+| 3DGames | 388 | 373 | 368 | -5% |
+
+The corrections go both ways, and POP's two clocks outweigh the rest:
+the machine is slightly faster than before. So T9's gap isn't the flat
+costs. It stays open as a bus-unit question.
+
+### 56.5 Checks
+
+- 567 native tests (548 before). New timing cases cover every row in
+  §56.1, the masked shift count (CL=200, and imm 32 as a count of 0), and
+  #DE and #BR paying for the interrupt. `Grp1ImmedSignExtended8BitMemory`
+  now uses ADD, since CMP is 6.
+- The shipped HDD image boots to `C:\>` at 450.3M cycles, down from
+  458.2M.
+- Playwright smoke (boot and type, real-speed pacing) passes on the
+  rebuilt wasm.
+
+## 57. The drawn Enhanced Keyboard
+
+The Function & extended keys panel and its Ctrl+Alt+Del button (§30) are
+replaced by a to-scale drawing of the keyboard the 339 shipped with, the
+101-key IBM Enhanced Keyboard (§53.3: the 8042 already answers `F2` with
+its ID). It sits under the monitor, shown by the bar's Keyboard box:
+off by default on a desktop, on by default on a touch screen with no
+mouse. The module
+is `shared/pc-keyboard.js`, shared with pc486 (PC486_REVIEW.md
+§49, which covers the layout, latching and map mode).
+
+- Clicks go through `sendKey()` and the 8042's queue like a real key.
+  Ctrl, Alt, Delete on the drawing reboots, so the separate button is gone.
+- The lock lamps read `leds()` (held since §53.3) through a new
+  `keyboardLeds()` binding.
+- This page gains the Key Mapper pc486 had, on the drawing, and the bezel
+  KEYS button. Mappings persist in `retro8080.ibmpcat.keymap`.
+- `keyboard.spec.ts` now checks all 101 drawn keys send their Set 1 make
+  and break bytes (modifiers on the latch and unlatch clicks), replacing
+  the old 22-button check.
+
+## 58. Preset hard disk (`?disk=keen1`)
+
+The landing page's Ready to Play card for Commander Keen opens
+`ibmpc-at/?disk=keen1`, a ready-made C: in place of the factory FreeDOS one.
+It follows pc486's presets (`PC486_REVIEW.md` §50) with two differences that
+come from this machine.
+
+- **Built by Apogee's installer.** `disks/build-preset-hdd.sh keen1` keeps
+  the factory image's MBR and FreeDOS boot sector over a fresh FAT16 with the
+  same BPB (4-sector clusters, 61-sector FATs), holding only `KERNEL.SYS` and
+  `COMMAND.COM`. `disks/build_preset_hdd.cpp` boots it, inserts the
+  library's 360K `keen1.img`, runs `INSTALL`, answers DEICE with drive C and
+  directory `\`, and stops at the self-extractor's "Authentic files
+  Verified!". About 500M cycles; the image gzips to about 300KB.
+- **Keen is the shell.** With 640K and no extended memory there is no HMA,
+  and FreeCOM has nothing to swap to, so it stays 69K resident. Under it
+  MEM shows 504K free and Keen 1 stops with "Out of memory! Try unloading
+  your TSRs!". The final `CONFIG.SYS` is `FILES=15`, `BUFFERS=10`,
+  `SHELL=C:\KEEN1.EXE`: Keen gets 579K, about what MS-DOS 3.3 left on a real
+  AT. A shell starts in the root, and Keen opens its data files by bare
+  name, which is why it is installed to `C:\`. Quitting Keen brings up the
+  kernel's "Bad or missing Command Interpreter ... Enter the full shell
+  command line:" prompt; `C:\COMMAND.COM` gives a DOS prompt and
+  `C:\KEEN1.EXE` starts Keen again. F5 at boot skips `CONFIG.SYS` for a
+  plain prompt.
+- **Separate save.** C: is stored in IndexedDB `ibmpcat-hdd-keen1` instead
+  of `ibmpcat-hdd`. The Hard disk panel relabels Reset ("Reset to original
+  Keen disk"), hides Upload and Mount blank, and downloads as
+  `ibmpcat-keen1-hdd.img`.
+- **Tests.** `preset.spec.ts` checks the image layout and `CONFIG.SYS`,
+  that the page mounts it, and that a saved own C: and the Keen C: never
+  mount in each other's place. No test runs Keen.

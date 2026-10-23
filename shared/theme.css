@@ -1,0 +1,397 @@
+/* Shared theme color tokens: Windows 95 / Windows XP / Mid-1990s Web / Modern /
+   Atmosphere, each light and dark (data-mode="dark"). Page-specific layout
+   tuning stays in each page's own <style>. Machines copy this into
+   web/shared/; index.html links it directly. */
+
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("vendor/fonts/inter-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("vendor/fonts/inter-700.woff2") format("woff2");
+}
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("vendor/fonts/inter-800.woff2") format("woff2");
+}
+
+:root {
+  --desktop:   #008080;
+  --page-bg:   #c0c0c0;
+  --page-border: 3px outset #dfdfdf;
+  --page-radius: 0;
+  --page-shadow: none;
+  --body-font: "Times New Roman", Times, Georgia, serif;
+  --text:      #000000;
+  --dim:       #404040;
+  --link:      #0000ee;
+  --link-visited: #551a8b;
+  --titlebar-display: flex;
+  --titlebar-bg: linear-gradient(90deg, #000080, #1084d0);
+  --titlebar-fg: #ffffff;
+  --rule:      2px groove #ffffff;
+  --h1-color:  #000080;
+  --h1-shadow: 2px 2px 0 #808080, 3px 3px 0 #6b6b6b;
+  --h1-align:  center;
+  --center:    center;
+  --panel-bg:     #c0c0c0;
+  --panel-border: 2px outset #dfdfdf;
+  --panel-radius: 0;
+  --btn-bg:       #c0c0c0;
+  --btn-fg:       #000000;
+  --btn-border:   2px outset #dfdfdf;
+  --btn-radius:   0;
+  --field-bg:     #ffffff;
+  --field-border: 2px inset #808080;
+  --statusline-bg:     #0b1a10;
+  --statusline-fg:     #6bffa0;
+  --statusline-border: #05100a;
+  --accent2:      #008000;
+  --warn:         #c00000;
+}
+:root[data-theme="win"][data-mode="dark"] {
+  color-scheme: dark;
+  --desktop:   #002020;
+  --page-bg:   #404040;
+  --page-border: 3px outset #808080;
+  --text:      #ffffff;
+  --dim:       #c0c0c0;
+  --link:      #80c0ff;
+  --link-visited: #c080ff;
+  --titlebar-bg: linear-gradient(90deg, #000080, #0000c0);
+  --titlebar-fg: #ffffff;
+  --rule:      2px groove #808080;
+  --h1-color:  #a0d0ff;
+  --h1-shadow: 2px 2px 0 #202020, 3px 3px 0 #000000;
+  --panel-bg:     #404040;
+  --panel-border: 2px outset #808080;
+  --btn-bg:       #404040;
+  --btn-fg:       #ffffff;
+  --btn-border:   2px outset #808080;
+  --field-bg:     #000000;
+  --field-border: 2px inset #808080;
+  --statusline-bg:     #0b1a10;
+  --statusline-fg:     #6bffa0;
+  --statusline-border: #05100a;
+  --accent2:      #33ff88;
+  --warn:         #ff8080;
+}
+/* Luna chrome + CSS Bliss stand-in (the real photo is Microsoft-owned). */
+:root[data-theme="winxp"] {
+  --desktop:   #5a9fd4;
+  --page-bg:   #ece9d8;
+  --page-border: 4px solid #0a5ad1;
+  --page-radius: 8px 8px 0 0;
+  --page-shadow: 2px 3px 12px rgba(0, 0, 0, .35);
+  --body-font: Tahoma, "Segoe UI", "Microsoft Sans Serif", sans-serif;
+  --text:      #000000;
+  --dim:       #404040;
+  --link:      #0066cc;
+  --link-visited: #551a8b;
+  --titlebar-display: flex;
+  --titlebar-bg: linear-gradient(180deg, #3c9bff 0%, #1668f0 5%, #0a5aef 9%, #0054e3 14%, #0054e3 88%, #0048c8 95%, #0039a8 100%);
+  --titlebar-fg: #ffffff;
+  --rule:      1px solid #d4d0c8;
+  --h1-color:  #003399;
+  --h1-shadow: none;
+  --h1-align:  center;
+  --center:    center;
+  --panel-bg:     #ece9d8;
+  --panel-border: 2px solid #919b9c;
+  --panel-radius: 3px;
+  --btn-bg:       linear-gradient(180deg, #ffffff 0%, #ece9d8 45%, #d4d0c8 100%);
+  --btn-fg:       #000000;
+  --btn-border:   1px solid #003c74;
+  --btn-radius:   3px;
+  --field-bg:     #ffffff;
+  --field-border: 2px inset #aca899;
+  --statusline-bg:     #0b1a10;
+  --statusline-fg:     #6bffa0;
+  --statusline-border: #05100a;
+  --accent2:      #008000;
+  --warn:         #c00000;
+}
+:root[data-theme="winxp"] body {
+  background-color: #5a9fd4;
+  background-image:
+    radial-gradient(ellipse 110% 55% at 50% 118%, #2f7a28 0%, #3d9a32 42%, transparent 70%),
+    radial-gradient(ellipse 80% 48% at 12% 105%, #4aad3a 0%, #2f7a28 48%, transparent 72%),
+    radial-gradient(ellipse 85% 50% at 88% 108%, #357f2a 0%, #246620 52%, transparent 74%),
+    radial-gradient(ellipse 60% 28% at 58% 72%, rgba(140, 190, 70, .5), transparent 72%),
+    radial-gradient(ellipse 40% 18% at 30% 68%, rgba(255, 255, 255, .35), transparent 70%),
+    linear-gradient(180deg, #3a7fc4 0%, #6eb3e8 36%, #a8d4f0 58%, #c5e0a8 74%, #7cb342 100%);
+  background-attachment: fixed;
+}
+:root[data-theme="winxp"][data-mode="dark"] {
+  color-scheme: dark;
+  --desktop:   #1a3a5c;
+  --page-bg:   #2a2a28;
+  --page-border: 4px solid #0a3a7c;
+  --page-shadow: 2px 3px 14px rgba(0, 0, 0, .55);
+  --text:      #f0efe8;
+  --dim:       #b8b4a8;
+  --link:      #6eb6ff;
+  --link-visited: #c090ff;
+  --titlebar-bg: linear-gradient(180deg, #2a6ad0 0%, #0a4cb0 5%, #063a8c 9%, #053a8a 14%, #053a8a 88%, #042e6e 95%, #032050 100%);
+  --titlebar-fg: #ffffff;
+  --rule:      1px solid #4a4a44;
+  --h1-color:  #8ec0ff;
+  --panel-bg:     #2a2a28;
+  --panel-border: 2px solid #555550;
+  --btn-bg:       linear-gradient(180deg, #4a4a46 0%, #2a2a28 45%, #1e1e1c 100%);
+  --btn-fg:       #f0efe8;
+  --btn-border:   1px solid #6a8ab8;
+  --field-bg:     #1a1a18;
+  --field-border: 2px inset #555550;
+  --statusline-bg:     #0b1a10;
+  --statusline-fg:     #6bffa0;
+  --statusline-border: #05100a;
+  --accent2:      #33ff88;
+  --warn:         #ff8080;
+}
+:root[data-theme="winxp"][data-mode="dark"] body {
+  background-color: #1a3a5c;
+  background-image:
+    radial-gradient(ellipse 110% 55% at 50% 118%, #1a4a18 0%, #246020 42%, transparent 70%),
+    radial-gradient(ellipse 80% 48% at 12% 105%, #2a6020 0%, #1a4a18 48%, transparent 72%),
+    radial-gradient(ellipse 85% 50% at 88% 108%, #1e5018 0%, #143810 52%, transparent 74%),
+    radial-gradient(ellipse 60% 28% at 58% 72%, rgba(40, 80, 30, .4), transparent 72%),
+    linear-gradient(180deg, #0e2848 0%, #1a4068 36%, #2a5070 58%, #3a5840 74%, #2a5028 100%);
+  background-attachment: fixed;
+}
+/* tiled "blue marble" desktop, shared instead of a data URI per page */
+:root[data-theme="web94"] body {
+  background: #d1d6df url("data:image/jpeg;base64,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") repeat;
+  color: #000;
+  font-family: "Times New Roman", Times, serif;
+}
+:root[data-theme="web94"] {
+  --desktop:   #c0c0c0;
+  --page-bg:   #c0c0c0;
+  --page-border: 3px ridge #dfdfdf;
+  --titlebar-display: none;
+  --link:      #0000ff;
+  --link-visited: #800080;
+  --rule:      2px inset #c0c0c0;
+  --h1-color:  #000000;
+  --h1-shadow: none;
+  --h1-align:  center;
+  --center:    center;
+}
+:root[data-theme="web94"][data-mode="dark"] {
+  color-scheme: dark;
+  --desktop:   #1a1a2e;
+  --page-bg:   #2a2a3a;
+  --page-border: 3px ridge #555566;
+  --text:      #e8e8f0;
+  --dim:       #a0a0b8;
+  --link:      #6ea8ff;
+  --link-visited: #c090ff;
+  --rule:      2px inset #3a3a4a;
+  --h1-color:  #ffffff;
+  --panel-bg:     #2a2a3a;
+  --panel-border: 2px outset #555566;
+  --btn-bg:       #3a3a4a;
+  --btn-fg:       #e8e8f0;
+  --btn-border:   2px outset #555566;
+  --field-bg:     #12121c;
+  --field-border: 2px inset #555566;
+  --statusline-bg:     #0b1a10;
+  --statusline-fg:     #6bffa0;
+  --statusline-border: #05100a;
+  --accent2:      #33ff88;
+  --warn:         #ff8080;
+}
+:root[data-theme="web94"][data-mode="dark"] body {
+  background: #1a1a2e;
+  color: #e8e8f0;
+  font-family: "Times New Roman", Times, serif;
+}
+:root[data-theme="modern"] {
+  --desktop:   #eceef2;
+  --page-bg:   #ffffff;
+  --page-border: 1px solid #e4e6ea;
+  --page-radius: 14px;
+  --page-shadow: 0 1px 3px rgba(16,24,40,.06), 0 12px 32px rgba(16,24,40,.10);
+  --body-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --text:      #1b1e24;
+  --dim:       #6b7280;
+  --link:      #4f46e5;
+  --link-visited: #4f46e5;
+  --titlebar-display: none;
+  --titlebar-bg: #f6f7f9;
+  --titlebar-fg: #1b1e24;
+  --rule:      1px solid #ecedf1;
+  --h1-color:  #12141a;
+  --h1-shadow: none;
+  --h1-align:  center;
+  --center:    center;
+  --panel-bg:     #f7f8fa;
+  --panel-border: 1px solid #e7e9ee;
+  --panel-radius: 10px;
+  --btn-bg:       #ffffff;
+  --btn-fg:       #1b1e24;
+  --btn-border:   1px solid #d3d7de;
+  --btn-radius:   7px;
+  --field-bg:     #ffffff;
+  --field-border: 1px solid #d3d7de;
+  --statusline-bg:     #f3f4f6;
+  --statusline-fg:     #363b43;
+  --statusline-border: #e4e6ea;
+  --accent2:      #0a8f4c;
+  --warn:         #d1435b;
+}
+/* Dark Modern: scripts set data-theme="modern" + data-mode="dark" so Modern's
+   layout rules still apply. */
+:root[data-theme="modern"][data-mode="dark"] {
+  color-scheme: dark;
+  --desktop:   #121317;
+  --page-bg:   #1b1d22;
+  --page-border: 1px solid #2c2f37;
+  --page-shadow: 0 1px 2px rgba(0,0,0,.4), 0 16px 44px rgba(0,0,0,.55);
+  --text:      #d7dae0;
+  --dim:       #9aa0aa;
+  --link:      #a9a3ff;
+  --link-visited: #a9a3ff;
+  --titlebar-bg: #23262d;
+  --titlebar-fg: #d7dae0;
+  --rule:      1px solid #2c2f37;
+  --h1-color:  #f1f2f5;
+  --panel-bg:     #23262d;
+  --panel-border: 1px solid #31353e;
+  --btn-bg:       #2a2e37;
+  --btn-fg:       #d7dae0;
+  --btn-border:   1px solid #3a3f4a;
+  --field-bg:     #2a2e37;
+  --field-border: 1px solid #3a3f4a;
+  --statusline-bg:     #17181d;
+  --statusline-fg:     #9aa0aa;
+  --statusline-border: #2c2f37;
+  --accent2:      #33ff88;
+  --warn:         #ff7a7a;
+}
+/* Atmosphere: purple/cyan glass on a daytime sky, starfield when dark.
+   Storage key stays aurora. */
+:root[data-theme="aurora"] {
+  color-scheme: light;
+  --desktop:   #b8d4f0;
+  --page-bg:   rgba(255,252,255,.78);
+  --page-border: 1px solid rgba(124,90,200,.28);
+  --page-radius: 14px;
+  --page-shadow: 0 1px 2px rgba(60,40,100,.08), 0 16px 40px rgba(80,50,140,.14), 0 0 20px rgba(138,43,226,.08);
+  --body-font: Inter, Helvetica, Arial, sans-serif;
+  --text:      #2a2140;
+  --dim:       #6b6288;
+  --link:      #0b8aad;
+  --link-visited: #7c3aed;
+  --titlebar-bg: linear-gradient(90deg, #8b6cc9, #3aa8c4);
+  --titlebar-fg: #ffffff;
+  --rule:      1px solid rgba(124,90,200,.2);
+  --h1-color:  #1f1833;
+  --h1-shadow: none;
+  --panel-bg:     rgba(255,255,255,.72);
+  --panel-border: 1px solid rgba(124,90,200,.25);
+  --panel-radius: 14px;
+  --btn-bg:       linear-gradient(180deg, #ffffff, #f3effc);
+  --btn-fg:       #2a2140;
+  --btn-border:   1px solid rgba(124,90,200,.35);
+  --btn-radius:   8px;
+  --field-bg:     #ffffff;
+  --field-border: 1px solid rgba(124,90,200,.3);
+  --statusline-bg:     #ebe4f8;
+  --statusline-fg:     #0b6f88;
+  --statusline-border: rgba(11,138,173,.28);
+  --accent2:      #0a8f4c;
+  --warn:         #c0266b;
+}
+:root[data-theme="aurora"] body {
+  background-color: #b8d4f0;
+  background-image:
+    radial-gradient(circle 140px at 82% 14%, rgba(255,245,200,.95), rgba(255,210,120,.55) 28%, transparent 62%),
+    radial-gradient(circle 280px at 82% 14%, rgba(255,220,150,.35), transparent 70%),
+    radial-gradient(ellipse 42% 18% at 18% 28%, rgba(255,255,255,.78), transparent 70%),
+    radial-gradient(ellipse 34% 14% at 28% 32%, rgba(255,255,255,.65), transparent 72%),
+    radial-gradient(ellipse 48% 16% at 72% 42%, rgba(255,255,255,.7), transparent 70%),
+    radial-gradient(ellipse 30% 12% at 62% 38%, rgba(255,255,255,.55), transparent 72%),
+    radial-gradient(ellipse 40% 14% at 40% 58%, rgba(255,255,255,.5), transparent 72%),
+    radial-gradient(ellipse 90% 45% at 20% 8%, rgba(168,140,255,.22), transparent 60%),
+    radial-gradient(ellipse 70% 40% at 85% 70%, rgba(100,210,230,.2), transparent 58%),
+    linear-gradient(180deg, #9ec4ef 0%, #c5d8f5 38%, #e4d8f4 72%, #f2e6d8 100%);
+  background-attachment: fixed;
+}
+:root[data-theme="aurora"][data-mode="dark"] {
+  color-scheme: dark;
+  --desktop:   #05050c;
+  --page-bg:   rgba(20,17,32,.65);
+  --page-border: 1px solid rgba(168,140,255,.35);
+  --page-radius: 14px;
+  --page-shadow: 0 1px 2px rgba(0,0,0,.45), 0 16px 40px rgba(0,0,0,.55), 0 0 24px rgba(138,43,226,.22);
+  --text:      #ece9ff;
+  --dim:       #c8c8ea;
+  --link:      #7ce8ff;
+  --link-visited: #c99bff;
+  --titlebar-bg: linear-gradient(90deg, #5c3f8f, #1c7fa3);
+  --titlebar-fg: #ffffff;
+  --rule:      1px solid rgba(168,140,255,.25);
+  --h1-color:  #ffffff;
+  --h1-shadow: 0 0 24px rgba(123,47,247,.6);
+  --panel-bg:     rgba(30,24,50,.72);
+  --panel-border: 1px solid rgba(168,140,255,.3);
+  --panel-radius: 14px;
+  --btn-bg:       linear-gradient(180deg, #3a2d5c, #251c3d);
+  --btn-fg:       #f1ecff;
+  --btn-border:   1px solid rgba(168,140,255,.45);
+  --btn-radius:   8px;
+  --field-bg:     #1c1730;
+  --field-border: 1px solid rgba(168,140,255,.4);
+  --statusline-bg:     #120f1e;
+  --statusline-fg:     #7ce8ff;
+  --statusline-border: rgba(124,232,255,.3);
+  --accent2:      #7ce8ff;
+  --warn:         #ff6ec7;
+}
+:root[data-theme="aurora"][data-mode="dark"] body {
+  background-color: #05050c;
+  background-image:
+    url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%22420%22%20height%3D%22420%22%20viewBox%3D%220%200%20420%20420%22%3E%3Ccircle%20cx%3D%22400.1%22%20cy%3D%22308.4%22%20r%3D%220.7%22%20fill%3D%22%23c99bff%22/%3E%3Ccircle%20cx%3D%2247.8%22%20cy%3D%22374.9%22%20r%3D%221.1%22%20fill%3D%22%237ce8ff%22/%3E%3Ccircle%20cx%3D%22355.6%22%20cy%3D%22115.4%22%20r%3D%221.1%22%20fill%3D%22%237ce8ff%22/%3E%3Ccircle%20cx%3D%22304.5%22%20cy%3D%22293.6%22%20r%3D%220.7%22%20fill%3D%22%237ce8ff%22/%3E%3Ccircle%20cx%3D%22117.0%22%20cy%3D%22100.6%22%20r%3D%220.7%22%20fill%3D%22%237ce8ff%22/%3E%3Ccircle%20cx%3D%22411.5%22%20cy%3D%22384.6%22%20r%3D%221.1%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%22263.9%22%20cy%3D%224.0%22%20r%3D%220.9%22%20fill%3D%22%23c99bff%22/%3E%3Ccircle%20cx%3D%2211.3%22%20cy%3D%2216.0%22%20r%3D%220.7%22%20fill%3D%22%237ce8ff%22/%3E%3Ccircle%20cx%3D%22116.9%22%20cy%3D%22317.4%22%20r%3D%221.1%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%22231.3%22%20cy%3D%22265.1%22%20r%3D%220.9%22%20fill%3D%22%23c99bff%22/%3E%3Ccircle%20cx%3D%22201.0%22%20cy%3D%2288.5%22%20r%3D%220.9%22%20fill%3D%22%23c99bff%22/%3E%3Ccircle%20cx%3D%22312.8%22%20cy%3D%22352.2%22%20r%3D%220.7%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%22187.9%22%20cy%3D%22345.3%22%20r%3D%220.7%22%20fill%3D%22%23c99bff%22/%3E%3Ccircle%20cx%3D%22178.2%22%20cy%3D%22108.4%22%20r%3D%220.7%22%20fill%3D%22%23c99bff%22/%3E%3Ccircle%20cx%3D%2264.5%22%20cy%3D%22351.3%22%20r%3D%221.1%22%20fill%3D%22%23c99bff%22/%3E%3Ccircle%20cx%3D%22122.2%22%20cy%3D%22318.8%22%20r%3D%220.7%22%20fill%3D%22%23c99bff%22/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%22280%22%20height%3D%22280%22%20viewBox%3D%220%200%20280%20280%22%3E%3Ccircle%20cx%3D%2211.4%22%20cy%3D%2256.1%22%20r%3D%220.55%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%22100.7%22%20cy%3D%22103.7%22%20r%3D%220.45%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%2246.2%22%20cy%3D%22143.5%22%20r%3D%220.45%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%22250.1%22%20cy%3D%22224.5%22%20r%3D%220.65%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%22263.1%22%20cy%3D%22159.5%22%20r%3D%220.45%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%22163.7%22%20cy%3D%2295.5%22%20r%3D%220.55%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%22255.2%22%20cy%3D%22208.4%22%20r%3D%220.45%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%2237.3%22%20cy%3D%2292.4%22%20r%3D%220.65%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%22103.6%22%20cy%3D%22120.9%22%20r%3D%220.45%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%2257.9%22%20cy%3D%2251.7%22%20r%3D%220.55%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%22131.3%22%20cy%3D%223.0%22%20r%3D%220.55%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%22252.8%22%20cy%3D%2213.9%22%20r%3D%220.55%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%2283.7%22%20cy%3D%2260.5%22%20r%3D%220.55%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%2250.9%22%20cy%3D%2221.5%22%20r%3D%220.65%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%22179.8%22%20cy%3D%22196.4%22%20r%3D%220.55%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%226.4%22%20cy%3D%22172.3%22%20r%3D%220.65%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%2271.9%22%20cy%3D%22112.4%22%20r%3D%220.45%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%22181.4%22%20cy%3D%223.0%22%20r%3D%220.55%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%2277.2%22%20cy%3D%2295.4%22%20r%3D%220.65%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%22116.4%22%20cy%3D%22145.8%22%20r%3D%220.45%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%22124.4%22%20cy%3D%22180.5%22%20r%3D%220.65%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%22187.2%22%20cy%3D%22267.5%22%20r%3D%220.55%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%22108.1%22%20cy%3D%22271.6%22%20r%3D%220.55%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%22171.1%22%20cy%3D%2216.4%22%20r%3D%220.55%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%2279.6%22%20cy%3D%22111.6%22%20r%3D%220.55%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%22148.5%22%20cy%3D%22135.3%22%20r%3D%220.55%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%22260.3%22%20cy%3D%22185.8%22%20r%3D%220.65%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%227.5%22%20cy%3D%22216.3%22%20r%3D%220.65%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%22177.2%22%20cy%3D%22114.5%22%20r%3D%220.65%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%2214.8%22%20cy%3D%2288.2%22%20r%3D%220.55%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%22162.9%22%20cy%3D%22202.5%22%20r%3D%220.55%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%22223.3%22%20cy%3D%2262.6%22%20r%3D%220.65%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%2270.3%22%20cy%3D%22211.5%22%20r%3D%220.45%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%2227.6%22%20cy%3D%22226.8%22%20r%3D%220.55%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%22274.1%22%20cy%3D%22228.7%22%20r%3D%220.65%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%2232.2%22%20cy%3D%22174.8%22%20r%3D%220.55%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%2257.0%22%20cy%3D%2214.6%22%20r%3D%220.65%22%20fill%3D%22%23ffffff%22/%3E%3Ccircle%20cx%3D%2234.8%22%20cy%3D%22124.0%22%20r%3D%220.65%22%20fill%3D%22%23ece9ff%22/%3E%3Ccircle%20cx%3D%22127.6%22%20cy%3D%2273.4%22%20r%3D%220.65%22%20fill%3D%22%23b8e8ff%22/%3E%3Ccircle%20cx%3D%22117.5%22%20cy%3D%22217.8%22%20r%3D%220.65%22%20fill%3D%22%23ffffff%22/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%22180%22%20height%3D%22180%22%20viewBox%3D%220%200%20180%20180%22%3E%3Ccircle%20cx%3D%2211.5%22%20cy%3D%22176.5%22%20r%3D%220.35%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%2281.1%22%20cy%3D%2249.5%22%20r%3D%220.35%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2268.9%22%20cy%3D%2293.6%22%20r%3D%220.45%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%22128.9%22%20cy%3D%22151.5%22%20r%3D%220.45%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2257.7%22%20cy%3D%22149.2%22%20r%3D%220.4%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%227.5%22%20cy%3D%22127.6%22%20r%3D%220.45%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2255.6%22%20cy%3D%22142.5%22%20r%3D%220.35%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%2224.5%22%20cy%3D%2281.9%22%20r%3D%220.35%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2242.7%22%20cy%3D%2225.4%22%20r%3D%220.35%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%2220.8%22%20cy%3D%2219.6%22%20r%3D%220.45%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22115.2%22%20cy%3D%2266.4%22%20r%3D%220.35%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%2235.6%22%20cy%3D%22148.3%22%20r%3D%220.4%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%22128.6%22%20cy%3D%22135.9%22%20r%3D%220.45%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%226.5%22%20cy%3D%2240.8%22%20r%3D%220.4%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22125.5%22%20cy%3D%2293.7%22%20r%3D%220.45%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%2270.8%22%20cy%3D%22142.5%22%20r%3D%220.35%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%2273.9%22%20cy%3D%22160.7%22%20r%3D%220.4%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%2281.1%22%20cy%3D%2235.4%22%20r%3D%220.35%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2299.0%22%20cy%3D%22117.5%22%20r%3D%220.45%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2283.5%22%20cy%3D%22117.2%22%20r%3D%220.35%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%22129.9%22%20cy%3D%22147.3%22%20r%3D%220.45%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%2222.2%22%20cy%3D%2243.6%22%20r%3D%220.4%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%22175.9%22%20cy%3D%2296.7%22%20r%3D%220.4%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%22163.8%22%20cy%3D%22154.0%22%20r%3D%220.4%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%2214.9%22%20cy%3D%2279.4%22%20r%3D%220.45%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%22138.3%22%20cy%3D%2287.7%22%20r%3D%220.35%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%22145.6%22%20cy%3D%2211.5%22%20r%3D%220.35%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%2296.0%22%20cy%3D%22123.6%22%20r%3D%220.35%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2226.8%22%20cy%3D%2293.0%22%20r%3D%220.45%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22151.2%22%20cy%3D%22124.1%22%20r%3D%220.4%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22170.8%22%20cy%3D%2215.5%22%20r%3D%220.35%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2294.8%22%20cy%3D%2252.2%22%20r%3D%220.45%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22115.0%22%20cy%3D%2294.1%22%20r%3D%220.45%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2256.1%22%20cy%3D%2268.6%22%20r%3D%220.45%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%2254.8%22%20cy%3D%2225.4%22%20r%3D%220.45%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%2249.1%22%20cy%3D%2289.6%22%20r%3D%220.4%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%2220.6%22%20cy%3D%220.9%22%20r%3D%220.4%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%2296.9%22%20cy%3D%227.9%22%20r%3D%220.4%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22144.2%22%20cy%3D%22101.3%22%20r%3D%220.4%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%22124.4%22%20cy%3D%2211.9%22%20r%3D%220.45%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2274.5%22%20cy%3D%22172.2%22%20r%3D%220.4%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2244.3%22%20cy%3D%2288.7%22%20r%3D%220.4%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%22162.2%22%20cy%3D%22168.4%22%20r%3D%220.4%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%2257.1%22%20cy%3D%2234.5%22%20r%3D%220.45%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%22166.5%22%20cy%3D%2223.3%22%20r%3D%220.35%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%2234.9%22%20cy%3D%2240.9%22%20r%3D%220.45%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2258.0%22%20cy%3D%2264.0%22%20r%3D%220.45%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2218.9%22%20cy%3D%22131.6%22%20r%3D%220.35%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22112.2%22%20cy%3D%22129.2%22%20r%3D%220.45%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22158.2%22%20cy%3D%224.2%22%20r%3D%220.45%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%22148.5%22%20cy%3D%22110.8%22%20r%3D%220.45%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%22155.5%22%20cy%3D%2296.1%22%20r%3D%220.35%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%2238.9%22%20cy%3D%2297.7%22%20r%3D%220.45%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%2241.9%22%20cy%3D%22133.3%22%20r%3D%220.4%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%2256.9%22%20cy%3D%2256.7%22%20r%3D%220.35%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%22140.1%22%20cy%3D%2235.0%22%20r%3D%220.35%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%22160.0%22%20cy%3D%2223.9%22%20r%3D%220.35%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2269.8%22%20cy%3D%2278.3%22%20r%3D%220.4%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22142.2%22%20cy%3D%2222.7%22%20r%3D%220.4%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22123.3%22%20cy%3D%223.2%22%20r%3D%220.35%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22122.8%22%20cy%3D%22164.0%22%20r%3D%220.4%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%22126.8%22%20cy%3D%22114.2%22%20r%3D%220.4%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%22179.7%22%20cy%3D%22149.9%22%20r%3D%220.35%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2219.1%22%20cy%3D%226.7%22%20r%3D%220.45%22%20fill%3D%22%23dfe4ff%22/%3E%3Ccircle%20cx%3D%2292.7%22%20cy%3D%22102.4%22%20r%3D%220.35%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%2233.2%22%20cy%3D%2236.7%22%20r%3D%220.35%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%22166.8%22%20cy%3D%2217.1%22%20r%3D%220.35%22%20fill%3D%22%23c8d0ff%22/%3E%3Ccircle%20cx%3D%22171.3%22%20cy%3D%2283.2%22%20r%3D%220.35%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2270.4%22%20cy%3D%2276.8%22%20r%3D%220.4%22%20fill%3D%22%23a8b4e8%22/%3E%3Ccircle%20cx%3D%2237.8%22%20cy%3D%2267.2%22%20r%3D%220.45%22%20fill%3D%22%23dfe4ff%22/%3E%3C/svg%3E"),
+    radial-gradient(ellipse 100% 70% at 0% 0%, rgba(70,30,140,.4), transparent 60%),
+    radial-gradient(ellipse 80% 60% at 100% 100%, rgba(15,80,130,.34), transparent 58%),
+    radial-gradient(ellipse 55% 40% at 60% 35%, rgba(123,47,247,.14), transparent 55%);
+  background-size:
+    420px 420px,
+    280px 280px,
+    180px 180px,
+    auto,
+    auto,
+    auto;
+  background-repeat:
+    repeat,
+    repeat,
+    repeat,
+    no-repeat,
+    no-repeat,
+    no-repeat;
+  background-attachment: fixed;
+}
+/* Aliases for pages whose CSS names a few tokens differently (index.html uses
+   --muted / --title-... / --card-... for --dim / --h1-... / --panel-...). */
+:root {
+  --muted:        var(--dim);
+  --title-color:  var(--h1-color);
+  --title-shadow: var(--h1-shadow);
+  --card-bg:      var(--panel-bg);
+  --card-border:  var(--panel-border);
+  --card-radius:  var(--panel-radius);
+}

@@ -1,0 +1,25 @@
+import { CoverageReport } from "monocart-coverage-reports";
+import { coverageEnabled, coverageOptions } from "./coverage";
+
+// Playwright calls the default export of the globalSetup / globalTeardown files.
+// One module, two entry points, picked by the COVERAGE_PHASE env.
+
+export async function coverageSetup() {
+  if (!coverageEnabled) return;
+  new CoverageReport(coverageOptions).cleanCache();
+}
+
+export async function coverageTeardown() {
+  if (!coverageEnabled) return;
+  const report: any = await new CoverageReport(coverageOptions).generate();
+  const s = report?.summary;
+  if (s) {
+    const pct = (m: any) => (m && typeof m.pct === "number" ? `${m.pct.toFixed(1)}%` : "n/a");
+    console.log(
+      `\napp.js + pc-keyboard.js coverage — lines ${pct(s.lines)}  functions ${pct(s.functions)}  branches ${pct(s.branches)}` +
+        `\n  full report: ibmpc-at/web/coverage/index.html\n`,
+    );
+  }
+}
+
+export default coverageTeardown;

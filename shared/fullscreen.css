@@ -1,0 +1,52 @@
+/* ---- fullscreen: expands the whole bezel, not just the screen ----
+   Keyed on #bezel (an id) so these outrank each machine's local `.bezel`
+   padding rules; a class selector lost to assembler6502's `.monitor .bezel`. */
+#bezel:fullscreen, #bezel:-webkit-full-screen {
+  width: 100vw; height: 100vh; max-width: none; border-radius: 0;
+  padding: 3vh 3vw; box-sizing: border-box; background: #0c0b0a;
+}
+#bezel:fullscreen #screen, #bezel:-webkit-full-screen #screen {
+  /* Portrait cabinets fill height; a block canvas with auto side margins
+     centers in the leftover. Terminals set inline pixel sizes instead. */
+  display: block;
+  width: auto; height: 100%; max-width: 100%; max-height: 100%;
+  margin-left: auto; margin-right: auto;
+}
+#bezel:fullscreen .crt-overlay, #bezel:-webkit-full-screen .crt-overlay { inset: 3vh 3vw; }
+
+/* Inside the bezel so it stays reachable in fullscreen, which only expands
+   #bezel's subtree. */
+.bezel-controls {
+  position: absolute; top: 6px; right: 8px; z-index: 7;
+  display: flex; gap: 6px; align-items: center;
+}
+#bezel:fullscreen .bezel-controls, #bezel:-webkit-full-screen .bezel-controls {
+  top: calc(3vh + 6px); right: calc(3vw + 8px);
+}
+.bezel-btn {
+  height: 22px; padding: 0 7px; border: none; border-radius: 3px;
+  background: rgba(0,0,0,.5); color: #ddd; font-size: 14px; line-height: 22px;
+  cursor: pointer; opacity: .6; transition: opacity .15s;
+}
+.bezel-btn:hover, .bezel-btn:focus-visible { opacity: 1; }
+.bezel-btn:disabled { opacity: .25; cursor: default; }
+#fullscreenBtn { width: 26px; padding: 0; }
+/* Injects a real Escape keystroke into the guest (see fullscreen.js); the
+   browser reserves Esc to exit fullscreen. Hidden outside fullscreen. */
+#escBtn { font-size: 11px; font-weight: 600; display: none; }
+#bezel:fullscreen #escBtn, #bezel:-webkit-full-screen #escBtn { display: inline-block; }
+
+/* First-fullscreen hint. A <dialog> lands in the top layer, above the
+   fullscreened bezel. `.site-dialog` is the same chrome for other popups. */
+#fsEscHint, .site-dialog {
+  max-width: 380px; padding: 16px 18px 18px;
+  background: var(--panel-bg); color: var(--text);
+  border: var(--panel-border); border-radius: var(--panel-radius);
+}
+#fsEscHint::backdrop, .site-dialog::backdrop { background: rgba(0,0,0,.55); }
+#fsEscHint h2, .site-dialog h2 {
+  margin: 0 0 10px; font: bold 15px Arial, Helvetica, sans-serif;
+  text-transform: none; letter-spacing: normal; color: var(--text);
+}
+#fsEscHint p, .site-dialog p { margin: 0 0 14px; font-size: 14px; color: var(--dim); line-height: 1.5; }
+#fsEscHint .row, .site-dialog .row { justify-content: flex-end; }

@@ -1,0 +1,571 @@
+#include <gtest/gtest.h>
+
+#include "chipset.h"
+
+#include <vector>
+
+namespace {
+
+using ibmpcat::Chipset;
+
+TEST(ChipsetTest, MemoryReadWriteRoundTrip) {
+    Chipset cs;
+    cs.mem[0x1234] = 0;
+    auto bus = cs.make_bus();
+    bus.write(0x1234, 0xAB);
+    EXPECT_EQ(bus.read(0x1234), 0xAB);
+}
+
+TEST(ChipsetTest, RomRegionRejectsWrites) {
+    Chipset cs;
+    uint8_t rom[4] = {0x11, 0x22, 0x33, 0x44};
+    cs.load_rom(0xF0000, rom, 4);
+    auto bus = cs.make_bus();
+    EXPECT_EQ(bus.read(0xF0000), 0x11);
+    bus.write(0xF0000, 0xFF);
+    EXPECT_EQ(bus.read(0xF0000), 0x11);  // unchanged, ROM ignores writes
+}
+
+TEST(ChipsetTest, A20DisabledWrapsAt1MB) {
+    Chipset cs;
+    auto bus = cs.make_bus();
+    cs.kbc.set_a20(false);
+    bus.write(0x000010, 0x77);
+    EXPECT_EQ(bus.read(0x100010), 0x77);
+}
+
+TEST(ChipsetTest, RomAlsoDecodesAtTheTopOf16MB) {
+    Chipset cs;
+    uint8_t rom[2] = {0xEA, 0x5B};
+    cs.load_rom(0xFFFF0, rom, 2);
+    auto bus = cs.make_bus();
+    EXPECT_EQ(bus.read(0xFFFFF0), 0xEA);
+    bus.write(0xFFFFF0, 0x00);
+    EXPECT_EQ(bus.read(0xFFFFF0), 0xEA);
+    EXPECT_EQ(bus.read(0xFEFFFF), 0xFF) << "the alias is the 64KB at FF0000h only";
+    EXPECT_EQ(bus.read(0xFF0000), 0xFF) << "no ROM at F0000h itself, so its alias is open bus";
+    EXPECT_TRUE(cs.is_rom(0xFFFFF1));
+}
+
+TEST(ChipsetTest, ClosedGateHoldsOnlyA20Low) {
+    Chipset cs;
+    uint8_t rom[1] = {0xEA};
+    cs.load_rom(0xFFFF0, rom, 1);
+    auto bus = cs.make_bus();
+    cs.kbc.set_a20(false);
+    EXPECT_EQ(bus.read(0xFFFFF0), 0xFF) << "FFFFF0h lands on EFFFF0h, where nothing decodes";
+}
+
+TEST(ChipsetTest, A20EnabledDoesNotWrapAndAboveOneMebIsOpenBus) {
+    Chipset cs;
+    auto bus = cs.make_bus();
+    bus.write(0x000010, 0x77);
+    // Enable A20 via the keyboard controller's write-output-port command.
+    cs.kbc.out(0x64, 0xD1);
+    cs.kbc.out(0x60, 0x02);  // bit1 set -> A20 enabled
+    ASSERT_TRUE(cs.kbc.a20_enabled());
+    EXPECT_EQ(bus.read(0x100010), 0xFF);  // no wraparound; nothing populated up there -> open bus
+    EXPECT_EQ(bus.read(0x000010), 0x77);  // low memory unaffected
+}
+
+TEST(ChipsetTest, Port61GatesSpeakerAndReadsBackRefreshToggle) {
+    Chipset cs;
+    auto bus = cs.make_bus();
+    bus.out(0x61, 0x01);  // gate channel 2 on
+    EXPECT_EQ(bus.in(0x61) & 0x01, 0x01);
+    uint8_t before = bus.in(0x61);
+    cs.tick(1000, 1193182.0);
+    EXPECT_EQ(bus.in(0x61) & 0x10, before & 0x10) << "no refresh until channel 1 is programmed";
+}
+
+TEST(ChipsetTest, RefreshFollowsChannelOneAndStealsFiveClocksEach) {
+    Chipset cs;
+    auto bus = cs.make_bus();
+    bus.out(0x43, 0x54);  // channel 1, LSB, mode 2, IBM's POST
+    bus.out(0x41, 18);
+    uint8_t before = bus.in(0x61) & 0x10;
+    cs.tick(19, 1193182.0);  // one PIT clock per CPU cycle: the load clock plus one 15 us period
+    EXPECT_NE(bus.in(0x61) & 0x10, before);
+    EXPECT_EQ(cs.take_held_clocks(), 5);
+    EXPECT_EQ(cs.take_held_clocks(), 0);
+    cs.tick(19 + 18 * 100, 1193182.0);
+    EXPECT_EQ(cs.take_held_clocks(), 500);
+}
+
+TEST(ChipsetTest, BusCycleLengthsFollowTheTechnicalReference) {
+    Chipset cs;
+    auto bus = cs.make_bus();
+    ASSERT_NE(bus.mem_clocks, nullptr);
+    EXPECT_EQ(bus.mem_clocks[0x00000 >> 12], 3);   // system-board RAM
+    EXPECT_EQ(bus.mem_clocks[0x9F000 >> 12], 3);
+    constexpr uint8_t kSlot = cpu80286::Bus::kMemSlotted;
+    EXPECT_EQ(bus.mem_clocks[0xA0000 >> 12], 6 | kSlot);   // EGA, an 8-bit card holding the CPU to its slots
+    EXPECT_EQ(bus.mem_clocks[0xB8000 >> 12], 6 | kSlot);
+    EXPECT_EQ(bus.mem_clocks[0xC0000 >> 12], 6);   // EGA BIOS ROM
+    EXPECT_EQ(bus.mem_clocks[0xF0000 >> 12], 3);   // system ROM
+    EXPECT_EQ(bus.mem_clocks[0xFFF000 >> 12], 3);  // its alias
+    EXPECT_EQ(bus.io_clocks(0x1F0), 3);            // WD1003 data port, 16-bit
+    EXPECT_EQ(bus.io_clocks(0x1F7), 6);
+    EXPECT_EQ(bus.io_clocks(0x20), 6);
+}
+
+TEST(ChipsetTest, DmaPageRegisterRoundTripsThroughPorts) {
+    Chipset cs;
+    auto bus = cs.make_bus();
+    bus.out(0x81, 0x05);  // DMA1 channel 2 (floppy) page register
+    EXPECT_EQ(bus.in(0x81), 0x05);
+}
+
+TEST(ChipsetTest, MasterPicInterruptDeliveredDirectly) {
+    Chipset cs;
+    cs.pic_master.out(0x20, 0x11);
+    cs.pic_master.out(0x21, 0x08);
+    cs.pic_master.out(0x21, 0x04);
+    cs.pic_master.out(0x21, 0x01);
+    cs.pic_master.out(0x21, 0x00);  // unmask all
+    cs.pic_master.set_line(1, true);  // e.g. keyboard IRQ1
+    EXPECT_EQ(cs.poll_interrupt(), 0x08 + 1);
+}
+
+TEST(ChipsetTest, FloppyDmaTransferCopiesRealBytesIntoMemory) {
+    Chipset cs;
+    std::vector<uint8_t> img(80 * 2 * 15 * 512, 0);
+    img[512] = 0x77;  // sector 2 (1-based), first byte
+    cs.fdc.mount(0, img.data(), img.size());
+    cs.fdc.out(0x3F2, 0x1C);  // DOR: ~RESET high, motor A on, DMA/IRQ enable
+    // DMA1 channel 2: address 0x2000, page 0, count 511 (512 bytes, N-1),
+    // write transfer (device -> memory), unmasked, cascaded through DMA2.
+    cs.dma2.out(0xD6, 0xC0);
+    cs.dma2.out(0xD4, 0x00);
+    cs.dma1.out(0x0B, 0x46);
+    cs.dma1.out(0x0A, 0x02);  // unmask channel 2
+    cs.dma1.out(0x04, 0x00); cs.dma1.out(0x04, 0x20);  // address = 0x2000
+    cs.dma1.out(0x05, 0xFF); cs.dma1.out(0x05, 0x01);  // count = 0x01FF (512 bytes)
+
+    // READ DATA: drive0/head0, C=0,H=0,R=2 (sector 2), N=2, EOT=2 (one sector).
+    cs.fdc.out(0x3F5, 0xE6);
+    cs.fdc.out(0x3F5, 0x00);
+    cs.fdc.out(0x3F5, 0x00);
+    cs.fdc.out(0x3F5, 0x00);
+    cs.fdc.out(0x3F5, 0x02);
+    cs.fdc.out(0x3F5, 0x02);
+    cs.fdc.out(0x3F5, 0x02);
+    cs.fdc.out(0x3F5, 0x1B);
+    cs.fdc.out(0x3F5, 0xFF);
+
+    bool copied = false;
+    for (uint64_t c = 0; c < 10'000'000 && !copied; c += 100) {
+        cs.tick(c, 8000000.0);
+        if (cs.mem[0x2000] == 0x77) copied = true;
+    }
+    EXPECT_TRUE(copied);
+    EXPECT_EQ(cs.dma1.address(2), 0x2000 + 512);
+    EXPECT_TRUE(cs.fdc.irq_pending());
+    EXPECT_EQ(cs.take_held_clocks(), 512 * 10) << "each DMA byte holds the CPU off for one 10-clock DMA cycle";
+}
+
+TEST(ChipsetTest, Irq6IsEdgeTriggeredNotReRaisedWhileStillPending) {
+    // IRQ6 is edge-triggered; level-triggering stormed a real BIOS ISR (IBM_PCAT_REVIEW.md §8).
+    Chipset cs;
+    cs.pic_master.out(0x20, 0x11);
+    cs.pic_master.out(0x21, 0x08);
+    cs.pic_master.out(0x21, 0x04);
+    cs.pic_master.out(0x21, 0x01);
+    cs.pic_master.out(0x21, 0x00);  // unmask all, vector base 8
+
+    std::vector<uint8_t> img(80 * 2 * 15 * 512, 0);
+    cs.fdc.mount(0, img.data(), img.size());
+    cs.fdc.out(0x3F2, 0x1C);  // DOR: ~RESET high, motor A on, DMA/IRQ enable
+    cs.dma2.out(0xD6, 0xC0);
+    cs.dma2.out(0xD4, 0x00);
+    cs.dma1.out(0x0B, 0x46);
+    cs.dma1.out(0x0A, 0x02);
+    cs.dma1.out(0x04, 0x00); cs.dma1.out(0x04, 0x20);
+    cs.dma1.out(0x05, 0xFF); cs.dma1.out(0x05, 0x01);
+    cs.fdc.out(0x3F5, 0xE6);
+    cs.fdc.out(0x3F5, 0x00); cs.fdc.out(0x3F5, 0x00); cs.fdc.out(0x3F5, 0x00);
+    cs.fdc.out(0x3F5, 0x01); cs.fdc.out(0x3F5, 0x02); cs.fdc.out(0x3F5, 0x01);
+    cs.fdc.out(0x3F5, 0x1B); cs.fdc.out(0x3F5, 0xFF);
+
+    for (uint64_t c = 0; c < 10'000'000; c += 100) {
+        cs.tick(c, 8000000.0);
+        if (cs.fdc.irq_pending()) break;
+    }
+    ASSERT_TRUE(cs.fdc.irq_pending());
+
+    // Service once without draining FDC result bytes. No new edge may re-pend.
+    int vec1 = cs.poll_interrupt();
+    ASSERT_GE(vec1, 0);
+    cs.pic_master.out(0x20, 0x20);  // non-specific EOI, as the ISR would issue
+    EXPECT_TRUE(cs.fdc.irq_pending());  // still not drained
+    EXPECT_FALSE(cs.pic_master.has_interrupt());  // but no new edge -> nothing re-pending
+
+    cs.tick(20'000'000, 8000000.0);  // even after more ticks with the condition still true
+    EXPECT_FALSE(cs.pic_master.has_interrupt());
+}
+
+TEST(ChipsetTest, KeyboardIrq1ReachesThePic) {
+    // IRQ1 must reach the PIC (IBM_PCAT_REVIEW.md §9).
+    Chipset cs;
+    cs.pic_master.out(0x20, 0x11);
+    cs.pic_master.out(0x21, 0x08);
+    cs.pic_master.out(0x21, 0x04);
+    cs.pic_master.out(0x21, 0x01);
+    cs.pic_master.out(0x21, 0x00);  // unmask all, vector base 8
+    cs.kbc.out(0x64, 0x60); cs.kbc.out(0x60, 0x01);  // command byte: enable IRQ1
+
+    cs.kbc.inject_scancode(0x1E);  // 'A' make code
+    cs.tick(uint64_t(ibmpcat::I8042::kFrameSeconds * 8000000.0) + 1, 8000000.0);
+    ASSERT_TRUE(cs.kbc.irq1_pending());
+    EXPECT_TRUE(cs.pic_master.has_interrupt());
+    EXPECT_EQ(cs.poll_interrupt(), 0x08 + 1);  // vector_base(8) + IR1
+}
+
+TEST(ChipsetTest, RtcPeriodicInterruptReachesIrq8) {
+    Chipset cs;
+    cs.cmos.out(0x70, 0x0B);
+    cs.cmos.out(0x71, 0x42);  // PIE, 24-hour
+    EXPECT_FALSE(cs.pic_slave.line(0));
+    cs.tick(8000, 8000000.0);  // 1 ms, past one 1024 Hz period
+    EXPECT_TRUE(cs.pic_slave.line(0));
+    cs.cmos.out(0x70, 0x0C);
+    EXPECT_EQ(cs.cmos.in(0x71) & 0xC0, 0xC0);
+    cs.tick(8001, 8000000.0);
+    EXPECT_FALSE(cs.pic_slave.line(0)) << "reading register C drops IRQ8";
+}
+
+TEST(ChipsetTest, HddIdentifyAndReadGoesThroughAtomicSixteenBitBusPath) {
+    // bus.in16 must reach the HDD data register, not split into two 8-bit accesses.
+    Chipset cs;
+    auto bus = cs.make_bus();
+    std::vector<uint8_t> img(733 * 5 * 17 * 512, 0);
+    img[512] = 0x42;  // sector 2 (1-based), first byte
+    cs.hdd.mount(0, img.data(), img.size());
+
+    bus.out(0x1F6, 0xA0);  // drive 0, head 0
+    bus.out(0x1F7, 0xEC);  // IDENTIFY DEVICE
+    ASSERT_TRUE(bus.in(0x1F7) & 0x08);  // DRQ
+    EXPECT_EQ(bus.in16(0x1F0), 0x0040);  // word 0: general config, fixed device
+    EXPECT_EQ(bus.in16(0x1F0), 733);     // word 1: cylinders
+    for (int i = 0; i < 254; ++i) bus.in16(0x1F0);  // drain the rest
+
+    bus.out(0x1F6, 0xA0);
+    bus.out(0x1F2, 1);  // 1 sector
+    bus.out(0x1F3, 2);  // sector 2 (1-based)
+    bus.out(0x1F4, 0); bus.out(0x1F5, 0);
+    bus.out(0x1F7, 0x20);  // READ SECTORS
+
+    bool ready = false;
+    for (uint64_t c = 0; c < 10'000'000 && !ready; c += 100) {
+        cs.tick(c, 8000000.0);
+        if (bus.in(0x3F6) & 0x08) ready = true;
+    }
+    ASSERT_TRUE(ready);
+    EXPECT_EQ(bus.in16(0x1F0) & 0xFF, 0x42);
+}
+
+TEST(ChipsetTest, Irq14IsEdgeTriggeredNotReRaisedWhilePending) {
+    // Edge-triggered like IRQ6/IRQ1, for IRQ14 (slave line 6).
+    Chipset cs;
+    cs.pic_master.out(0x20, 0x11);
+    cs.pic_master.out(0x21, 0x08);
+    cs.pic_master.out(0x21, 0x04);
+    cs.pic_master.out(0x21, 0x01);
+    cs.pic_master.out(0x21, 0x00);  // unmask all, vector base 8
+    cs.pic_slave.out(0xA0, 0x11);
+    cs.pic_slave.out(0xA1, 0x70);
+    cs.pic_slave.out(0xA1, 0x02);
+    cs.pic_slave.out(0xA1, 0x01);
+    cs.pic_slave.out(0xA1, 0x00);  // unmask all, vector base 0x70
+
+    std::vector<uint8_t> img(733 * 5 * 17 * 512, 0);
+    cs.hdd.mount(0, img.data(), img.size());
+    cs.hdd.out(0x1F6, 0xA0);
+    cs.hdd.out(0x1F2, 1); cs.hdd.out(0x1F3, 1);
+    cs.hdd.out(0x1F4, 0); cs.hdd.out(0x1F5, 0);
+    cs.hdd.out(0x1F7, 0x20);  // READ SECTORS
+
+    for (uint64_t c = 0; c < 10'000'000; c += 100) {
+        cs.tick(c, 8000000.0);
+        if (cs.hdd.irq_pending()) break;
+    }
+    ASSERT_TRUE(cs.hdd.irq_pending());
+
+    // Service once without reading status (an ISR that only EOIs).
+    int vec1 = cs.poll_interrupt();
+    ASSERT_GE(vec1, 0);
+    cs.pic_slave.out(0xA0, 0x20);   // non-specific EOI on the slave
+    cs.pic_master.out(0x20, 0x20);  // ...and the cascaded master EOI
+    EXPECT_TRUE(cs.hdd.irq_pending());              // still not acknowledged at the device
+    EXPECT_FALSE(cs.pic_slave.has_interrupt());     // but no new edge -> nothing re-pending
+
+    cs.tick(20'000'000, 8000000.0);  // even after more ticks with the condition still true
+    EXPECT_FALSE(cs.pic_slave.has_interrupt());
+}
+
+TEST(ChipsetTest, SlaveInterruptCascadesThroughMasterIr2) {
+    Chipset cs;
+    cs.pic_master.out(0x20, 0x11);
+    cs.pic_master.out(0x21, 0x08);
+    cs.pic_master.out(0x21, 0x04);
+    cs.pic_master.out(0x21, 0x01);
+    cs.pic_master.out(0x21, 0x00);
+    cs.pic_slave.out(0xA0, 0x11);
+    cs.pic_slave.out(0xA1, 0x70);  // vector base 0x70 (IRQ8-15 range)
+    cs.pic_slave.out(0xA1, 0x02);
+    cs.pic_slave.out(0xA1, 0x01);
+    cs.pic_slave.out(0xA1, 0x00);
+    cs.pic_slave.set_line(0, true);  // e.g. IRQ8 (RTC)
+    EXPECT_EQ(cs.poll_interrupt(), 0x70);
+}
+
+TEST(ChipsetTest, EgaVerticalInterruptArrivesOnIrq9) {
+    Chipset cs;
+    cs.pic_master.out(0x20, 0x11);
+    cs.pic_master.out(0x21, 0x08);
+    cs.pic_master.out(0x21, 0x04);
+    cs.pic_master.out(0x21, 0x01);
+    cs.pic_master.out(0x21, 0x00);
+    cs.pic_slave.out(0xA0, 0x11);
+    cs.pic_slave.out(0xA1, 0x70);
+    cs.pic_slave.out(0xA1, 0x02);
+    cs.pic_slave.out(0xA1, 0x01);
+    cs.pic_slave.out(0xA1, 0x00);
+    cs.ega.out(0x3C2, 0x01);
+    cs.ega.out(0x3D4, 0x11); cs.ega.out(0x3D5, 0x10);  // enabled, not clearing
+    for (uint64_t c = 0; c < 400'000 && !cs.has_interrupt(); c += 100) cs.tick(c, 8000000.0);
+    ASSERT_TRUE(cs.pic_slave.has_interrupt());
+    EXPECT_EQ(cs.poll_interrupt(), 0x71);
+}
+
+void InitPics(Chipset& cs) {
+    cs.pic_master.out(0x20, 0x11);
+    cs.pic_master.out(0x21, 0x08);
+    cs.pic_master.out(0x21, 0x04);
+    cs.pic_master.out(0x21, 0x01);
+    cs.pic_master.out(0x21, 0x00);
+    cs.pic_slave.out(0xA0, 0x11);
+    cs.pic_slave.out(0xA1, 0x70);
+    cs.pic_slave.out(0xA1, 0x02);
+    cs.pic_slave.out(0xA1, 0x01);
+    cs.pic_slave.out(0xA1, 0x00);
+}
+
+// One-sector READ DATA of sector 1 into DMA1 channel 2 at page:address, with the given mode.
+bool FloppyRead(Chipset& cs, std::vector<uint8_t>& img, uint8_t page, uint16_t addr, uint8_t mode, bool cascade = true) {
+    cs.fdc.mount(0, img.data(), img.size());
+    cs.fdc.out(0x3F2, 0x1C);
+    cs.fdc.clear_irq();  // the reset interrupt
+    if (cascade) {
+        cs.dma2.out(0xD6, 0xC0);
+        cs.dma2.out(0xD4, 0x00);
+    }
+    cs.dma1.out(0x0B, mode);
+    cs.dma1.out(0x0C, 0);
+    cs.dma1.out(0x04, uint8_t(addr)); cs.dma1.out(0x04, uint8_t(addr >> 8));
+    cs.dma1.out(0x05, 0xFF); cs.dma1.out(0x05, 0x01);
+    cs.dma1.set_page(2, page);
+    cs.dma1.out(0x0A, 0x02);
+    const uint8_t cmd[] = {0xE6, 0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0x1B, 0xFF};
+    for (uint8_t b : cmd) cs.fdc.out(0x3F5, b);
+    for (uint64_t c = 0; c < 10'000'000; c += 100) {
+        cs.tick(c, 8000000.0);
+        if (cs.fdc.irq_pending()) return true;
+    }
+    return false;
+}
+
+TEST(ChipsetTest, DmaAddressWrapsWithinTheSixtyFourKPage) {
+    Chipset cs;
+    std::vector<uint8_t> img(80 * 2 * 15 * 512, 0);
+    img[0] = 0x11; img[1] = 0x22;
+    cs.mem[0x20000] = 0xEE;
+    ASSERT_TRUE(FloppyRead(cs, img, 0x01, 0xFFFF, 0x46));
+    EXPECT_EQ(cs.mem[0x1FFFF], 0x11);
+    EXPECT_EQ(cs.mem[0x10000], 0x22) << "the 8237 address carries out of bit 15 and the page stays put";
+    EXPECT_EQ(cs.mem[0x20000], 0xEE);
+}
+
+TEST(ChipsetTest, DmaVerifyMovesNoData) {
+    Chipset cs;
+    std::vector<uint8_t> img(80 * 2 * 15 * 512, 0x5A);
+    ASSERT_TRUE(FloppyRead(cs, img, 0x00, 0x3000, 0x42));
+    EXPECT_EQ(cs.mem[0x3000], 0x00);
+    EXPECT_EQ(cs.dma1.address(2), 0x3000 + 512);
+    EXPECT_TRUE(cs.dma1.channel_masked(2)) << "TC without autoinit sets the mask bit";
+    EXPECT_EQ(cs.dma1.in(0x08) & 0x04, 0x04);
+}
+
+TEST(ChipsetTest, DmaIgnoresTheA20Gate) {
+    Chipset cs;
+    std::vector<uint8_t> img(80 * 2 * 15 * 512, 0);
+    img[0] = 0x33;
+    cs.kbc.set_a20(false);
+    ASSERT_TRUE(FloppyRead(cs, img, 0x10, 0x5000, 0x46));
+    EXPECT_EQ(cs.mem[0x5000], 0x00) << "page 10h is above 1MB, not wrapped onto 0";
+}
+
+TEST(ChipsetTest, Dma1NeedsTheCascadeChannelOnDma2) {
+    Chipset cs;
+    std::vector<uint8_t> img(80 * 2 * 15 * 512, 0);
+    EXPECT_FALSE(FloppyRead(cs, img, 0x00, 0x2000, 0x46, false));
+    EXPECT_EQ(cs.dma1.in(0x08) & 0x40, 0x40) << "DREQ2 waits in the status register";
+    cs.dma2.out(0xD6, 0xC0);
+    cs.dma2.out(0xD4, 0x00);
+    cs.tick(10'000'100, 8000000.0);
+    EXPECT_TRUE(cs.fdc.irq_pending());
+}
+
+TEST(ChipsetTest, DmaRequestNeedsTheDorEnableBit) {
+    Chipset cs;
+    std::vector<uint8_t> img(80 * 2 * 15 * 512, 0);
+    img[0] = 0x44;
+    cs.fdc.mount(0, img.data(), img.size());
+    cs.dma2.out(0xD6, 0xC0);
+    cs.dma2.out(0xD4, 0x00);
+    cs.dma1.out(0x0B, 0x46);
+    cs.dma1.out(0x04, 0x00); cs.dma1.out(0x04, 0x20);
+    cs.dma1.out(0x05, 0xFF); cs.dma1.out(0x05, 0x01);
+    cs.dma1.out(0x0A, 0x02);
+    cs.fdc.out(0x3F2, 0x14);
+    cs.fdc.clear_irq();
+    const uint8_t cmd[] = {0xE6, 0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0x1B, 0xFF};
+    for (uint8_t b : cmd) cs.fdc.out(0x3F5, b);
+    for (uint64_t c = 0; c < 10'000'000; c += 100) cs.tick(c, 8000000.0);
+    EXPECT_EQ(cs.mem[0x2000], 0x00);
+    cs.fdc.out(0x3F2, 0x1C);
+    cs.tick(10'000'100, 8000000.0);
+    EXPECT_EQ(cs.mem[0x2000], 0x44);
+}
+
+TEST(ChipsetTest, SlaveRequestArrivingInServiceIsDeliveredAfterBothEois) {
+    Chipset cs;
+    InitPics(cs);
+    cs.pic_slave.set_line(6, true);  // IRQ14
+    cs.sync_cascade();
+    EXPECT_EQ(cs.poll_interrupt(), 0x76);
+    cs.pic_slave.set_line(0, true);  // IRQ8, higher priority on the slave
+    cs.sync_cascade();
+    EXPECT_FALSE(cs.has_interrupt()) << "master IR2 is still in service";
+    cs.pic_slave.out(0xA0, 0x20);
+    cs.pic_master.out(0x20, 0x20);
+    cs.sync_cascade();
+    EXPECT_EQ(cs.poll_interrupt(), 0x70);
+}
+
+TEST(ChipsetTest, SlaveDefaultIr7WhenItsRequestIsGone) {
+    Chipset cs;
+    InitPics(cs);
+    cs.pic_slave.set_line(3, true);
+    cs.sync_cascade();
+    ASSERT_TRUE(cs.has_interrupt());
+    // The master's IR2 latch still holds while the slave drops its request.
+    cs.pic_slave.set_line(3, false);
+    int level = cs.pic_master.inta1();
+    ASSERT_EQ(level, 2);
+    EXPECT_EQ(cs.pic_slave.inta2(cs.pic_slave.inta1()), 0x77);
+    EXPECT_EQ(cs.pic_slave.isr(), 0x00);
+}
+
+TEST(ChipsetTest, MasterIr2WithoutIcw3IsAnOrdinaryInput) {
+    Chipset cs;
+    cs.pic_master.out(0x20, 0x13);  // single
+    cs.pic_master.out(0x21, 0x08);
+    cs.pic_master.out(0x21, 0x01);
+    cs.pic_master.out(0x21, 0x00);
+    cs.pic_master.set_line(2, false);
+    cs.pic_master.set_line(2, true);
+    EXPECT_EQ(cs.pic_master.inta2(cs.pic_master.inta1()), 0x0A);
+}
+
+TEST(ChipsetTest, SlaveWithTheWrongIdLeavesTheBusFloating) {
+    Chipset cs;
+    InitPics(cs);
+    cs.pic_slave.out(0xA0, 0x11);
+    cs.pic_slave.out(0xA1, 0x70);
+    cs.pic_slave.out(0xA1, 0x03);
+    cs.pic_slave.out(0xA1, 0x01);
+    cs.pic_slave.out(0xA1, 0x00);
+    cs.pic_slave.set_line(0, true);
+    cs.sync_cascade();
+    EXPECT_EQ(cs.poll_interrupt(), 0xFF);
+}
+
+TEST(ChipsetTest, TimerTickHeldOffPastHalfAPeriodIsLost) {
+    Chipset cs;
+    InitPics(cs);
+    auto bus = cs.make_bus();
+    bus.out(0x43, 0x36);
+    bus.out(0x40, 0x00); bus.out(0x40, 0x10);  // mode 3, 4096 counts
+    uint64_t c = 0;
+    while (!cs.has_interrupt() && c < 1'000'000) cs.tick(c += 10, 8000000.0);
+    ASSERT_TRUE(cs.has_interrupt());
+    // OUT falls after 2048 PIT clocks, about 13.7k CPU clocks; nobody acknowledged
+    for (int i = 0; i < 1500; ++i) cs.tick(c += 10, 8000000.0);
+    EXPECT_FALSE(cs.pic_master.line(0));
+    EXPECT_EQ(cs.pic_master.irr() & 0x01, 0x00);
+}
+
+TEST(ChipsetTest, FdcResetGivesIrq6AFreshEdgeAfterReinit) {
+    Chipset cs;
+    InitPics(cs);
+    cs.fdc.out(0x3F2, 0x1C);
+    cs.tick(0, 8000000.0);
+    ASSERT_EQ(cs.poll_interrupt(), 0x0E);
+    // A warm boot re-initializes the PIC with IRQ6 still high, then resets the FDC.
+    InitPics(cs);
+    cs.tick(100, 8000000.0);
+    EXPECT_FALSE(cs.has_interrupt());
+    cs.fdc.out(0x3F2, 0x18);
+    cs.tick(200, 8000000.0);
+    cs.fdc.out(0x3F2, 0x1C);
+    cs.tick(300, 8000000.0);
+    EXPECT_EQ(cs.poll_interrupt(), 0x0E);
+}
+
+TEST(ChipsetTest, FormatTrackTakesItsIdsByDmaAndRaisesIrq6) {
+    Chipset cs;
+    InitPics(cs);
+    std::vector<uint8_t> img(80 * 2 * 15 * 512, 0x11);
+    cs.fdc.mount(0, img.data(), img.size());
+    cs.fdc.out(0x3F2, 0x1C);
+    cs.fdc.clear_irq();
+    cs.dma2.out(0xD6, 0xC0);
+    cs.dma2.out(0xD4, 0x00);
+    for (int i = 0; i < 15; ++i) {
+        cs.mem[0x3000 + i * 4] = 0;
+        cs.mem[0x3001 + i * 4] = 0;
+        cs.mem[0x3002 + i * 4] = uint8_t(i + 1);
+        cs.mem[0x3003 + i * 4] = 2;
+    }
+    cs.dma1.out(0x0B, 0x4A);
+    cs.dma1.out(0x0C, 0);
+    cs.dma1.out(0x04, 0x00); cs.dma1.out(0x04, 0x30);
+    cs.dma1.out(0x05, 15 * 4 - 1); cs.dma1.out(0x05, 0x00);
+    cs.dma1.out(0x0A, 0x02);
+    const uint8_t cmd[] = {0x4D, 0x00, 0x02, 0x0F, 0x00, 0xF6};
+    for (uint8_t b : cmd) cs.fdc.out(0x3F5, b);
+    bool irq = false;
+    for (uint64_t c = 0; c < 4'000'000 && !irq; c += 100) {
+        cs.tick(c, 8000000.0);
+        irq = cs.has_interrupt();
+    }
+    ASSERT_TRUE(irq);
+    EXPECT_EQ(cs.poll_interrupt(), 0x0E);
+    EXPECT_EQ(cs.dma1.in(0x08) & 0x04, 0x04);
+    EXPECT_EQ(cs.fdc.drives[0].image[0], 0xF6);
+    EXPECT_EQ(cs.fdc.drives[0].image[15 * 512 - 1], 0xF6);
+    EXPECT_EQ(cs.fdc.drives[0].image[15 * 512], 0x11);
+}
+
+TEST(ChipsetTest, RtcIsThe5170sSixtyFourByteMc146818a) {
+    Chipset cs;
+    cs.cmos.out(0x70, 0x09);
+    EXPECT_EQ(cs.cmos.in(0x71), 0x86);
+    cs.cmos.out(0x70, 0x1B);
+    cs.cmos.out(0x71, 0xF2);
+    cs.cmos.out(0x70, 0x5B);
+    EXPECT_EQ(cs.cmos.in(0x71), 0xF2) << "six address bits, so 0x5B is 0x1B";
+}
+
+}  // namespace

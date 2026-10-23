@@ -1,0 +1,75 @@
+# Build the WebAssembly module. Needs the Emscripten SDK on PATH:
+#   git clone https://github.com/emscripten-core/emsdk
+#   ./emsdk install latest && ./emsdk activate latest && source ./emsdk_env.sh
+
+EMCC ?= em++
+
+CORE = ..
+SRC = wasm_machine.cpp $(CORE)/machine.cpp $(CORE)/bus.cpp $(CORE)/cpu65c02.cpp \
+      $(CORE)/via65c22.cpp $(CORE)/acia65c51.cpp $(CORE)/eeprom28c256.cpp $(CORE)/hd44780.cpp
+HDR = wasm_machine.cpp $(CORE)/machine.h $(CORE)/bus.h $(CORE)/cpu65c02.h \
+      $(CORE)/via65c22.h $(CORE)/acia65c51.h $(CORE)/eeprom28c256.h $(CORE)/hd44780.h
+
+EMFLAGS = -O2 -std=c++17 -lembind --no-entry \
+  -sMODULARIZE=1 -sEXPORT_NAME=CgOac6502 \
+  -sENVIRONMENT=web \
+  -sALLOW_MEMORY_GROWTH=1 \
+  -sFILESYSTEM=0
+
+cgoac6502.js: $(SRC)
+	$(EMCC) $(EMFLAGS) $(SRC) -o $@
+	$(call write_deps,$(SRC))
+
+# Default ROM, built from assembler6502/firmware/. Phony, since it has no prerequisites to timestamp against.
+roms/firmware.bin:
+	$(MAKE) -C $(CORE) rom
+	mkdir -p roms
+	cp $(CORE)/firmware/tmp/firmware.bin roms/firmware.bin
+
+# <addr>R entry addresses from the build's label file
+roms/entrypoints.js: roms/firmware.bin
+	python3 gen_entrypoints.py $(CORE)/firmware/tmp/firmware.lbl roms/entrypoints.js
+
+# gen_example_bin: host-compiled build tool, never shipped (see gen_example_bin.cpp)
+CXX ?= c++
+CORE_SRCS = $(CORE)/machine.cpp $(CORE)/bus.cpp $(CORE)/cpu65c02.cpp \
+      $(CORE)/via65c22.cpp $(CORE)/acia65c51.cpp $(CORE)/eeprom28c256.cpp $(CORE)/hd44780.cpp
+gen_example_bin: gen_example_bin.cpp $(CORE_SRCS) $(HDR)
+	$(CXX) -std=c++17 -O2 -I$(CORE) -o $@ gen_example_bin.cpp $(CORE_SRCS)
+
+# one .bin per examples/*.asm
+EXAMPLE_SRCS := $(wildcard examples/*.asm)
+EXAMPLE_BINS := $(EXAMPLE_SRCS:.asm=.bin)
+examples/%.bin: examples/%.asm gen_example_bin roms/firmware.bin
+	./gen_example_bin roms/firmware.bin $(CORE)/firmware/tmp/firmware.lbl $< $@
+
+.PHONY: shared wasm roms examples-bin roms/firmware.bin serve test test-smoke test-install clean stage
+wasm: cgoac6502.js
+roms: roms/firmware.bin roms/entrypoints.js
+examples-bin: $(EXAMPLE_BINS)
+
+# Shared front-end code, copied from shared/ (git-ignored, regenerated)
+SHARED = ../../shared
+serve: wasm roms examples-bin shared
+	@echo "serving on http://localhost:8000  (Ctrl-C to stop)"
+	python3 ../../serve_nocache.py 8000 .
+
+test: wasm roms examples-bin shared
+	npx playwright test
+
+# smoke.spec.ts only (deploy CI); `make test` is the full suite
+test-smoke: wasm roms examples-bin shared
+	npx playwright test tests/smoke.spec.ts
+
+coverage: wasm roms examples-bin shared
+	COVERAGE=1 npx playwright test
+
+clean:
+	rm -f cgoac6502.js cgoac6502.wasm cgoac6502.d roms/firmware.bin gen_example_bin examples/*.bin
+	rm -rf shared
+	rm -rf test-results playwright-report coverage .v8-coverage
+
+STAGE = index.html app.js cgoac6502.js cgoac6502.wasm lcdfont.js assets examples roms shared
+SHARED_EXTRA = terminal.js vendor
+
+include $(SHARED)/web.mk

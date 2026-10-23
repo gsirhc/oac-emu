@@ -1,0 +1,9 @@
+/* Banner shown while the machine runs and the screen lacks keyboard focus.
+   pointer-events none so it never eats the click that focuses the screen. */
+.focus-hint {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 6;
+  padding: 6px 0; text-align: center; pointer-events: none;
+  background: rgba(230,126,34,.55); color: #fff; font-size: 13px; font-weight: 600; letter-spacing: .03em;
+  opacity: 0; transition: opacity .2s ease;
+}
+.focus-hint.visible { opacity: 1; }

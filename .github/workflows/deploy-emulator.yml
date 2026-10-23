@@ -1,0 +1,759 @@
+name: Deploy site
+
+# Deploy CI runs smoke only (`make test-smoke` / Playwright
+# tests/smoke.spec.ts). The full suites run in nightly-full.yml.
+# See CLAUDE.md "Smoke vs full".
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - ".claude/**"
+      - ".cursor/**"
+  pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - ".claude/**"
+      - ".cursor/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Smoke: demo + GoogleTest. CP/M disk boot is nightly (nightly-full.yml).
+  # Shared 8080 ISA is i8080-test. See CLAUDE.md "Smoke vs full".
+  altair8800-test:
+    needs: i8080-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C altair8800 test-smoke
+
+  # Playwright smoke (tests/smoke.spec.ts). Full fidelity suite is nightly.
+  altair8800-web-test:
+    needs: altair8800-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.12
+
+      - working-directory: altair8800/web
+        run: make retro8080.js roms shared
+
+      - uses: ./.github/actions/fetch-altair-media
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - working-directory: altair8800/web
+        run: npm ci
+
+      - working-directory: altair8800/web
+        run: npx playwright install --with-deps chromium
+
+      - working-directory: altair8800/web
+        run: make test-smoke
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            altair8800/web/playwright-report/
+            altair8800/web/test-results/
+          retention-days: 7
+
+  # 6502 Assembler smoke: ROM build + GoogleTest. Dormann suites are nightly.
+  assembler6502-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cc65
+      - run: make -C assembler6502 test-smoke
+
+  # Playwright suite for the 6502 Assembler front end: boots the real ROM,
+  # drives the board controls, terminal, and ROM programmer in a real browser.
+  assembler6502-web-test:
+    needs: assembler6502-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cc65
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.12
+
+      - working-directory: assembler6502/web
+        run: make wasm roms examples-bin shared
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - working-directory: assembler6502/web
+        run: npm ci
+
+      - working-directory: assembler6502/web
+        run: npx playwright install --with-deps chromium
+
+      - working-directory: assembler6502/web
+        run: make test-smoke
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cgoac6502-playwright-report
+          path: |
+            assembler6502/web/playwright-report/
+            assembler6502/web/test-results/
+          retention-days: 7
+
+  # IBM PC/AT: GoogleTest suite over the 80286 core + AT chipset (see
+  # IBM_PCAT_REVIEW.md).
+  ibmpcat-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y nasm
+      - run: make -C ibmpc-at test-smoke
+
+  # Playwright suite for the IBM PC/AT front end: boots the real 80286 core
+  # + shipped FreeDOS HDD image, drives keyboard/floppy/HDD/speaker/theme
+  # controls and asserts EGA text-mode screen contents (see
+  # IBM_PCAT_REVIEW.md's Playwright section). Shares the same cached HDD
+  # image build as the `build` job below -- see its own comment on the
+  # cache step.
+  ibmpcat-web-test:
+    needs: ibmpcat-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.12
+
+      - run: sudo apt-get update && sudo apt-get install -y nasm
+
+      - working-directory: ibmpc-at/web
+        run: make roms
+
+      - name: Cache IBM PC/AT FreeDOS HDD image
+        id: ibmpcat-hdd
+        uses: actions/cache@v4
+        with:
+          path: ibmpc-at/disks/freedos-hdd.img
+          key: ibmpcat-hdd-${{ hashFiles('ibmpc-at/*.h', 'ibmpc-at/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'ibmpc-at/disks/*.cpp', 'ibmpc-at/disks/*.sh', 'ibmpc-at/roms/*.sh', 'ibmpc-at/roms/egabios/*') }}
+
+      - name: Build IBM PC/AT FreeDOS HDD image
+        if: steps.ibmpcat-hdd.outputs.cache-hit != 'true'
+        run: make -C ibmpc-at hdd-image
+
+      - working-directory: ibmpc-at/web
+        run: make ibmpcat.js hdd-image
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - working-directory: ibmpc-at/web
+        run: make test-install
+
+      - working-directory: ibmpc-at/web
+        run: make test-smoke
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ibmpcat-playwright-report
+          path: |
+            ibmpc-at/web/playwright-report/
+            ibmpc-at/web/test-results/
+          retention-days: 7
+
+  # Pac-Man arcade board: GoogleTest suite over the tilemap/sprite video
+  # + Namco WSG + machine (see pacman/PACMAN_REVIEW.md). The
+  # shared Z80 ISA is z80-test, not this job; Smoke.HwtestBoots* is the
+  # board-level "this CPU actually runs here" check.
+  pacman-test:
+    needs: z80-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C pacman test-smoke
+
+  # Playwright suite for the Pac-Man front end: boots the built-in hardware
+  # self-test ROM (no Namco IP), drives keyboard/theme controls, and
+  # exercises the user-supplied ROM-set loader against fixture CRCs.
+  pacman-web-test:
+    needs: pacman-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: pacman
+      target: test-smoke
+
+  # 486 DX2-66 Gaming PC: GoogleTest suite over the 80486 core + chipset,
+  # WD1003/ATAPI CD-ROM, floppy, VGA/VBE, PS/2 mouse and Sound Blaster 16
+  # (see pc486/PC486_REVIEW.md).
+  pc486-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C pc486 test-smoke
+
+  # Playwright suite for the 486 DX2-66 front end: boots the real 80486 core
+  # + shipped FreeDOS HDD image and CD-ROM ISO, drives keyboard/mouse/floppy/
+  # HDD/CD-ROM/speaker/Sound Blaster/theme controls and asserts VGA text-mode
+  # screen contents (see PC486_REVIEW.md's Playwright coverage). Two large
+  # media artifacts get their own cache, same reasoning as ibmpcat-web-test's
+  # single HDD-image cache below: the HDD image comes out of a genuine,
+  # slow FreeDOS 1.3 installer run (PC486_REVIEW.md §5), and the CD-ROM ISO
+  # is a ~400MB download that's otherwise pointless to repeat every run.
+  pc486-web-test:
+    needs: pc486-test
+    runs-on: ubuntu-latest
+    # Smoke only (tests/smoke.spec.ts). Full Playwright suite is nightly.
+    # Cap still needed: cold HDD rebuild is ~8 min; smoke itself is short.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.12
+
+      - working-directory: pc486/web
+        run: make roms
+
+      # mtools builds the CuteMouse driver floppy from the FreeDOS image --
+      # see pc486/disks/build-ctmouse-floppy.sh.
+      - run: sudo apt-get update && sudo apt-get install -y mtools
+
+      - name: Cache pc486 FreeDOS CD-ROM ISO
+        id: pc486-cd
+        uses: actions/cache@v4
+        with:
+          path: |
+            pc486/disks/freedos-cd.iso
+            pc486/disks/freedos-boot.img
+          key: pc486-cd-${{ hashFiles('pc486/disks/fetch-freedos-cd.sh') }}
+
+      - name: Fetch pc486 FreeDOS CD-ROM ISO
+        if: steps.pc486-cd.outputs.cache-hit != 'true'
+        run: bash pc486/disks/fetch-freedos-cd.sh
+
+      # restore/save split so a cancelled or timed-out suite still leaves the
+      # ~8 min HDD image in cache for the next run (combined cache@v4 only
+      # uploads in the post step, which cancel skips).
+      - name: Restore pc486 FreeDOS HDD image
+        id: pc486-hdd
+        uses: actions/cache/restore@v4
+        with:
+          path: pc486/disks/freedos-hdd.img
+          key: pc486-hdd-${{ hashFiles('pc486/*.h', 'pc486/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'pc486/disks/*.cpp', 'pc486/disks/*.sh', 'pc486/roms/*.sh') }}
+
+      - name: Build pc486 FreeDOS HDD image
+        if: steps.pc486-hdd.outputs.cache-hit != 'true'
+        run: make -C pc486 hdd-image
+
+      - name: Save pc486 FreeDOS HDD image
+        if: steps.pc486-hdd.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: pc486/disks/freedos-hdd.img
+          key: pc486-hdd-${{ hashFiles('pc486/*.h', 'pc486/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'pc486/disks/*.cpp', 'pc486/disks/*.sh', 'pc486/roms/*.sh') }}
+
+      # Both binaries: the shipped one and the instrumented twin the
+      # Performance panel's ?perf loads. Building only the shipped one would
+      # let the PC486_PERF paths rot unnoticed -- nothing else compiles them.
+      - working-directory: pc486/web
+        run: make pc486.js pc486-perf.js hdd-image driver-images shared
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - working-directory: pc486/web
+        run: make test-install
+
+      - working-directory: pc486/web
+        run: make test-smoke
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pc486-playwright-report
+          path: |
+            pc486/web/playwright-report/
+            pc486/web/test-results/
+          retention-days: 7
+
+  # Shared Z80 smoke: named GoogleTest groups (UM0080 + bus timing). zexdoc,
+  # zexall, and SingleStepTests are nightly.
+  z80-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C shared/cpu test-smoke
+
+  # Shared Intel 8080 ISA smoke. The CP/M diagnostics are nightly (`make i8080diag`).
+  i8080-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C shared/cpu test-smoke-i8080
+
+  # Shared NMOS 6502 ISA smoke. Klaus Dormann is nightly (`make dormann`).
+  mos6502-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C shared/cpu test-smoke-mos6502
+
+  # Asteroids arcade board: GoogleTest over the 6502 + DVG + machine
+  # (see asteroids/ASTEROIDS_REVIEW.md). Shared ISA is mos6502-test.
+  asteroids-test:
+    needs: mos6502-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C asteroids test-smoke
+
+  asteroids-web-test:
+    needs: asteroids-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: asteroids
+      target: test-smoke
+
+  # Centipede arcade board: GoogleTest over the 6502 + POKEY + machine
+  # (see centipede/CENTIPEDE_REVIEW.md). Shared ISA is mos6502-test.
+  centipede-test:
+    needs: mos6502-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C centipede test-smoke
+
+  centipede-web-test:
+    needs: centipede-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: centipede
+      target: test-smoke
+
+  # Missile Command arcade board: GoogleTest over the 6502 + POKEY + machine
+  # (see missile/MISSILE_REVIEW.md). Shared ISA is mos6502-test.
+  missile-test:
+    needs: mos6502-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C missile test-smoke
+
+  missile-web-test:
+    needs: missile-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: missile
+      target: test-smoke
+
+  # Frogger arcade board: GoogleTest suite over the dual Z80 + Galaxian
+  # video + AY-3-8910 + machine (see frogger/FROGGER_REVIEW.md).
+  # Shared Z80 ISA is z80-test; Smoke.HwtestBoots* is the board smoke.
+  frogger-test:
+    needs: z80-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C frogger test-smoke
+
+  frogger-web-test:
+    needs: frogger-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: frogger
+      target: test-smoke
+
+  # Scramble arcade board: GoogleTest suite over the dual Z80 + Galaxian
+  # video + two AY-3-8910s + PAL 6J (see scramble/SCRAMBLE_REVIEW.md).
+  # Shared Z80 ISA is z80-test; Smoke.HwtestBoots* is the board smoke.
+  scramble-test:
+    needs: z80-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C scramble test-smoke
+
+  scramble-web-test:
+    needs: scramble-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: scramble
+      target: test-smoke
+
+  # Galaga arcade board: GoogleTest suite over three Z80s + Namco video +
+  # the shared wavetable chip + MB884x (see galaga/GALAGA_REVIEW.md).
+  # Shared Z80 ISA is z80-test; Smoke.HwtestBoots* is the board smoke.
+  galaga-test:
+    needs: z80-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C galaga test-smoke
+
+  galaga-web-test:
+    needs: galaga-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: galaga
+      target: test-smoke
+
+  # Galaxian arcade board: GoogleTest suite over the single Z80 + Galaxian
+  # video + discrete sound (see galaxian/GALAXIAN_REVIEW.md).
+  # Shared Z80 ISA is z80-test; Smoke.HwtestBoots* is the board smoke.
+  galaxian-test:
+    needs: z80-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C galaxian test-smoke
+
+  galaxian-web-test:
+    needs: galaxian-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: galaxian
+      target: test-smoke
+
+  # Space Invaders arcade board: GoogleTest suite over the 8080 + MB14241
+  # shifter + discrete sound (see invaders/INVADERS_REVIEW.md).
+  # Shared 8080 ISA is i8080-test; Smoke.Hwtest* is the board smoke.
+  invaders-test:
+    needs: i8080-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C invaders test-smoke
+
+  invaders-web-test:
+    needs: invaders-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: invaders
+      target: test-smoke
+
+  # Lunar Rescue arcade board: GoogleTest suite over the colour PROM, red
+  # latch and Taito sound wiring (see lunarrescue/LUNARRESCUE_REVIEW.md).
+  # The shared mw8080 board runs in invaders-test; Smoke.Hwtest* is the board smoke.
+  lunarrescue-test:
+    needs: i8080-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C lunarrescue test-smoke
+
+  lunarrescue-web-test:
+    needs: lunarrescue-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: lunarrescue
+      target: test-smoke
+
+  # Battlezone arcade board: GoogleTest over the AVG, the Math Box 2901s, the
+  # discrete sound board and the machine (see battlezone/BATTLEZONE_REVIEW.md).
+  # Shared ISA is mos6502-test; Smoke.Hwtest* is the board smoke.
+  battlezone-test:
+    needs: mos6502-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C battlezone test-smoke
+
+  battlezone-web-test:
+    needs: battlezone-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: battlezone
+      target: test-smoke
+
+  # HTML (HTMLHint), JavaScript (ESLint), and C++ (cppcheck) under .
+  # A red run blocks deploy the same way a red test job does.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: sudo apt-get update && sudo apt-get install -y cppcheck libgtest-dev
+
+      - run: npm ci
+
+      - run: make lint
+
+  build:
+    needs:
+      [
+        lint,
+        altair8800-test,
+        altair8800-web-test,
+        assembler6502-test,
+        assembler6502-web-test,
+        ibmpcat-test,
+        ibmpcat-web-test,
+        pacman-test,
+        pacman-web-test,
+        pc486-test,
+        pc486-web-test,
+        z80-test,
+        mos6502-test,
+        i8080-test,
+        asteroids-test,
+        asteroids-web-test,
+        centipede-test,
+        centipede-web-test,
+        missile-test,
+        missile-web-test,
+        frogger-test,
+        frogger-web-test,
+        scramble-test,
+        scramble-web-test,
+        galaxian-test,
+        galaxian-web-test,
+        galaga-test,
+        galaga-web-test,
+        invaders-test,
+        invaders-web-test,
+        lunarrescue-test,
+        lunarrescue-web-test,
+        battlezone-test,
+        battlezone-web-test,
+      ]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cc65 nasm
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.12
+
+      # wasm module + generated ROM images
+      - working-directory: altair8800/web
+        run: make retro8080.js roms shared
+
+      # ship a ready-to-run machine: Altair 4K/8K BASIC + CP/M 2.2, pinned +
+      # checksummed, fetched into the Pages artifact so users need supply nothing.
+      - uses: ./.github/actions/fetch-altair-media
+
+      # 6502 Assembler's wasm module + its real ROM, built from assembler6502/firmware/
+      # source, plus the Example programs' captured-source .bins
+      # (gen_example_bin.cpp) `make site` below expects to already be sitting
+      # in web/examples/ -- `site` itself only copies web/, it doesn't build
+      # anything (see Makefile's own `_stage` vs `site` split).
+      - working-directory: assembler6502/web
+        run: make wasm roms examples-bin shared
+
+      # IBM PC/AT: the BIOS ROM (fetched, checksummed) and EGA BIOS (nasm) are cheap; the
+      # shipped FreeDOS HDD image is built by actually running the real
+      # FreeDOS 1.3 installer end to end against the emulator (see
+      # IBM_PCAT_REVIEW.md §11) -- genuinely slow (real minutes: tens of
+      # billions of emulated 8MHz cycles, every floppy read paced to its
+      # genuine transfer rate), so it's cached across runs, keyed on
+      # everything that could change its bytes (the native core + the
+      # disk-build harness + the fetch scripts' pinned checksums).
+      - name: Cache IBM PC/AT FreeDOS HDD image
+        id: ibmpcat-hdd
+        uses: actions/cache@v4
+        with:
+          path: ibmpc-at/disks/freedos-hdd.img
+          key: ibmpcat-hdd-${{ hashFiles('ibmpc-at/*.h', 'ibmpc-at/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'ibmpc-at/disks/*.cpp', 'ibmpc-at/disks/*.sh', 'ibmpc-at/roms/*.sh', 'ibmpc-at/roms/egabios/*') }}
+
+      - name: Build IBM PC/AT FreeDOS HDD image
+        if: steps.ibmpcat-hdd.outputs.cache-hit != 'true'
+        run: make -C ibmpc-at hdd-image
+
+      # IBM PC/AT's wasm module -- hdd-image here just copies the (cached
+      # or just-built) native disks/freedos-hdd.img into web/disks/, it
+      # doesn't rebuild it (see web/Makefile).
+      - working-directory: ibmpc-at/web
+        run: make ibmpcat.js roms hdd-image shared
+
+      # Pac-Man arcade board's wasm module + generated hardware self-test ROM
+      - working-directory: pacman/web
+        run: make wasm roms shared
+
+      - working-directory: frogger/web
+        run: make wasm roms shared
+
+      - working-directory: scramble/web
+        run: make wasm roms shared
+
+      - working-directory: galaxian/web
+        run: make wasm roms shared
+
+      - working-directory: galaga/web
+        run: make wasm roms shared
+
+      - working-directory: asteroids/web
+        run: make wasm roms shared
+
+      - working-directory: centipede/web
+        run: make wasm roms shared
+
+      - working-directory: missile/web
+        run: make wasm roms shared
+      - working-directory: invaders/web
+        run: make wasm roms shared
+      - working-directory: lunarrescue/web
+        run: make wasm roms shared
+      - working-directory: battlezone/web
+        run: make wasm roms shared
+
+      # 486 DX2-66: BIOS/VGA-BIOS ROMs (fetched, checksummed) are cheap; the
+      # shipped FreeDOS HDD image is built by actually running the real
+      # FreeDOS 1.3 installer end to end against the emulator (see
+      # PC486_REVIEW.md §5) -- genuinely slow, so it's cached across runs,
+      # keyed on everything that could change its bytes. The CD-ROM ISO is
+      # a ~400MB download with its own cache.
+      # mtools builds the CuteMouse driver floppy from the FreeDOS image --
+      # see pc486/disks/build-ctmouse-floppy.sh.
+      - run: sudo apt-get update && sudo apt-get install -y mtools
+
+      - name: Cache pc486 FreeDOS CD-ROM ISO
+        id: pc486-cd
+        uses: actions/cache@v4
+        with:
+          path: |
+            pc486/disks/freedos-cd.iso
+            pc486/disks/freedos-boot.img
+          key: pc486-cd-${{ hashFiles('pc486/disks/fetch-freedos-cd.sh') }}
+
+      - name: Fetch pc486 FreeDOS CD-ROM ISO
+        if: steps.pc486-cd.outputs.cache-hit != 'true'
+        run: bash pc486/disks/fetch-freedos-cd.sh
+
+      - name: Restore pc486 FreeDOS HDD image
+        id: pc486-hdd
+        uses: actions/cache/restore@v4
+        with:
+          path: pc486/disks/freedos-hdd.img
+          key: pc486-hdd-${{ hashFiles('pc486/*.h', 'pc486/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'pc486/disks/*.cpp', 'pc486/disks/*.sh', 'pc486/roms/*.sh') }}
+
+      - name: Build pc486 FreeDOS HDD image
+        if: steps.pc486-hdd.outputs.cache-hit != 'true'
+        run: make -C pc486 hdd-image
+
+      - name: Save pc486 FreeDOS HDD image
+        if: steps.pc486-hdd.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: pc486/disks/freedos-hdd.img
+          key: pc486-hdd-${{ hashFiles('pc486/*.h', 'pc486/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'pc486/disks/*.cpp', 'pc486/disks/*.sh', 'pc486/roms/*.sh') }}
+
+      # Preset C:s (?disk=doom, ?disk=wolf3d, ?disk=duke3d, ?disk=rott, ?disk=pinball, ?disk=tyrian): each game's own installer
+      # run onto a bare FreeDOS from the library's floppies or the publisher's zip (disks/build_preset_hdd.cpp).
+      - name: Restore pc486 preset hard disks
+        id: pc486-preset-hdds
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            pc486/disks/doom-hdd.img
+            pc486/disks/wolf3d-hdd.img
+            pc486/disks/duke3d-hdd.img
+            pc486/disks/rott-hdd.img
+            pc486/disks/pinball-hdd.img
+            pc486/disks/tyrian-hdd.img
+          key: pc486-preset-hdds-${{ hashFiles('pc486/Makefile', 'pc486/*.h', 'pc486/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'pc486/disks/*.cpp', 'pc486/disks/*.sh', 'pc486/disks/*.py', 'pc486/disks/library.json', 'pc486/roms/*.sh', 'shared/dos-library/*.py', 'shared/dos-library/*.sh') }}
+
+      - name: Build pc486 preset hard disks
+        if: steps.pc486-preset-hdds.outputs.cache-hit != 'true'
+        run: make -C pc486 preset-hdds
+
+      - name: Save pc486 preset hard disks
+        if: steps.pc486-preset-hdds.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            pc486/disks/doom-hdd.img
+            pc486/disks/wolf3d-hdd.img
+            pc486/disks/duke3d-hdd.img
+            pc486/disks/rott-hdd.img
+            pc486/disks/pinball-hdd.img
+            pc486/disks/tyrian-hdd.img
+          key: pc486-preset-hdds-${{ hashFiles('pc486/Makefile', 'pc486/*.h', 'pc486/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'pc486/disks/*.cpp', 'pc486/disks/*.sh', 'pc486/disks/*.py', 'pc486/disks/library.json', 'pc486/roms/*.sh', 'shared/dos-library/*.py', 'shared/dos-library/*.sh') }}
+
+      - working-directory: pc486/web
+        run: make pc486.js pc486-perf.js roms hdd-image driver-images library-images preset-images shared
+
+      # Disk library floppies; the FreeDOS packages come from pc486's LiveCD restored above.
+      - working-directory: ibmpc-at/web
+        run: make library-images
+
+      # Preset C: (?disk=keen1): Apogee's installer run onto a bare FreeDOS from the
+      # library's Keen floppy (disks/build_preset_hdd.cpp).
+      - name: Restore IBM PC/AT preset hard disks
+        id: ibmpcat-preset-hdds
+        uses: actions/cache/restore@v4
+        with:
+          path: ibmpc-at/disks/keen1-hdd.img
+          key: ibmpcat-preset-hdds-${{ hashFiles('ibmpc-at/*.h', 'ibmpc-at/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'ibmpc-at/disks/*.cpp', 'ibmpc-at/disks/*.sh', 'ibmpc-at/disks/library.json', 'ibmpc-at/roms/*.sh', 'ibmpc-at/roms/egabios/*', 'pc486/disks/zero-free-clusters.py', 'shared/dos-library/*.py', 'shared/dos-library/*.sh') }}
+
+      - name: Build IBM PC/AT preset hard disks
+        if: steps.ibmpcat-preset-hdds.outputs.cache-hit != 'true'
+        run: make -C ibmpc-at preset-hdds
+
+      - name: Save IBM PC/AT preset hard disks
+        if: steps.ibmpcat-preset-hdds.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ibmpc-at/disks/keen1-hdd.img
+          key: ibmpcat-preset-hdds-${{ hashFiles('ibmpc-at/*.h', 'ibmpc-at/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'ibmpc-at/disks/*.cpp', 'ibmpc-at/disks/*.sh', 'ibmpc-at/disks/library.json', 'ibmpc-at/roms/*.sh', 'ibmpc-at/roms/egabios/*', 'pc486/disks/zero-free-clusters.py', 'shared/dos-library/*.py', 'shared/dos-library/*.sh') }}
+
+      - working-directory: ibmpc-at/web
+        run: make preset-images
+
+      # stage the site: index.html at the root, the Altair front end
+      # at /altair8800/, 6502 Assembler at /assembler6502/, IBM PC/AT at
+      # /ibmpc-at/, Pac-Man at /pacman/, Frogger at /frogger/, Galaxian at
+      # /galaxian/, Galaga at /galaga/, Scramble at /scramble/, 486 DX2-66 at
+      # /pc486/ -- the C++ core / tests / dev-only files stay out of the
+      # artifact.
+      # Same target `make preview` uses.
+      - run: make site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

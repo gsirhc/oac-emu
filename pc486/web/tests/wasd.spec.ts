@@ -1,0 +1,109 @@
+import { test, expect } from "./fixtures";
+import { openKeyboard, screenText, keysDrained, emuWait, withFull } from "./helpers";
+
+// Doom 1.2 and its contemporaries default to the arrow cluster. The Key Mapper maps at the
+// browser edge, so the guest gets genuine arrow scancodes. Off by default; the WASD -> Arrows
+// preset (and the bezel shortcut) turn it on.
+test.describe("WASD to arrow keys", () => {
+  test("preset persists across reload", async ({ page }) => {
+    await page.goto(withFull("/?test=1&fast=1"));
+    await page.waitForFunction(() => !!(window as any).__test?.machine, null, { timeout: 60_000 });
+    await page.evaluate(() => (window as any).__test.clearKeymap());
+    await expect(page.locator("#keymapAllBtn")).toBeDisabled();
+
+    await openKeyboard(page);
+
+    await page.locator("#keymapPresetWasd").click();
+    await expect(page.locator("#keymapAllBtn")).toBeEnabled();
+    await expect(page.locator("#keymapAllBtn")).toHaveAttribute("aria-pressed", "true");
+    expect(await page.evaluate(() => (window as any).__test.isWasdPresetActive())).toBe(true);
+
+    await page.reload();
+    await page.waitForFunction(() => !!(window as any).__test?.machine, null, { timeout: 60_000 });
+    await expect(page.locator("#keymapAllBtn")).toHaveAttribute("aria-pressed", "true");
+    expect(await page.evaluate(() => (window as any).__test.mapKey("KeyW"))).toEqual(["ArrowUp"]);
+    await page.evaluate(() => (window as any).__test.clearKeymap());
+  });
+
+  // W and D are two-byte E0 sequences; releasing both at once (focus loss) interleaved them, so
+  // Right's break lost its prefix and Right repeated forever.
+  test("releasing two held arrows at once ends the keyboard's repeat", async ({ livePage: page }) => {
+    await page.evaluate(() => (window as any).__test.applyWasdPreset());
+    await page.locator("#screen").click();
+    await page.keyboard.down("w");
+    await page.keyboard.down("d");
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__test.machine.keyboardRepeating()))
+      .toBe(true);
+    await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__test.machine.keyboardRepeating()))
+      .toBe(false);
+    await page.keyboard.up("d");
+    await page.keyboard.up("w");
+    await page.evaluate(() => (window as any).__test.clearKeymap());
+  });
+
+  test("off: W types a literal w at the DOS prompt", async ({ promptPage: page }) => {
+    await page.locator("#screen").click();
+    await page.keyboard.press("w");
+    await expect.poll(() => screenText(page), { timeout: 10_000 }).toMatch(/C:\\>w/);
+  });
+
+  test("on: W no longer types a w -- it becomes the up arrow", async ({ promptPage: page }) => {
+    await page.locator("#screen").click();
+    // FreeCom treats ArrowUp as history recall, so seed an entry and expect that recall, not a typed "w".
+    await page.keyboard.type("xyzzy");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => screenText(page), { timeout: 10_000 }).toMatch(/xyzzy/i);
+    await openKeyboard(page);
+    await page.locator("#keymapPresetWasd").click();
+    await page.locator("#screen").click();
+    await page.keyboard.press("w");
+    await expect
+      .poll(async () => {
+        const last = ((await screenText(page)).trimEnd().split(/\n/).pop() || "").trimEnd();
+        return last;
+      }, { timeout: 10_000 })
+      .toMatch(/^C:\\>xyzzy$/i);
+  });
+
+  test("keys held across a toggle are released, not left stuck down", async ({ promptPage: page }) => {
+    await page.locator("#screen").click();
+    await page.keyboard.down("w");
+    await openKeyboard(page);
+    await page.locator("#keymapPresetWasd").click();
+    await page.keyboard.up("w");
+    await page.locator("#screen").click();
+    await page.keyboard.press("x");
+    await expect.poll(() => screenText(page), { timeout: 10_000 }).toMatch(/x/);
+  });
+
+  // A and D strafe: Doom's strafe modifier is Alt (key_strafe), so they send Alt with the arrow.
+  test("A and D map to Alt+arrow so they strafe, W and S stay plain arrows", async ({
+    promptPage: page,
+  }) => {
+    const map = async (code: string) =>
+      page.evaluate((c) => (window as any).__test.mapKey(c), code);
+
+    expect(await map("KeyA")).toEqual(["KeyA"]);   // off: untouched
+
+    await openKeyboard(page);
+
+    await page.locator("#keymapPresetWasd").click();
+    expect(await map("KeyW")).toEqual(["ArrowUp"]);
+    expect(await map("KeyS")).toEqual(["ArrowDown"]);
+    expect(await map("KeyA")).toEqual(["AltLeft", "ArrowLeft"]);
+    expect(await map("KeyD")).toEqual(["AltLeft", "ArrowRight"]);
+  });
+
+  test("on: A no longer types a literal a at the DOS prompt", async ({ promptPage: page }) => {
+    await openKeyboard(page);
+    await page.locator("#keymapPresetWasd").click();
+    await page.locator("#screen").click();
+    await page.keyboard.press("a");
+    await keysDrained(page);
+    await emuWait(page, 500);
+    expect((await screenText(page)).trimEnd().split(/\n/).pop() || "").not.toMatch(/a\s*$/i);
+  });
+});

@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arcade</title>
+<link rel="icon" href="../assets/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="../assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="../assets/favicon-16.png">
+<link rel="apple-touch-icon" href="../assets/apple-touch-icon.png">
+<link rel="stylesheet" href="../shared/theme.css">
+<link rel="stylesheet" href="../shared/pagebar.css">
+<link rel="stylesheet" href="../shared/footer.css">
+<link rel="stylesheet" href="../shared/catalog.css">
+<script>try{if(localStorage.getItem("retroweb.arcadeArt"))document.documentElement.classList.add("art-pending");}catch(e){}</script>
+<style>
+  /* Catalog shell and tiles live in shared/catalog.css. Local: sort tools,
+     section borders, marquee fit. */
+  header.brand-row { margin-bottom: 18px; }
+  .tagline .more { font-size: 12px; }
+
+  .arcade-tools {
+    margin: 0 0 14px; padding-top: 14px; border-top: var(--card-border);
+  }
+  .sort-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  }
+  .sort-row label {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 14px; color: var(--muted);
+  }
+  .sort-row select {
+    font: inherit; font-size: 14px; color: var(--text);
+    background: var(--card-bg); border: var(--card-border);
+    border-radius: var(--card-radius); padding: 4px 8px;
+  }
+
+  .section-heading {
+    margin: 30px 0 14px; padding-top: 18px; border-top: var(--card-border);
+  }
+  #arcadeCatalog > .section-heading:first-child {
+    margin-top: 0;
+  }
+
+  .machine-card.art.marquee .shot { object-fit: contain; }
+</style>
+</head>
+<body>
+<script>try{var r=document.documentElement,t=localStorage.getItem("retro8080.theme")||"win",m=localStorage.getItem("retro8080.mode");if(t=="ai"||t=="systemaurora"){t="aurora";if(!m)m="system";}else if(t=="moderndark"){t="modern";if(!m)m="dark";}else if(t=="system"){t="modern";if(!m)m="system";}if(t!="win"&&t!="winxp"&&t!="web94"&&t!="modern"&&t!="aurora")t="win";if(m!="light"&&m!="dark"&&m!="system")m="light";var dark=m=="dark"||(m=="system"&&matchMedia("(prefers-color-scheme: dark)").matches);r.dataset.theme=t;if(dark)r.dataset.mode="dark";else delete r.dataset.mode;}catch(e){}</script>
+
+<div class="page">
+  <header class="pagebar">
+    <a class="pb-home" href="../">&#8592;&nbsp;All&nbsp;machines</a>
+    <span class="pb-title"><img class="pb-icon" src="../assets/favicon-32.png" alt="" aria-hidden="true"> ARCADE</span>
+    <span class="pb-name">Arcade</span>
+    <span class="pb-tag">Coin-ops in your browser</span>
+    <span class="pb-tools">
+      <label class="pb-theme">Theme
+        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Windows 95</button>
+      </label>
+      <span class="pb-winbtns"><button type="button" class="pb-min" title="Minimize" aria-label="Minimize" aria-pressed="false">_</button><button type="button" class="pb-max" title="Maximize" aria-label="Maximize" disabled>&#9633;</button><a class="pb-close" href="../" title="back to all machines" aria-label="close — back to all machines">&times;</a></span>
+    </span>
+  </header>
+
+  <div class="inner">
+    <header class="brand-row">
+      <div class="brand">
+        <img class="site-icon" src="../assets/icon-512.png" width="56" height="56" decoding="async" alt="">
+        <div class="brand-text">
+          <h1>Arcade</h1>
+          <p class="tagline">Faithful recreations of classic arcade cabinet hardware.  BYOR (Bring Your Own ROMs) <span class="more"><a href="../about.html#rights">More info</a>.</span></p>
+        </div>
+      </div>
+    </header>
+
+    <div class="arcade-tools">
+      <div class="sort-row">
+        <label>Sort by
+          <select id="arcadeSort" aria-label="Sort cabinets by">
+            <option value="name">Name</option>
+            <option value="year">Year</option>
+            <option value="cpu">CPU</option>
+            <option value="manufacturer">Manufacturer</option>
+          </select>
+        </label>
+        <label>Thumbnails
+          <select id="arcadeArt" aria-label="Thumbnail art">
+            <option value="">Original</option>
+            <option value="snap">Screenshot</option>
+            <option value="title">Title screen</option>
+            <option value="boxart">Box art</option>
+            <option value="marquee">Marquee</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div id="arcadeCatalog">
+      <div class="machines" id="arcadeGrid">
+        <a class="machine-card" href="../asteroids/"
+           data-name="Asteroids" data-art="Asteroids (rev 4)" data-marquee="asteroid" data-boxart-y="50%" data-year="1979" data-cpu="6502" data-manufacturer="Atari">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/asteroids-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Asteroids arcade tile, starfield and Courier New lettering">
+          <span class="name">Asteroids</span>
+          <span class="meta">1979 · Atari · 6502</span>
+        </a>
+        <a class="machine-card" href="../battlezone/"
+           data-name="Battlezone" data-art="Battle Zone (rev 2)" data-marquee="bzone" data-boxart-y="0%" data-year="1980" data-cpu="6502" data-manufacturer="Atari">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/battlezone-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Battlezone arcade tile, starfield and Courier New lettering">
+          <span class="name">Battlezone</span>
+          <span class="meta">1980 · Atari · 6502</span>
+        </a>
+        <a class="machine-card" href="../centipede/"
+           data-name="Centipede" data-art="Centipede (revision 4)" data-marquee="centiped" data-boxart-y="50%" data-year="1981" data-cpu="6502" data-manufacturer="Atari">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/centipede-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Centipede arcade tile, starfield and Courier New lettering">
+          <span class="name">Centipede</span>
+          <span class="meta">1981 · Atari · 6502</span>
+        </a>
+        <a class="machine-card" href="../frogger/"
+           data-name="Frogger" data-art="Frogger" data-marquee="frogger" data-boxart-y="0%" data-year="1981" data-cpu="Z80" data-manufacturer="Konami">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/frogger-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Frogger arcade tile, starfield and Courier New lettering">
+          <span class="name">Frogger</span>
+          <span class="meta">1981 · Konami · dual Z80</span>
+        </a>
+        <a class="machine-card" href="../galaga/"
+           data-name="Galaga" data-art="Galaga (Midway set 1)" data-marquee="galaga" data-boxart-y="0%" data-year="1981" data-cpu="Z80" data-manufacturer="Midway">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/galaga-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Galaga arcade tile, starfield and Courier New lettering">
+          <span class="name">Galaga</span>
+          <span class="meta">1981 · Midway · three Z80s</span>
+        </a>
+        <a class="machine-card" href="../galaxian/"
+           data-name="Galaxian" data-art="Galaxian (Namco set 1)" data-marquee="galaxian" data-boxart-y="0%" data-year="1979" data-cpu="Z80" data-manufacturer="Namco">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/galaxian-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Galaxian arcade tile, starfield and Courier New lettering">
+          <span class="name">Galaxian</span>
+          <span class="meta">1979 · Namco · Z80</span>
+        </a>
+        <a class="machine-card" href="../lunarrescue/"
+           data-name="Lunar Rescue" data-art="Lunar Rescue" data-marquee="lrescue" data-boxart-y="0%" data-year="1979" data-cpu="8080" data-manufacturer="Taito">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/lunarrescue-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Lunar Rescue arcade tile, starfield and Courier New lettering">
+          <span class="name">Lunar Rescue</span>
+          <span class="meta">1979 · Taito · 8080</span>
+        </a>
+        <a class="machine-card" href="../missile/"
+           data-name="Missile Command" data-art="Missile Command (rev 3)" data-marquee="missile" data-boxart-y="0%" data-year="1980" data-cpu="6502" data-manufacturer="Atari">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/missile-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Missile Command arcade tile, starfield and Courier New lettering">
+          <span class="name">Missile Command</span>
+          <span class="meta">1980 · Atari · 6502</span>
+        </a>
+        <a class="machine-card" href="../pacman/?game=mspacman"
+           data-name="Ms. Pac-Man" data-art="Ms. Pac-Man" data-marquee="mspacman" data-boxart-y="0%" data-year="1982" data-cpu="Z80" data-manufacturer="Midway">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/mspacman-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Ms. Pac-Man arcade tile, starfield and Courier New lettering">
+          <span class="name">Ms. Pac-Man</span>
+          <span class="meta">1982 · Midway · Z80</span>
+        </a>
+        <a class="machine-card" href="../pacman/"
+           data-name="Pac-Man" data-art="Pac-Man (Midway)" data-marquee="pacman" data-boxart-y="100%" data-year="1980" data-cpu="Z80" data-manufacturer="Namco">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/pacman-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Pac-Man arcade tile, starfield and Courier New lettering">
+          <span class="name">Pac-Man</span>
+          <span class="meta">1980 · Namco · Z80</span>
+        </a>
+        <a class="machine-card" href="../scramble/"
+           data-name="Scramble" data-art="Scramble" data-marquee="scramble" data-boxart-y="0%" data-year="1981" data-cpu="Z80" data-manufacturer="Konami">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/scramble-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Scramble arcade tile, starfield and Courier New lettering">
+          <span class="name">Scramble</span>
+          <span class="meta">1981 · Konami · dual Z80</span>
+        </a>
+        <a class="machine-card" href="../invaders/"
+           data-name="Space Invaders" data-art="Space Invaders _ Space Invaders M" data-marquee="invaders" data-boxart-y="0%" data-year="1978" data-cpu="8080" data-manufacturer="Midway">
+          <img class="shot" referrerpolicy="no-referrer" src="../assets/invaders-cabinet.png" width="286" height="128"
+               decoding="async" alt="Original Space Invaders arcade tile, starfield and Courier New lettering">
+          <span class="name">Space Invaders</span>
+          <span class="meta">1978 · Midway · 8080</span>
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="../shared/theme-picker.js"></script>
+<script>initThemePicker();</script>
+<script src="../shared/winbtns.js"></script>
+<script src="../shared/footer.js"></script>
+<script>
+(function () {
+  var KEY = "retroweb.arcadeSort";
+  var KEYS = { name: 1, year: 1, cpu: 1, manufacturer: 1 };
+  var sel = document.getElementById("arcadeSort");
+  var catalog = document.getElementById("arcadeCatalog");
+  if (!sel || !catalog) return;
+
+  var cards = Array.prototype.slice.call(catalog.querySelectorAll("a.machine-card"));
+
+  function sortCards(key) {
+    cards.sort(function (a, b) {
+      var av = a.getAttribute("data-" + key) || "";
+      var bv = b.getAttribute("data-" + key) || "";
+      if (key === "year") {
+        var an = parseInt(av, 10) || 0;
+        var bn = parseInt(bv, 10) || 0;
+        if (an !== bn) return an - bn;
+      } else if (av !== bv) {
+        return av < bv ? -1 : 1;
+      }
+      var aname = a.getAttribute("data-name") || "";
+      var bname = b.getAttribute("data-name") || "";
+      return aname < bname ? -1 : aname > bname ? 1 : 0;
+    });
+  }
+
+  function apply(key) {
+    if (!KEYS[key]) key = "name";
+    sel.value = key;
+    sortCards(key === "name" ? "name" : key);
+
+    while (catalog.firstChild) catalog.removeChild(catalog.firstChild);
+
+    if (key === "name") {
+      var grid = document.createElement("div");
+      grid.className = "machines";
+      grid.id = "arcadeGrid";
+      cards.forEach(function (c) { grid.appendChild(c); });
+      catalog.appendChild(grid);
+      return;
+    }
+
+    var groups = [];
+    var map = {};
+    cards.forEach(function (c) {
+      var g = c.getAttribute("data-" + key) || "";
+      if (!map[g]) {
+        map[g] = [];
+        groups.push(g);
+      }
+      map[g].push(c);
+    });
+    groups.forEach(function (g) {
+      var h = document.createElement("h2");
+      h.className = "section-heading";
+      h.textContent = g;
+      catalog.appendChild(h);
+      var grid = document.createElement("div");
+      grid.className = "machines";
+      map[g].forEach(function (c) { grid.appendChild(c); });
+      catalog.appendChild(grid);
+    });
+  }
+
+  var saved = "name";
+  try {
+    var v = localStorage.getItem(KEY);
+    if (v && KEYS[v]) saved = v;
+  } catch (e) {}
+  apply(saved);
+
+  sel.addEventListener("change", function () {
+    var key = sel.value;
+    if (!KEYS[key]) key = "name";
+    try { localStorage.setItem(KEY, key); } catch (e) {}
+    apply(key);
+  });
+})();
+</script>
+<script src="../shared/thumb-art.js"></script>
+<script>initThumbArt(document.getElementById("arcadeArt"), Array.prototype.slice.call(document.querySelectorAll("a.machine-card[data-art]")), "retroweb.arcadeArt", "MAME");</script>
+</body>
+</html>
