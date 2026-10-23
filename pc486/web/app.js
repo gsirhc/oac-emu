@@ -28,7 +28,8 @@
   const testParams = new URLSearchParams(location.search);
   const TEST_CPU_MULTIPLIER =
     testParams.get("test") === "1" && testParams.get("fast") === "1" ? 20 : 1;
-  // /full/ needs the catalog token in the URL; /Doom/ is always the locked tease.
+  // /full/ needs the catalog token in the URL; the other entry pages are locked teases of one preset.
+  const kTeasePresets = { Doom: "doom", EpicPinball: "pinball" };
   const kFullToken = "c4e8a1f07b2d49e6a3c58f1d6e90b274";
   const pathSeg = location.pathname.replace(/\/+$/, "").split("/").pop();
   const onFullPath = pathSeg === "full";
@@ -39,7 +40,7 @@
   }
   const fullMachine = onFullPath;
   if (!fullMachine) {
-    document.body.classList.add("doom-only");
+    document.body.classList.add("tease-only");
     const hideHelp = () => {
       const help = document.querySelector("#siteFooter .about-sign");
       if (help && help.parentElement) help.parentElement.remove();
@@ -1601,9 +1602,9 @@
     pinball: { file: "disks/presets/pinball-hdd.img.gz", label: "Epic Pinball shareware", reset: "Reset to original Epic Pinball disk" },
     tyrian: { file: "disks/presets/tyrian-hdd.img.gz", label: "Tyrian 2.1 freeware", reset: "Reset to original Tyrian disk" },
   };
-  const presetId = fullMachine ? testParams.get("disk") : "doom";
+  const presetId = fullMachine ? testParams.get("disk") : kTeasePresets[pathSeg] || "pinball";
   const presetHdd = Object.hasOwn(kPresetHdds, presetId) ? kPresetHdds[presetId] : null;
-  // Locked /Doom/ has no Help link to about.html; news_info is the public page.
+  // Locked teases have no Help link to about.html; news_info is the public page.
   const rightsHref = fullMachine ? "../about.html#rights" : "../news_info.html#info";
   addFooterNote("All shareware and freeware titles remain the property of their respective owners. <a href=\"" + rightsHref + "\">More info</a>.");
   // Only the gzip ships; the raw 256MB images would put the site over the host's 1GB.

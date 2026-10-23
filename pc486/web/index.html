@@ -938,7 +938,7 @@
   :root[data-theme="web94"] .fb-mod   { display: inline; }
 
   .soon-label { display: none; }
-  body.doom-only .soon-label {
+  body.tease-only .soon-label {
     display: inline-block;
     background: #9a1c1c;
     color: #fff;
@@ -948,34 +948,34 @@
     padding: 3px 8px;
     white-space: nowrap;
   }
-  body.doom-only .panel-title {
+  body.tease-only .panel-title {
     display: flex;
     align-items: center;
     gap: 10px;
     margin-bottom: 10px;
   }
-  body.doom-only .panel-title h2 { margin: 0; opacity: .55; }
-  body.doom-only #hddCard > :not(.panel-title),
-  body.doom-only #floppyInfoCard > :not(.panel-title) {
+  body.tease-only .panel-title h2 { margin: 0; opacity: .55; }
+  body.tease-only #hddCard > :not(.panel-title),
+  body.tease-only #floppyInfoCard > :not(.panel-title) {
     filter: grayscale(1);
     opacity: .55;
     pointer-events: none;
   }
-  body.doom-only .at-bay[data-drive="0"],
-  body.doom-only .at-bay[data-drive="cdrom"] {
+  body.tease-only .at-bay[data-drive="0"],
+  body.tease-only .at-bay[data-drive="cdrom"] {
     position: relative;
     pointer-events: none;
     background: linear-gradient(180deg, #cfcfcf, #9c9c9c);
     box-shadow: inset 0 0 0 1px #e4e4e4, inset 0 0 0 2px #6e6e6e, 0 2px 5px rgba(0,0,0,.3);
   }
-  body.doom-only .at-bay[data-drive="0"] .at-drive-face,
-  body.doom-only .at-bay[data-drive="0"] .at-bay-ctl,
-  body.doom-only .at-bay[data-drive="cdrom"] .at-drive-face,
-  body.doom-only .at-bay[data-drive="cdrom"] .at-bay-ctl {
+  body.tease-only .at-bay[data-drive="0"] .at-drive-face,
+  body.tease-only .at-bay[data-drive="0"] .at-bay-ctl,
+  body.tease-only .at-bay[data-drive="cdrom"] .at-drive-face,
+  body.tease-only .at-bay[data-drive="cdrom"] .at-bay-ctl {
     filter: grayscale(1);
     opacity: .7;
   }
-  body.doom-only .at-bay .soon-label {
+  body.tease-only .at-bay .soon-label {
     position: absolute;
     z-index: 4;
     left: 50%;
@@ -983,8 +983,8 @@
     box-shadow: 0 1px 4px rgba(0,0,0,.35);
     pointer-events: none;
   }
-  body.doom-only .at-bay[data-drive="cdrom"] .soon-label { top: 34px; }
-  body.doom-only .at-bay[data-drive="0"] .soon-label { top: 30px; }
+  body.tease-only .at-bay[data-drive="cdrom"] .soon-label { top: 34px; }
+  body.tease-only .at-bay[data-drive="0"] .soon-label { top: 30px; }
 </style>
 </head>
 <body>

@@ -103,7 +103,7 @@ disks/ctmouse.img: $(CORE)/disks/ctmouse.img
 
 driver-images: disks/ctmouse.img
 
-# Doom/ and full/ share web/index.html via <base href="../"> (staging overwrites root).
+# Doom/, EpicPinball/ and full/ share web/index.html via <base href="../"> (staging overwrites root).
 pages:
 	python3 ../../install_pc486_pages.py . --page index.html
 
