@@ -90,6 +90,17 @@ test.describe("arcade hub", () => {
     await page.reload();
   });
 
+  test("a sort choice is counted, and the hub itself never counts as started", async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as any).__gc = [];
+      (window as any).goatcounter = { count: (o: any) => (window as any).__gc.push(o.path) };
+    });
+    await page.reload();
+    await page.keyboard.press("Shift");
+    await page.locator("#arcadeSort").selectOption("year");
+    expect(await page.evaluate(() => (window as any).__gc)).toEqual(["arcade-sort-year"]);
+  });
+
   test("lists eleven cabinets in Name order by default, including Pac-Man and Ms. Pac-Man", async ({ page }) => {
     await expect(page).toHaveTitle(/Arcade/);
     await expect(page.locator(".tagline a")).toHaveText("More info");

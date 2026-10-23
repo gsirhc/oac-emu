@@ -189,6 +189,7 @@
 <script src="../shared/theme-picker.js"></script>
 <script>initThemePicker();</script>
 <script src="../shared/winbtns.js"></script>
+<script src="../shared/analytics.js"></script>
 <script src="../shared/footer.js"></script>
 <script>
 (function () {
@@ -267,6 +268,7 @@
     if (!KEYS[key]) key = "name";
     try { localStorage.setItem(KEY, key); } catch (e) {}
     apply(key);
+    trackEvent("arcade-sort-" + key);
   });
 })();
 </script>

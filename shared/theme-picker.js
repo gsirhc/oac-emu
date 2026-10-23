@@ -120,8 +120,14 @@ function initThemePicker(onChange) {
     dialog.close();
   });
 
+  let opened = "";
+  dialog.addEventListener("close", () => {
+    const picked = current.theme + "-" + current.mode;
+    if (picked !== opened) trackEvent("theme-" + picked);
+  });
   btn.addEventListener("click", () => {
     syncDialog();
+    opened = current.theme + "-" + current.mode;
     dialog.showModal();
   });
 

@@ -62,7 +62,7 @@ site:
 	find $(SITE).new -name .DS_Store -delete
 	mkdir -p $(SITE).new/shared/vendor/fonts
 	cp shared/theme.css shared/pagebar.css shared/footer.css shared/catalog.css \
-	   shared/footer.js shared/theme-picker.js shared/winbtns.js shared/thumb-art.js \
+	   shared/footer.js shared/theme-picker.js shared/winbtns.js shared/thumb-art.js shared/analytics.js \
 	   $(SITE).new/shared/
 	cp shared/vendor/fonts/inter-*.woff2 $(SITE).new/shared/vendor/fonts/
 	for m in $(MACHINES); do \

@@ -83,6 +83,7 @@ export default [
         initFullscreen: "readonly",
         initFocusHint: "readonly",
         addFooterNote: "readonly",
+        trackEvent: "readonly",
         initDiskDrop: "readonly",
         initDiskLibrary: "readonly",
         initPcKeyboard: "readonly",
@@ -105,7 +106,7 @@ export default [
     },
   },
   {
-    files: ["shared/theme-picker.js", "shared/fullscreen.js", "shared/focus-hint.js", "shared/winbtns.js", "shared/pc-keyboard.js", "shared/arcade-touch.js", "shared/arcade-core.js", "shared/disk-drop.js", "shared/disk-library.js", "shared/footer.js", "shared/terminal.js", "shared/thumb-art.js"],
+    files: ["shared/theme-picker.js", "shared/fullscreen.js", "shared/focus-hint.js", "shared/winbtns.js", "shared/pc-keyboard.js", "shared/arcade-touch.js", "shared/arcade-core.js", "shared/disk-drop.js", "shared/disk-library.js", "shared/footer.js", "shared/terminal.js", "shared/thumb-art.js", "shared/analytics.js"],
     languageOptions: {
       globals: {
         ...globals.browser,
@@ -115,8 +116,16 @@ export default [
       "no-unused-vars": ["error", {
         argsIgnorePattern: "^_",
         caughtErrors: "none",
-        varsIgnorePattern: "^(_|initThemePicker|initFullscreen|initFocusHint|initDiskDrop|initDiskLibrary|initPcKeyboard|initArcadeTouch|arcadeTouchOnly|arcadeCrc32|arcadeHexCrc|arcadeUnzip|arcadeReadRomFiles|arcadeStore|arcadePrefs|arcadeAudio|arcadeHiscore|arcadeHiscoreReset|arcadeRomLoader|arcadeLoop|addFooterNote|initThumbArt|termDumbFilter|termVt52Filter|termAdm3aFilter)$",
+        varsIgnorePattern: "^(_|initThemePicker|initFullscreen|initFocusHint|initDiskDrop|initDiskLibrary|initPcKeyboard|initArcadeTouch|arcadeTouchOnly|arcadeCrc32|arcadeHexCrc|arcadeUnzip|arcadeReadRomFiles|arcadeStore|arcadePrefs|arcadeAudio|arcadeHiscore|arcadeHiscoreReset|arcadeRomLoader|arcadeLoop|addFooterNote|initThumbArt|termDumbFilter|termVt52Filter|termAdm3aFilter|trackEvent)$",
       }],
+    },
+  },
+  {
+    files: ["shared/theme-picker.js", "shared/fullscreen.js"],
+    languageOptions: {
+      globals: {
+        trackEvent: "readonly",
+      },
     },
   },
   {

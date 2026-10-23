@@ -1296,7 +1296,10 @@ async function boot() {
       try { this.speed = localStorage.getItem("retro8080.diskspeed") || "realistic"; } catch {}
       if (!DISK_SPEED_KEYS.includes(this.speed)) this.speed = "realistic";   // drop a stale value
       spd.value = this.speed;
-      spd.addEventListener("change", () => this.setSpeed(spd.value));
+      spd.addEventListener("change", () => {
+        this.setSpeed(spd.value);
+        trackEvent("disk-speed-" + spd.value, true);
+      });
       spdWrap.appendChild(spd);
       top.appendChild(spdWrap);
       const boot = document.createElement("button");
@@ -1672,7 +1675,10 @@ async function boot() {
       try { this.speed = localStorage.getItem("retro8080.tapespeed") || "realistic"; } catch {}
       if (!TAPE_SPEED_KEYS.includes(this.speed)) this.speed = "realistic";   // drop a stale value
       spd.value = this.speed;
-      spd.addEventListener("change", () => this.setSpeed(spd.value));
+      spd.addEventListener("change", () => {
+        this.setSpeed(spd.value);
+        trackEvent("cassette-speed-" + spd.value, true);
+      });
       spdWrap.appendChild(spd);
       top.appendChild(spdWrap);
       kase.appendChild(top);
@@ -2458,7 +2464,10 @@ exactly as it did in 1975.`;
       try { this.speed = localStorage.getItem("retro8080.paperspeed") || "realistic"; } catch {}
       if (!PAPER_SPEED_KEYS.includes(this.speed)) this.speed = "realistic";   // drop a stale value
       sel.value = this.speed;
-      sel.addEventListener("change", () => this.setSpeed(sel.value));
+      sel.addEventListener("change", () => {
+        this.setSpeed(sel.value);
+        trackEvent("paper-tape-speed-" + sel.value, true);
+      });
       spdWrap.appendChild(sel);
       top.appendChild(spdWrap);
       kase.appendChild(top);

@@ -254,6 +254,10 @@ change:
 - The landing-page card, or for a cabinet the arcade hub card, its
   marquee in `shared/marquee.py`, and every spec that lists
   the hub's cards (`pacman/web/tests/home.spec.ts`).
+- The page's GoatCounter tag, `<script src="shared/analytics.js"
+  data-machine="<machine>">`, just before `footer.js`. `check_site.py`
+  fails a page that has the footer without it. Events go through
+  `trackEvent(name, perMachine)`; count.js loads only on the live site.
 - This file: Playwright port list, CI job naming, Build/test bullet,
   generated-file list, and any cabinet/CPU enumeration. Also
   `.claude/arcade.md` for cabinets (lists + high-score RAM table).
@@ -487,6 +491,18 @@ developer as if it were a fact you'd checked.
 - **Ask where new work goes.** Default is `main`. Before starting, ask the
   current developer whether to stay on `main` or work on a branch — do not
   create a branch unless they say so. Do not open pull requests unless asked.
+
+## Outside services
+
+What the project uses outside this repo. Never put account details,
+logins, or keys here or anywhere in the repo.
+
+- **Hosting:** GitHub Pages, deployed by `deploy-emulator.yml`.
+- **Domain:** `oac-emu.dev`, registered with Porkbun.
+- **Email:** Zoho Mail, on the project domain.
+- **Visit stats:** GoatCounter (`oac-emu.goatcounter.com`), via
+  `shared/analytics.js`.
+- **Nightly runner:** a self-hosted Mac mini, label `retro-mini`.
 
 ## Visitor-facing copy
 

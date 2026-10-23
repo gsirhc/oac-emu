@@ -42,7 +42,10 @@ function initFullscreen(opts) {
   fullscreenBtn.addEventListener("click", () => {
     if (isFullscreen()) {
       (document.exitFullscreen || document.webkitExitFullscreen).call(document);
-    } else if (!fsEscHint || fsEscHintSeen()) {
+      return;
+    }
+    trackEvent("fullscreen", true);
+    if (!fsEscHint || fsEscHintSeen()) {
       enterFullscreen();
     } else {
       // hint first; its close handler enters fullscreen

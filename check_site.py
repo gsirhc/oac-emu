@@ -1,4 +1,4 @@
-"""Fails if a staged site carries dev files, a test-only CPU speed path, a dangling reference, or tops 1 GB."""
+"""Fails if a staged site carries dev files, a test-only CPU speed path, a dangling reference, a page without analytics, or tops 1 GB."""
 import json
 import os
 import re
@@ -45,6 +45,8 @@ def check(site, limit=PAGES_LIMIT):
             total += os.path.getsize(full)
             if name.endswith(".html"):
                 text = open(full, encoding="utf-8").read()
+                if "footer.js" in text and "analytics.js" not in text:
+                    errors.append(f"{rel}: page without analytics.js")
                 base = root
                 m = BASE_HREF.search(text)
                 if m:
@@ -98,6 +100,7 @@ def selftest():
         "fast": "test-only CPU multiplier",
         "dev": "dev file staged",
         "big": "over the",
+        "nostats": "without analytics.js",
     }
     for case, want in cases.items():
         with tempfile.TemporaryDirectory() as site:
@@ -123,6 +126,9 @@ def selftest():
                 files["m/app.js"] += ' q.get("fast");'
             elif case == "dev":
                 files["m/notes.md"] = ""
+            elif case == "nostats":
+                files["m/index.html"] += '<script src="footer.js"></script>'
+                files["m/footer.js"] = ""
             elif case == "big":
                 files["m/r/a.bin"] = "x" * 2000
             for rel, text in files.items():
