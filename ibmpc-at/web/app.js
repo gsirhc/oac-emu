@@ -433,21 +433,13 @@
     requestAnimationFrame(frame);
   }
 
-  // ---- preset C: (?disk=keen1, the home page's Ready to Play cards) ----
-  const kPresetHdds = {
-    keen1: { file: "disks/presets/keen1-hdd.img", label: "Commander Keen 1 shareware", reset: "Reset to original Keen disk" },
-  };
-  const presetId = new URLSearchParams(location.search).get("disk");
-  const presetHdd = Object.hasOwn(kPresetHdds, presetId) ? kPresetHdds[presetId] : null;
   addFooterNote("All shareware and freeware titles remain the property of their respective owners. <a href=\"../about.html#rights\">More info</a>.");
-  const kFactoryHddLabel = presetHdd ? presetHdd.label : "factory FreeDOS (default)";
+  const kFactoryHddLabel = "factory FreeDOS (default)";
 
   // ---- hard disk persistence (IndexedDB, shared/hdd-worker.js) ----
   // The Machine is discarded on power-off, so C: is mirrored to IndexedDB, written sectors only.
-  // A preset C: has its own database, so the visitor's own C: is never touched.
   const hddWorker = (() => {
-    const db = presetHdd ? "ibmpcat-hdd-" + presetId : "ibmpcat-hdd";
-    const worker = new Worker("shared/hdd-worker.js?model=WD1003&db=" + db);
+    const worker = new Worker("shared/hdd-worker.js?model=WD1003&db=ibmpcat-hdd");
     const pending = new Map();
     let nextId = 1;
     worker.onmessage = (e) => {
@@ -515,11 +507,6 @@
   const hddBlankBtn = document.getElementById("hddBlankBtn");
   const hddDownloadBtn = document.getElementById("hddDownloadBtn");
   const hddUploadInput = document.getElementById("hddUploadInput");
-  if (presetHdd) {
-    hddResetBtn.textContent = presetHdd.reset;
-    hddBlankBtn.hidden = true;
-    hddUploadInput.closest(".filebtn").hidden = true;
-  }
   function refreshHddControls() {
     hddStatus.textContent = "Using: " + hddLabel + (hddStorageOk ? "" : ". " + HDD_STORAGE_BLOCKED);
     // C: only changes at the next power-on
@@ -550,7 +537,7 @@
     const blob = new Blob([bytes], { type: "application/octet-stream" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = presetHdd ? "ibmpcat-" + presetId + "-hdd.img" : "ibmpcat-hdd.img";
+    a.download = "ibmpcat-hdd.img";
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -600,7 +587,7 @@
 
   function powerOn() {
     if (poweredOn || !firmware) return;
-    const factoryC = !presetHdd && !savedHdd;
+    const factoryC = !savedHdd;
     if (!machine) {
       machine = new firmware.Module.Machine();
       machine.loadRom(0x100000 - firmware.bios.byteLength, new Uint8Array(firmware.bios));
@@ -731,7 +718,7 @@
         loadSavedHdd(),
         fetch("roms/BIOS-bochs-legacy").then((r) => r.arrayBuffer()),
         fetch("roms/egabios.bin").then((r) => r.arrayBuffer()),
-        fetch(presetHdd ? presetHdd.file : "disks/freedos-hdd.img").then((r) => r.arrayBuffer()),
+        fetch("disks/freedos-hdd.img").then((r) => r.arrayBuffer()),
       ]);
       firmware = { Module, bios, videoBios, hdd };
       if (savedHddResult) {

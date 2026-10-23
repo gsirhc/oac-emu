@@ -239,30 +239,8 @@ jobs:
         if: steps.pc486-cd.outputs.cache-hit != 'true'
         run: bash pc486/disks/fetch-freedos-cd.sh
 
-      # Preset C: (?disk=keen1): Apogee's installer run onto a bare FreeDOS from the
-      # library's Keen floppy (disks/build_preset_hdd.cpp).
-      - name: Restore IBM PC/AT preset hard disks
-        id: ibmpcat-preset-hdds
-        uses: actions/cache/restore@v4
-        with:
-          path: ibmpc-at/disks/keen1-hdd.img
-          key: ibmpcat-preset-hdds-${{ hashFiles('ibmpc-at/*.h', 'ibmpc-at/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'ibmpc-at/disks/*.cpp', 'ibmpc-at/disks/*.sh', 'ibmpc-at/disks/library.json', 'ibmpc-at/roms/*.sh', 'ibmpc-at/roms/egabios/*', 'pc486/disks/zero-free-clusters.py', 'shared/dos-library/*.py', 'shared/dos-library/*.sh') }}
-          enableCrossOsArchive: true
-
-      - name: Build IBM PC/AT preset hard disks
-        if: steps.ibmpcat-preset-hdds.outputs.cache-hit != 'true'
-        run: make -C ibmpc-at preset-hdds
-
-      - name: Save IBM PC/AT preset hard disks
-        if: steps.ibmpcat-preset-hdds.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ibmpc-at/disks/keen1-hdd.img
-          key: ibmpcat-preset-hdds-${{ hashFiles('ibmpc-at/*.h', 'ibmpc-at/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'ibmpc-at/disks/*.cpp', 'ibmpc-at/disks/*.sh', 'ibmpc-at/disks/library.json', 'ibmpc-at/roms/*.sh', 'ibmpc-at/roms/egabios/*', 'pc486/disks/zero-free-clusters.py', 'shared/dos-library/*.py', 'shared/dos-library/*.sh') }}
-          enableCrossOsArchive: true
-
       - working-directory: ibmpc-at/web
-        run: make ibmpcat.js hdd-image library-images preset-images
+        run: make ibmpcat.js hdd-image library-images
 
       - uses: actions/setup-node@v4
         with:
@@ -391,42 +369,8 @@ jobs:
       # Both binaries: the shipped one and the instrumented twin the
       # Performance panel's ?perf loads. Building only the shipped one would
       # let the PC486_PERF paths rot unnoticed -- nothing else compiles them.
-      # Preset C:s (?disk=doom, ?disk=wolf3d, ?disk=duke3d, ?disk=rott, ?disk=pinball, ?disk=tyrian): each game's own installer
-      # run onto a bare FreeDOS from the library's floppies or the publisher's zip (disks/build_preset_hdd.cpp).
-      - name: Restore pc486 preset hard disks
-        id: pc486-preset-hdds
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            pc486/disks/doom-hdd.img
-            pc486/disks/wolf3d-hdd.img
-            pc486/disks/duke3d-hdd.img
-            pc486/disks/rott-hdd.img
-            pc486/disks/pinball-hdd.img
-            pc486/disks/tyrian-hdd.img
-          key: pc486-preset-hdds-${{ hashFiles('pc486/Makefile', 'pc486/*.h', 'pc486/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'pc486/disks/*.cpp', 'pc486/disks/*.sh', 'pc486/disks/*.py', 'pc486/disks/library.json', 'pc486/roms/*.sh', 'shared/dos-library/*.py', 'shared/dos-library/*.sh') }}
-          enableCrossOsArchive: true
-
-      - name: Build pc486 preset hard disks
-        if: steps.pc486-preset-hdds.outputs.cache-hit != 'true'
-        run: make -C pc486 preset-hdds
-
-      - name: Save pc486 preset hard disks
-        if: steps.pc486-preset-hdds.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            pc486/disks/doom-hdd.img
-            pc486/disks/wolf3d-hdd.img
-            pc486/disks/duke3d-hdd.img
-            pc486/disks/rott-hdd.img
-            pc486/disks/pinball-hdd.img
-            pc486/disks/tyrian-hdd.img
-          key: pc486-preset-hdds-${{ hashFiles('pc486/Makefile', 'pc486/*.h', 'pc486/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'pc486/disks/*.cpp', 'pc486/disks/*.sh', 'pc486/disks/*.py', 'pc486/disks/library.json', 'pc486/roms/*.sh', 'shared/dos-library/*.py', 'shared/dos-library/*.sh') }}
-          enableCrossOsArchive: true
-
       - working-directory: pc486/web
-        run: make pc486.js pc486-perf.js hdd-image driver-images library-images preset-images shared
+        run: make pc486.js pc486-perf.js hdd-image driver-images library-images shared
 
       - uses: actions/setup-node@v4
         with:

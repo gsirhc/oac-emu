@@ -7,7 +7,6 @@
 #   make vbe-check   run the VGA mode 13h / DAC / VESA end-to-end pixel proof
 #   make hdd-image   build the shipped FreeDOS HDD image (see below, SLOW)
 #   make hdd-boot-check  cold-boot the finished HDD image standalone, report the screen
-#   make preset-hdds build the DOOM, Wolfenstein 3-D and Tyrian preset C:s (on a bare FreeDOS)
 #   make render_screen   build the screen-to-BMP diagnostic tool (see below)
 #   make fm-trace-render build the OPL3 trace-to-WAV dev tool (see below)
 #   make wasm        build the WebAssembly module (needs emsdk; see web/Makefile)
@@ -26,7 +25,7 @@ CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
 CHIPSET_SRCS = machine.cpp chipset.cpp cpu80486.cpp cache486.cpp ../shared/pc/pic8259.cpp ../shared/pc/pit8253.cpp i8042.cpp ../shared/pc/cmos_rtc.cpp ../shared/pc/dma8237.cpp ../shared/pc/fdc765.cpp ega.cpp wd1003.cpp atapi_cdrom.cpp ../shared/pc/pcspeaker.cpp soundblaster.cpp opl3.cpp mpu401.cpp
 UNIT_TESTS = cpu80486_test cpu80486_timing_test cache486_test pic8259_test pit8253_test i8042_test cmos_rtc_test dma8237_test chipset_test machine_test fdc765_test ega_test ega_render_test wd1003_test atapi_cdrom_test pcspeaker_test soundblaster_test mpu401_test opl3_test
 
-.PHONY: help test test-smoke bios bios-check pm-check vbe-check library hdd-image hdd-boot-check preset-hdds wasm serve coverage check clean fm-trace-render
+.PHONY: help test test-smoke bios bios-check pm-check vbe-check library hdd-image hdd-boot-check wasm serve coverage check clean fm-trace-render
 
 LLVM_PROFDATA ?= xcrun llvm-profdata
 LLVM_COV      ?= xcrun llvm-cov
@@ -106,56 +105,11 @@ disks/ctmouse.img: disks/build-ctmouse-floppy.sh disks/freedos-hdd.img
 
 ctmouse-image: disks/ctmouse.img
 
-# Library floppies (disks/library.json): FreeDOS packages from the LiveCD, pinned shareware.
+# Library floppies (disks/library.json): FreeDOS packages from the LiveCD.
 DOSLIB = ../shared/dos-library
 library: disks/freedos-cd.iso disks/ctmouse.img
-	bash $(DOSLIB)/fetch-shareware.sh
 	python3 $(DOSLIB)/build-library.py --library disks/library.json --iso disks/freedos-cd.iso --out disks/library
 	cp disks/ctmouse.img disks/library/
-
-# --- preset C:s (?disk=doom, ?disk=wolf3d, ?disk=duke3d, ?disk=rott, ?disk=pinball), from the library's install floppies or the publisher's zip ---
-disks/build_preset_hdd: disks/build_preset_hdd.cpp $(CHIPSET_SRCS)
-	$(CXX) $(CXXFLAGS) -o $@ disks/build_preset_hdd.cpp $(CHIPSET_SRCS)
-
-disks/library/doom-1.img disks/library/doom-2.img disks/library/wolf3d.img:
-	$(MAKE) library
-
-TYRIAN_ZIP = ../shared/dos-library/cache/tyrian21.zip
-DUKE3D_ZIP = ../shared/dos-library/cache/3dduke13.zip
-ROTT_ZIP = ../shared/dos-library/cache/1rott13.zip
-PINBALL_ZIP = ../shared/dos-library/cache/epicpn21.zip
-$(TYRIAN_ZIP) $(DUKE3D_ZIP) $(ROTT_ZIP) $(PINBALL_ZIP):
-	bash ../shared/dos-library/fetch-shareware.sh
-
-PRESET_DEPS = disks/build_preset_hdd disks/build-preset-hdd.sh disks/zero-free-clusters.py disks/freedos-hdd.img
-PRESET_RUN = bash disks/build-preset-hdd.sh
-PRESET_ARGS = ./disks/build_preset_hdd roms/BIOS-bochs-legacy roms/VGABIOS-lgpl-latest.bin disks/freedos-hdd.img
-
-disks/doom-hdd.img: $(PRESET_DEPS) disks/library/doom-1.img disks/library/doom-2.img
-	$(PRESET_RUN) doom $(PRESET_ARGS) $@.tmp disks/library/doom-1.img disks/library/doom-2.img
-	mv $@.tmp $@
-
-disks/wolf3d-hdd.img: $(PRESET_DEPS) disks/library/wolf3d.img
-	$(PRESET_RUN) wolf3d $(PRESET_ARGS) $@.tmp disks/library/wolf3d.img
-	mv $@.tmp $@
-
-disks/duke3d-hdd.img: $(PRESET_DEPS) $(DUKE3D_ZIP)
-	$(PRESET_RUN) duke3d $(PRESET_ARGS) $@.tmp $(DUKE3D_ZIP)
-	mv $@.tmp $@
-
-disks/rott-hdd.img: $(PRESET_DEPS) $(ROTT_ZIP)
-	$(PRESET_RUN) rott $(PRESET_ARGS) $@.tmp $(ROTT_ZIP)
-	mv $@.tmp $@
-
-disks/pinball-hdd.img: $(PRESET_DEPS) $(PINBALL_ZIP)
-	$(PRESET_RUN) pinball $(PRESET_ARGS) $@.tmp $(PINBALL_ZIP)
-	mv $@.tmp $@
-
-disks/tyrian-hdd.img: $(PRESET_DEPS) $(TYRIAN_ZIP)
-	$(PRESET_RUN) tyrian $(PRESET_ARGS) $@.tmp $(TYRIAN_ZIP)
-	mv $@.tmp $@
-
-preset-hdds: bios disks/doom-hdd.img disks/wolf3d-hdd.img disks/duke3d-hdd.img disks/rott-hdd.img disks/pinball-hdd.img disks/tyrian-hdd.img
 
 # --- boot the finished HDD image standalone (hdd_boot_check.cpp) ---
 hdd-boot-check: bios disks/hdd_boot_check
@@ -201,5 +155,5 @@ test-smoke: test
 check: test pm-check vbe-check
 
 clean:
-	rm -rf tests/build tests/build-cov tests/coverage-cpp bios_host pm_stub_check vbe_mode13_check disks/build_freedos_hdd disks/build_preset_hdd disks/hdd_boot_check render_screen fm_trace_render
+	rm -rf tests/build tests/build-cov tests/coverage-cpp bios_host pm_stub_check vbe_mode13_check disks/build_freedos_hdd disks/hdd_boot_check render_screen fm_trace_render
 	$(MAKE) -C web clean

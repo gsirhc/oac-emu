@@ -4,8 +4,8 @@ import { PC486_FULL } from "./helpers";
 function catalogHref(href: string): string {
   if (!href.startsWith("pc486/")) return href;
   const rest = href.slice("pc486/".length);
-  if (rest.startsWith("?")) return `pc486/full/${rest}&full=${PC486_FULL}`;
-  return `pc486/full/?full=${PC486_FULL}`;
+  if (rest.startsWith("?")) return `pc486/${rest}&full=${PC486_FULL}`;
+  return `pc486/?full=${PC486_FULL}`;
 }
 
 
@@ -24,7 +24,7 @@ const HOME = "http://localhost:8410/";
 const CATALOG = HOME + "super_secret.html";
 
 test.describe("landing page", () => {
-  test("lists the 486 DX2-66 Gaming PC with a launch link to /pc486/full/", async ({ page }) => {
+  test("lists the 486 DX2-66 Gaming PC with a launch link to /pc486/", async ({ page }) => {
     await page.goto(CATALOG);
     await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
     await expect(page.locator("#siteFooter a.about-sign")).toHaveText("Help");
@@ -42,7 +42,7 @@ test.describe("landing page", () => {
     expect(await shot.evaluate((img: HTMLImageElement) => img.naturalHeight)).toBe(128);
   });
 
-  test("Ready to Play lists DOOM, Wolfenstein 3-D, Duke Nukem 3D, Rise of the Triad, Epic Pinball and Tyrian, each linking to its pc486 preset", async ({ page }) => {
+  test("Ready to Play has no DOS titles", async ({ page }) => {
     await page.goto(CATALOG);
     await expect(page.locator("h2.section-heading")).toHaveText([
       "Systems",
@@ -50,55 +50,18 @@ test.describe("landing page", () => {
       "Arcade",
       "Homebrew",
     ]);
-    const card = page.locator(`a.machine-card[href="${catalogHref("pc486/?disk=doom")}"]`);
-    await expect(card.locator(".name")).toHaveText("Doom");
-    await expect(card.locator(".meta")).toHaveText("486 DX2-66 Gaming PC");
-
-    const shot = card.locator("img.shot");
-    await expect(shot).toHaveAttribute("src", /assets\/doom-e1m1\.jpg$/);
-    await expect(shot).toHaveJSProperty("complete", true);
-    expect(await shot.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(286);
-    expect(await shot.evaluate((img: HTMLImageElement) => img.naturalHeight)).toBe(128);
-
-    const wolf = page.locator(`a.machine-card[href="${catalogHref("pc486/?disk=wolf3d")}"]`);
-    await expect(wolf.locator(".name")).toHaveText("Wolfenstein 3D");
-    await expect(wolf.locator(".meta")).toHaveText("486 DX2-66 Gaming PC");
-    await expect(wolf.locator("img.shot")).toHaveJSProperty("naturalWidth", 286);
-
-    const duke = page.locator(`a.machine-card[href="${catalogHref("pc486/?disk=duke3d")}"]`);
-    await expect(duke.locator(".name")).toHaveText("Duke Nukem 3D");
-    await expect(duke.locator(".meta")).toHaveText("486 DX2-66 Gaming PC");
-    await expect(duke.locator("img.shot")).toHaveAttribute("src", /assets\/duke3d-e1l1\.jpg$/);
-    await expect(duke.locator("img.shot")).toHaveJSProperty("naturalWidth", 286);
-
-    const rott = page.locator(`a.machine-card[href="${catalogHref("pc486/?disk=rott")}"]`);
-    await expect(rott.locator(".name")).toHaveText("Rise of the Triad");
-    await expect(rott.locator(".meta")).toHaveText("486 DX2-66 Gaming PC");
-    await expect(rott.locator("img.shot")).toHaveAttribute("src", /assets\/rott-demo\.jpg$/);
-    await expect(rott.locator("img.shot")).toHaveJSProperty("naturalWidth", 286);
-
-    const pinball = page.locator(`a.machine-card[href="${catalogHref("pc486/?disk=pinball")}"]`);
-    await expect(pinball.locator(".name")).toHaveText("Epic Pinball");
-    await expect(pinball.locator(".meta")).toHaveText("486 DX2-66 Gaming PC");
-    await expect(pinball.locator("img.shot")).toHaveAttribute("src", /assets\/pinball-android\.jpg$/);
-    await expect(pinball.locator("img.shot")).toHaveJSProperty("naturalWidth", 286);
-    await expect(page.locator("a.machine-card[data-art] .name")).toHaveText(["Doom", "Wolfenstein 3D", "Duke Nukem 3D", "Rise of the Triad", "Epic Pinball", "Commander Keen", "Tyrian"]);
-
-    const tyrian = page.locator(`a.machine-card[href="${catalogHref("pc486/?disk=tyrian")}"]`);
-    await expect(tyrian.locator(".name")).toHaveText("Tyrian");
-    await expect(tyrian.locator(".meta")).toHaveText("486 DX2-66 Gaming PC");
-    await expect(tyrian.locator("img.shot")).toHaveJSProperty("naturalWidth", 286);
+    await expect(page.locator('a.machine-card[href*="disk="]')).toHaveCount(1);
+    await expect(page.locator('a.machine-card[href="altair8800/?disk=cpm"]')).toHaveCount(1);
+    await expect(page.locator("a.machine-card[data-art]")).toHaveCount(0);
+    await expect(page.locator("#readyArt")).toHaveCount(0);
   });
 
-  test("the public page links Epic Pinball and explains the coming-soon 486", async ({ page }) => {
+  test("the public page shows only the coming-soon 486", async ({ page }) => {
     await page.goto(HOME);
     await expect(page.locator("h2.section-heading")).toHaveCount(0);
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
-    await expect(page.locator("a.machine-card")).toHaveCount(1);
-    const pinball = page.locator('a.machine-card[href="pc486/EpicPinball/"]');
-    await expect(pinball.locator(".name")).toHaveText("Epic Pinball");
-    await expect(pinball.locator(".meta")).toHaveText("486 DX2-66 Gaming PC");
-    await expect(pinball.locator("img.shot")).toHaveAttribute("src", "assets/pinball-android.jpg");
+    await expect(page.locator(".machines .machine-card")).toHaveCount(1);
+    await expect(page.locator("a.machine-card")).toHaveCount(0);
     const soon = page.locator("#pc486Soon");
     await expect(soon.locator(".name")).toHaveText("486 DX2-66 Gaming PC");
     await expect(soon.locator(".meta")).toHaveText("Coming soon");
@@ -174,111 +137,4 @@ test.describe("landing page", () => {
     await expect(page.locator(".inner")).toBeVisible();
   });
 
-});
-
-test.describe("Ready to Play thumbnails", () => {
-  const DOS = "https://thumbnails.libretro.com/DOS/";
-  const DIRS = { snap: "Named_Snaps", title: "Named_Titles", boxart: "Named_Boxarts" };
-  const ART: Record<string, string> = {
-    "pc486/?disk=doom": "DOOM%20(1993).png",
-    "pc486/?disk=wolf3d": "Wolfenstein%203D%20(1992).png",
-    "pc486/?disk=duke3d": "Duke%20Nukem%203D%20(1996).png",
-    "pc486/?disk=rott": "Rise%20of%20the%20Triad%20-%20Dark%20War%20(1994).png",
-    "pc486/?disk=pinball": "Epic%20Pinball%20-%20The%20Complete%20Collection%20(1995).png",
-    "ibmpc-at/?disk=keen1": "Commander%20Keen%201%20-%20Marooned%20on%20Mars%20(1990).png",
-    "pc486/?disk=tyrian": "Tyrian%20(1995).png",
-  };
-  const TITLE_Y: Record<string, string> = { "pc486/?disk=duke3d": "30%", "pc486/?disk=rott": "30%" };
-  const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC", "base64");
-
-  async function stub(page, fail: string[] = []) {
-    const hits: string[] = [];
-    await page.route("https://thumbnails.libretro.com/**", (route) => {
-      const url = route.request().url();
-      hits.push(url);
-      if (fail.some((f) => url.endsWith(f))) return route.abort();
-      return route.fulfill({ status: 200, contentType: "image/png", body: PNG });
-    });
-    return hits;
-  }
-
-  const fit = (page, href: string) => page.locator(`a.machine-card[href="${catalogHref(href)}"] img.shot`).evaluate((img) => getComputedStyle(img).objectFit + " " + getComputedStyle(img).objectPosition);
-
-  test("Original by default and fetches nothing from libretro", async ({ page }) => {
-    const hits = await stub(page);
-    await page.goto(CATALOG);
-    await expect(page.locator("#readyArt")).toHaveValue("");
-    await expect(page.locator("#readyArt option")).toHaveText(["Original", "Screenshot", "Title screen", "Box art"]);
-    await expect(page.locator("a.machine-card.art")).toHaveCount(0);
-    await expect(page.locator(`a.machine-card[href="${catalogHref("pc486/?disk=doom")}"] img.shot`)).toHaveAttribute("src", "assets/doom-e1m1.jpg");
-    expect(hits).toEqual([]);
-  });
-
-  for (const [mode, dir] of Object.entries(DIRS)) {
-    test(`${mode} loads each title's libretro DOS ${dir} image`, async ({ page }) => {
-      const hits = await stub(page);
-      await page.goto(CATALOG);
-      await page.locator("#readyArt").selectOption(mode);
-      for (const [href, file] of Object.entries(ART)) {
-        const card = page.locator(`a.machine-card[href="${catalogHref(href)}"]`);
-        await expect(card).toHaveClass(/\bart\b/);
-        const shot = card.locator("img.shot");
-        await expect(shot).toHaveAttribute("src", DOS + dir + "/" + file);
-        await expect(shot).toHaveJSProperty("complete", true);
-        await expect(shot).toHaveAttribute("referrerpolicy", "no-referrer");
-        expect(await fit(page, href)).toBe(mode === "snap" ? "cover 50% 50%" : "cover 50% " + (mode === "title" && TITLE_Y[href] || "0%"));
-      }
-      await expect.poll(() => new Set(hits).size).toBe(Object.keys(ART).length);
-      expect(hits.every((h) => h.startsWith(DOS + dir + "/"))).toBe(true);
-      expect(await page.evaluate(() => localStorage.getItem("retroweb.readyArt"))).toBe(mode);
-      expect(await page.evaluate(() => localStorage.getItem("retroweb.arcadeArt"))).toBeNull();
-    });
-  }
-
-  test("a saved style hides the original tiles until the artwork arrives, so they never flash", async ({ page }) => {
-    let release: () => void = () => {};
-    const gate = new Promise<void>((r) => { release = r; });
-    await page.route("https://thumbnails.libretro.com/**", async (route) => {
-      await gate;
-      await route.fulfill({ status: 200, contentType: "image/png", body: PNG });
-    });
-    await page.goto(CATALOG);
-    await expect(page.locator("html")).not.toHaveClass(/art-pending/);
-    await page.evaluate(() => localStorage.setItem("retroweb.readyArt", "title"));
-    await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page.locator("html")).toHaveClass(/art-pending/);
-    const shot = page.locator(`a.machine-card[href="${catalogHref("pc486/?disk=doom")}"] img.shot`);
-    await expect(shot).toHaveAttribute("src", /^https:\/\/thumbnails\.libretro\.com\//);
-    expect(await shot.evaluate((img) => getComputedStyle(img).visibility)).toBe("hidden");
-    release();
-    await expect(shot).toHaveClass(/art-ready/);
-    expect(await shot.evaluate((img) => getComputedStyle(img).visibility)).toBe("visible");
-  });
-
-  test("choice persists across reload and Original restores the emulator captures", async ({ page }) => {
-    const hits = await stub(page);
-    await page.goto(CATALOG);
-    await page.locator("#readyArt").selectOption("title");
-    await page.reload();
-    await expect(page.locator("#readyArt")).toHaveValue("title");
-    await expect(page.locator(`a.machine-card[href="${catalogHref("pc486/?disk=wolf3d")}"] img.shot`)).toHaveAttribute("src", DOS + "Named_Titles/" + ART["pc486/?disk=wolf3d"]);
-
-    const before = hits.length;
-    await page.locator("#readyArt").selectOption("");
-    await expect(page.locator("a.machine-card.art")).toHaveCount(0);
-    await expect(page.locator(`a.machine-card[href="${catalogHref("pc486/?disk=tyrian")}"] img.shot`)).toHaveAttribute("src", "assets/tyrian-demo.jpg");
-    expect(await fit(page, "pc486/?disk=tyrian")).toBe("cover 0% 50%");
-    expect(hits.length).toBe(before);
-  });
-
-  test("an image that fails to load falls back to that title's emulator capture", async ({ page }) => {
-    await stub(page, ["Named_Boxarts/Tyrian%20(1995).png"]);
-    await page.goto(CATALOG);
-    await page.locator("#readyArt").selectOption("boxart");
-    const tyrian = page.locator(`a.machine-card[href="${catalogHref("pc486/?disk=tyrian")}"]`);
-    await expect(tyrian.locator("img.shot")).toHaveAttribute("src", "assets/tyrian-demo.jpg");
-    await expect(tyrian).not.toHaveClass(/\bart\b/);
-    expect(await fit(page, "pc486/?disk=tyrian")).toBe("cover 0% 50%");
-    await expect(page.locator("a.machine-card.art")).toHaveCount(Object.keys(ART).length - 1);
-  });
 });

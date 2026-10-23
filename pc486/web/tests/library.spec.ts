@@ -50,9 +50,9 @@ test.describe("Disk library", () => {
     await openLibrary(page);
     const lib = await page.evaluate(() => fetch("disks/library/library.json").then((r) => r.json()));
     await expect(page.locator("#libraryDialog .lib-item")).toHaveCount(lib.disks.length);
-    await page.locator("#libraryDialog .lib-item", { hasText: "DOOM" }).click();
-    await expect(page.locator("#libraryDialog .lib-meta")).toHaveText("1993  ·  id Software  ·  Needs 386 or better, VGA, hard disk");
-    await expect(page.locator("#libraryDialog .lib-disks button")).toHaveText(["Insert in A:", "Insert in A:"]);
+    await page.locator("#libraryDialog .lib-item", { hasText: "Wing" }).click();
+    await expect(page.locator("#libraryDialog .lib-meta")).toHaveText("2000  ·  Adam Hiatt, Anil Shrestra  ·  Needs 386, VGA, hard disk");
+    await expect(page.locator("#libraryDialog .lib-disks button")).toHaveText(["Insert in A:", "Insert in A:", "Insert in A:"]);
     await page.locator("#libraryDialog .lib-close").click();
     await expect(page.locator("#libraryDialog")).toBeHidden();
   });

@@ -1,7 +1,7 @@
 "use strict";
 // Owns C:'s IndexedDB storage off the main thread. Jobs run in arrival order, so a load sees
 // every earlier save. C: is stored as 64KB chunks keyed "c2:<index>"; all-zero chunks have no record.
-// ?db= names the database (a preset C: has its own), ?model= the drive, ?convert=1 loads the
+// ?db= names the database, ?model= the drive, ?convert=1 loads the
 // legacy converter. Without one a legacy whole-image record is the same size and kept as is.
 const params = new URLSearchParams(self.location.search);
 if (params.get("convert") === "1") importScripts("hdd-convert.js");

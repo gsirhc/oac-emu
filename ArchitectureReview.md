@@ -25,7 +25,7 @@ checklist). Two of them repeat whole build recipes rather than names:
 
 - `Makefile` `_stage` and `deploy-emulator.yml`'s `build` job
   each spell out every machine's targets (`ibmpcat.js roms hdd-image
-  library-images preset-images shared`, ...). They match today but are
+  library-images shared`, ...). They match today but are
   maintained separately.
 - `make preview`'s URL echo is a third copy of `MACHINES`.
 
@@ -50,13 +50,12 @@ URL echo loops too. Shipping the tested artifacts is optional on top.
 - **Forked PC chips.** `wd1003`, `i8042` and `ega` stay separate copies
   (IDE vs MFM, the PS/2 aux port and VGA are real differences). When a
   protocol fix lands in one, check the other's copy in the same change.
-- **ibmpc-at reaches into pc486.** `ibmpc-at/Makefile` and
-  `disks/build-preset-hdd.sh` use `../pc486/disks/zero-free-clusters.py`
-  and pc486's FreeDOS CD (`$(MAKE) -C ../pc486 disks/freedos-cd.iso`).
-  Move the script to `shared/dos-library/` and the CD fetch beside it, so
-  neither PC builds out of the other's folder.
+- **ibmpc-at reaches into pc486.** `ibmpc-at/Makefile` uses pc486's
+  FreeDOS CD (`$(MAKE) -C ../pc486 disks/freedos-cd.iso`). Move the CD
+  fetch to `shared/dos-library/`, so neither PC builds out of the other's
+  folder.
 - **CI cache keys repeated.** The PC image cache keys (`ibmpcat-hdd`,
-  `pc486-hdd`, `pc486-cd`, both `*-preset-hdds`) are spelled out about 20
+  `pc486-hdd`, `pc486-cd`) are spelled out about 20
   times across restore/save pairs in both workflows. They agree today. A
   composite action per image, like `.github/actions/fetch-altair-media`,
   would define each key once.

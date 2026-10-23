@@ -175,6 +175,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _send_html_with_livereload(self):
         path = self.translate_path(self.path)
         if os.path.isdir(path):
+            # leave the trailing-slash 301 to http.server, or relative URLs resolve from the parent
+            if not self.path.split("?", 1)[0].endswith("/"):
+                return None
             for index in ("index.html", "index.htm"):
                 index = os.path.join(path, index)
                 if os.path.isfile(index):
