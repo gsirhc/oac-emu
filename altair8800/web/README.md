@@ -127,14 +127,14 @@ and the browser's frame cadence, so no bytes are lost between frames.
   the **PRESET** bar. The terminal column keeps a &ge; 680&nbsp;px min so it
   never squishes; the panel column yields (it scrolls internally) when both
   don't fit. Narrower, it's a single column like the retro themes.
-- **Dark Modern** — Light Modern's exact layout with a dark palette. Stored as
-  `moderndark`; the theme scripts set `data-theme="modern"` +
+- **Dark Subtle** — Light Modern's exact layout with a dark palette. Stored as
+  `moderndark`; the theme scripts set `data-theme="subtle"` +
   `data-mode="dark"`, so every Modern layout rule still applies and only a
   `[data-mode="dark"]` colour-var block is added.
 - **System Modern** — Light Modern's layout, light or dark with the OS
   appearance (`prefers-color-scheme`). Stored as `system`. Changing the
   appearance (macOS System Settings, for example) updates the page without a
-  reload. Light Modern and Dark Modern stay on the palette you picked.
+  reload. Light Modern and Dark Subtle stay on the palette you picked.
 
 Every theme flows **front panel &rarr; terminal &rarr; devices** now (the reader,
 disk and cassette used to sit above the terminal).
@@ -143,8 +143,8 @@ Mid-1990s Web and the Modern themes have no window buttons, so their top bar
 shows an "&larr; All machines" link back to the landing page instead.
 
 Themes are CSS custom properties keyed off `:root[data-theme]` (plus
-`[data-mode="dark"]` for Dark Modern); an inline `<head>` script applies the
-stored choice before first paint (no flash). `?theme=web94` / `?theme=moderndark`
+`[data-mode="dark"]` for Dark Subtle); an inline `<head>` script applies the
+stored choice before first paint (no flash). `?theme=web94` / `?theme=subtledark`
 / `?theme=system` override.
 
 ## Terminal profiles

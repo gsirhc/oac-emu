@@ -186,7 +186,7 @@ spec sheet or reference document. Every addition must:
 
 - **Run entirely in the browser**, compiled to WASM (the `assembler6502`/Altair 8800
   pattern), using the existing theme system (Windows 95 / Windows XP /
-  Mid-1990s Web / Modern / Atmosphere) and CRT/terminal conventions already in place.
+  Mid-1990s Web / Subtle / Atmosphere) and CRT/terminal conventions already in place.
 - **Emulate the real CPU, memory map, and clock** at the machine's actual
   speed — no shortcuts on instruction timing, wait states, or bus contention
   (see "Never speed these up" above; the same opt-in-override rules apply).

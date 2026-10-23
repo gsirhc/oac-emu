@@ -212,14 +212,14 @@ async function boot() {
   }
   /* v8 ignore stop */
 
-  // Modern side-by-side folds the TERMINAL settings into the PRESET bar; every
+  // Subtle side-by-side folds the TERMINAL settings into the PRESET bar; every
   // other layout keeps that bar directly above the monitor.
   const toolbarsWrap = document.querySelector(".toolbars");
   const termBar = document.querySelector(".term-bar");
   const wideLayout = window.matchMedia("(min-width: 1560px)");
   function placeTermBar() {
     if (!toolbarsWrap || !termBar || !termBox) return;
-    const merged = document.documentElement.dataset.theme === "modern" && wideLayout.matches;
+    const merged = document.documentElement.dataset.theme === "subtle" && wideLayout.matches;
     if (merged) toolbarsWrap.appendChild(termBar);
     else termBox.insertBefore(termBar, termBox.firstChild);
   }
@@ -297,7 +297,7 @@ async function boot() {
     const showCrt = p.crt !== "none";
     bezelEl.className = "bezel crt-" + p.crt;
     monitorEl.classList.toggle("amber", key === "vt100a");
-    // Modern and Teletype aren't CRTs -> no monitor housing
+    // Subtle and Teletype aren't CRTs -> no monitor housing
     monitorEl.classList.toggle("bare", p.crt === "none" || p.crt === "paper");
     monitorEl.classList.toggle("scrolls", !!p.scrollback);
     screenEl.style.setProperty("--glow", (showCrt ? p.glow : 0) + "px");
@@ -527,7 +527,7 @@ async function boot() {
     /* v8 ignore next, font-load rejection is swallowed */
   ].filter(Boolean)).catch(() => {}).finally(() => applyProfile(savedTerm));
 
-  // --- page theme (Win95 / mid-90s Mosaic web / Modern / Dark Modern) ---
+  // --- page theme (Win95 / mid-90s Mosaic web / Subtle / Dark Subtle) ---
   initThemePicker(() => {
     placeTermBar();                // layout may have gained/lost side-by-side
     setTimeout(sizeScreen, 60);    // page width changed

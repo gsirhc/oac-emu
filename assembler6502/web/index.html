@@ -32,8 +32,8 @@
     font-weight: 700; font-display: swap;
   }
 
-  /* ---- page themes: default = Windows 95; web94 = mid-90s Mosaic web;
-     modern = clean; the color palette for all five themes (moderndark and
+  /* ---- page themes: default = Subtle light; web94 = mid-90s Mosaic web;
+     subtle = clean; the color palette for all five themes (subtle dark and
      ai included) lives in shared/theme.css (linked above) -- editing a
      color there reaches this page and every other one. Only this page's
      own layout-sizing token values (page width, padding, heading size)
@@ -50,7 +50,7 @@
     --body-pad:  26px 16px;
     --h1-font:   bold 24px "Times New Roman", Times, serif;
   }
-  :root[data-theme="modern"] {
+  :root[data-theme="subtle"] {
     --body-pad:  0;
     --h1-font:   700 22px/1.15 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
@@ -75,15 +75,15 @@
   }
 
   h1 { margin: 4px 0 0; text-align: center; font: var(--h1-font); letter-spacing: .5px; color: var(--h1-color); text-shadow: var(--h1-shadow); }
-  :root[data-theme="modern"] h1 {
+  :root[data-theme="subtle"] h1 {
     /* the title lives in the pagebar, keep it for a11y, hide visually */
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
     overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
   }
   .tagline { text-align: center; color: var(--dim); font-size: 14px; margin: 4px 0 0; }
-  :root[data-theme="modern"] .tagline { display: none; }
+  :root[data-theme="subtle"] .tagline { display: none; }
   hr.rule { border: 0; border-top: var(--rule); margin: 12px 0; }
-  :root[data-theme="modern"] hr.rule { display: none; }
+  :root[data-theme="subtle"] hr.rule { display: none; }
 
   /* Reading order top to bottom: Terminal, then the board (LCD accessory
      grouped above the PCB graphic it plugs into) -- every panel full width,
@@ -116,9 +116,9 @@
   input[type=text], input[type=number], textarea { background: var(--field-bg); border: var(--field-border); color: var(--text); }
   button { cursor: pointer; }
   button:active:not(:disabled) { border-style: inset; }
-  :root[data-theme="modern"] button:hover { background: #f4f5f7; }
-  :root[data-theme="modern"][data-mode="dark"] button:hover { background: #2f333d; }
-  :root[data-theme="modern"] button:active:not(:disabled) { border-style: solid; transform: translateY(1px); }
+  :root[data-theme="subtle"] button:hover { background: #f4f5f7; }
+  :root[data-theme="subtle"][data-mode="dark"] button:hover { background: #2f333d; }
+  :root[data-theme="subtle"] button:active:not(:disabled) { border-style: solid; transform: translateY(1px); }
   button:disabled { opacity: .5; cursor: default; }
   label { user-select: none; }
   .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -290,7 +290,7 @@
     <span class="pb-tag">WDC W65C02S &middot; 1&nbsp;MHz &middot; running entirely in your browser</span>
     <span class="pb-tools">
       <label class="pb-theme">Theme
-        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Windows 95</button>
+        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Subtle</button>
       </label>
       <span class="pb-winbtns"><button type="button" class="pb-min" title="Minimize" aria-label="Minimize" aria-pressed="false">_</button><button type="button" class="pb-max" title="Maximize" aria-label="Maximize">&#9633;</button><a class="pb-close" href="../" title="back to all machines" aria-label="close &mdash; back to all machines">&times;</a></span>
     </span>

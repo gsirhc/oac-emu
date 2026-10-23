@@ -83,7 +83,7 @@ test.describe("front panel jewelry", () => {
     const vp = page.viewportSize()!;
     try {
       await page.setViewportSize({ width: 1600, height: 1000 });
-      await chooseTheme(page, "modern");
+      await chooseTheme(page, "subtle");
       const blanks = page.locator(".at-bay.bay-blank");
       await expect(blanks).toHaveCount(2);
       await expect(blanks.nth(0)).toBeVisible();
@@ -105,7 +105,7 @@ test.describe("front panel jewelry", () => {
   }) => {
     const vp = page.viewportSize()!;
     try {
-      await chooseTheme(page, "modern");
+      await chooseTheme(page, "subtle");
       await page.setViewportSize({ width: 1200, height: 900 });
       const visible = page.locator(".at-drives .at-bay:visible");
       await expect(visible).toHaveCount(4);
@@ -127,7 +127,7 @@ test.describe("front panel jewelry", () => {
   test("modern theme puts the mini-tower beside the screen (CD, floppy, then controls)", async ({
     livePage: page,
   }) => {
-    await chooseTheme(page, "modern");
+    await chooseTheme(page, "subtle");
     const layout = await page.evaluate(() => {
       const screen = document.getElementById("screen")!.getBoundingClientRect();
       const cd = document.querySelector('.at-bay[data-drive="cdrom"]')!.getBoundingClientRect();
@@ -153,7 +153,7 @@ test.describe("front panel jewelry", () => {
   }) => {
     const vp = page.viewportSize()!;
     try {
-      await chooseTheme(page, "modern");
+      await chooseTheme(page, "subtle");
       // Wide enough for a roomy window, too narrow for a 640px screen beside the 340px tower.
       await page.setViewportSize({ width: 1000, height: 900 });
       const layout = await page.evaluate(() => {
@@ -190,7 +190,7 @@ test.describe("front panel jewelry", () => {
     }
   });
 
-  test("aurora and stacked modern keep the case at the Win95 fascia width", async ({
+  test("aurora and stacked subtle keep the case at the Win95 fascia width", async ({
     livePage: page,
   }) => {
     const vp = page.viewportSize()!;
@@ -207,7 +207,7 @@ test.describe("front panel jewelry", () => {
 
       // Narrow enough that modern drops the tower under the screen.
       await page.setViewportSize({ width: 1000, height: 900 });
-      await chooseTheme(page, "modern");
+      await chooseTheme(page, "subtle");
       width = await page.evaluate(() =>
         document.querySelector("#frontPanelCard .at-case")!.getBoundingClientRect().width);
       expect(width).toBeLessThanOrEqual(winWidth + 1);
@@ -264,7 +264,7 @@ test.describe("front panel jewelry", () => {
   }) => {
     const vp = page.viewportSize()!;
     try {
-      await chooseTheme(page, "modern");
+      await chooseTheme(page, "subtle");
       await page.setViewportSize({ width: 420, height: 900 });
       const layout = await page.evaluate(() => {
         const screen = document.getElementById("screen")!.getBoundingClientRect();

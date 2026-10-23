@@ -13,9 +13,10 @@ test.describe("page theme", () => {
     await expect(page.locator("#screen")).toBeVisible();
   });
 
-  test("defaults to Windows 95 (retro8080.theme unset)", async ({ page }) => {
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "win");
-    await expect(page.locator("#pageThemeBtn")).toHaveText("Windows 95");
+  test("defaults to Subtle light (retro8080.theme unset)", async ({ page }) => {
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
+    await expect(page.locator("html")).not.toHaveAttribute("data-mode");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Subtle");
     expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("light");
   });
 
@@ -25,8 +26,8 @@ test.describe("page theme", () => {
       ["win", "light", "win", null],
       ["winxp", "light", "winxp", null],
       ["web94", "light", "web94", null],
-      ["modern", "light", "modern", null],
-      ["modern", "dark", "modern", "dark"],
+      ["subtle", "light", "subtle", null],
+      ["subtle", "dark", "subtle", "dark"],
       ["aurora", "light", "aurora", null],
       ["win", "dark", "win", "dark"],
       ["winxp", "dark", "winxp", "dark"],
@@ -44,19 +45,19 @@ test.describe("page theme", () => {
 
   test("System mode follows the OS appearance on any family", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" });
-    await chooseTheme(page, "modern", "system");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await chooseTheme(page, "subtle", "system");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).not.toHaveAttribute("data-mode");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("subtle");
     expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("system");
 
     await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
 
-    await chooseTheme(page, "modern", "light");
+    await chooseTheme(page, "subtle", "light");
     await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).not.toHaveAttribute("data-mode");
 
     await page.emulateMedia({ colorScheme: "light" });
@@ -87,23 +88,22 @@ test.describe("page theme", () => {
     expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("dark");
   });
 
-  test("legacy composite theme values migrate on load", async ({ page }) => {
-    await page.emulateMedia({ colorScheme: "dark" });
+  test("unknown stored theme falls back to Subtle light", async ({ page }) => {
     await page.evaluate(() => {
       localStorage.setItem("retro8080.theme", "system");
       localStorage.removeItem("retro8080.mode");
     });
     await page.reload();
     await expect(page.locator("#screen")).toBeVisible();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
-    await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("system");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
+    await expect(page.locator("html")).not.toHaveAttribute("data-mode");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("subtle");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("light");
   });
 
   test("the emulator keeps running under every theme", async ({ page }) => {
     await page.goto("/?test=1");
-    await chooseTheme(page, "modern", "dark");
+    await chooseTheme(page, "subtle", "dark");
     const c0 = await page.evaluate(() => (window as any).__test.machine.totalCycles());
     await expect.poll(() => page.evaluate(() => (window as any).__test.machine.totalCycles())).toBeGreaterThan(c0);
   });

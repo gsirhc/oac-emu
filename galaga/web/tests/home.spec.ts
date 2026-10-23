@@ -46,12 +46,13 @@ test.describe("landing page", () => {
   test("the theme selector switches the page and persists to retro8080.theme", async ({ page }) => {
     await page.goto(HOME);
     const root = page.locator("html");
-    await expect(root).toHaveAttribute("data-theme", "win");
+    await expect(root).toHaveAttribute("data-theme", "subtle");
+    await expect(root).not.toHaveAttribute("data-mode");
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
 
-    await chooseTheme(page, "modern");
-    await expect(root).toHaveAttribute("data-theme", "modern");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    await chooseTheme(page, "win");
+    await expect(root).toHaveAttribute("data-theme", "win");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("win");
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
   });
 

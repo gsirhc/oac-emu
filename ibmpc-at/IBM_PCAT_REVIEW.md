@@ -1136,7 +1136,7 @@ start to a live `C:\>` prompt, screenshotted, byte-for-byte the same
 banner/memory-table/FreeDOS-welcome text as every native regression check
 in §12/§13; realistic-speed keyboard input typing `dir` + Enter and
 getting the real FreeDOS directory listing back, screenshotted; theme
-switching (Dark Modern correctly sets `data-theme="modern"
+switching (Dark Subtle correctly sets `data-theme="subtle"
 data-mode="dark"`); floppy mount (label updates to the real filename) and
 eject (label reverts, motor LED reflects `floppyMotorOn`); the speaker
 checkbox toggling on. A `window.__test` hook (`{ machine, sendKey,
@@ -1364,7 +1364,7 @@ dropped by the parser on every load. Confirmed precisely by inspecting
 expected ~96, with rule 0 being the `moderndark` block instead of the
 base `:root`. Fixed by closing the comment correctly; `--page-max` was
 reverted back to the token-driven form (`.page { max-width:
-var(--page-max); }`, `:root[data-theme="modern"] { --page-max:
+var(--page-max); }`, `:root[data-theme="subtle"] { --page-max:
 min(1600px, 95vw); }`) now that the actual disease, not just that one
 symptom, is fixed. Take-away for next time: when a computed style comes
 back wrong, check whether the *whole* stylesheet parsed as expected
@@ -1599,7 +1599,7 @@ the old fixed-96px column, not a considered final wording.
 **Width fix**: `.at-case` dropped its own `max-width` and now takes
 `width: 100%` (stretching with `.panel`/`.page` like every other
 control on the page, in every non-modern theme); a
-`:root[data-theme="modern"] .at-case { max-width: 640px; margin: 0
+`:root[data-theme="subtle"] .at-case { max-width: 640px; margin: 0
 auto }` override keeps it from following modern's much wider
 `--page-max` the way the CRT deliberately does.
 
@@ -2062,7 +2062,7 @@ To support both patterns, `SET1` now accepts a third entry shape: `{ make: [...]
 
 **UI integration**: Buttons are disabled while the machine is off (no keyboard input to a powered-down device); enabled once `poweredOn && machine` is true. The Ctrl+Alt+Del button is styled with `var(--warn)` border and text for visual distinctness. With a 50ms delay between make and break, a single click mimics a real, if fast, key press — quick enough for interactive use, slow enough that the break code lands as a separate event in the guest's single-threaded frame loop.
 
-**Verified**: 168/168 native tests (no C++ changes); live Playwright test confirmed: buttons disable before boot, enable post-boot, F-key clicks succeed without errors, Ctrl+Alt+Del triggers a real warm reboot (BIOS POST re-runs within seconds), buttons disable again on power-off. Panel buttons wrap naturally via the existing `.row { flex-wrap: wrap }` CSS rule, readable in all four themes (Windows 95, Mid-1990s Web, Modern, Dark Modern).
+**Verified**: 168/168 native tests (no C++ changes); live Playwright test confirmed: buttons disable before boot, enable post-boot, F-key clicks succeed without errors, Ctrl+Alt+Del triggers a real warm reboot (BIOS POST re-runs within seconds), buttons disable again on power-off. Panel buttons wrap naturally via the existing `.row { flex-wrap: wrap }` CSS rule, readable in all four themes (Windows 95, Mid-1990s Web, Modern, Dark Subtle).
 
 ## 31. A real bug: Ctrl+Alt+Del silently did nothing once actually tried live
 

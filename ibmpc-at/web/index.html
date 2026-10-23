@@ -18,8 +18,8 @@
 <link rel="stylesheet" href="shared/disk-library.css">
 <link rel="stylesheet" href="shared/pc-keyboard.css">
 <style>
-  /* ---- page themes: default = Windows 95; web94 = mid-90s Mosaic web;
-     modern = clean; moderndark = modern's layout, dark palette; ai = the
+  /* ---- page themes: default = Subtle light; web94 = mid-90s Mosaic web;
+     subtle = clean; dark mode uses subtle's layout with a dark palette; ai = the
      for-fun fifth theme. The color palette for all five lives in
      shared/theme.css (linked above) -- editing a color there reaches this
      page and every other one. Only this page's own layout-sizing token
@@ -37,7 +37,7 @@
     --body-pad:  26px 16px;
     --h1-font:   bold 27px "Times New Roman", Times, serif;
   }
-  :root[data-theme="modern"] {
+  :root[data-theme="subtle"] {
     --body-pad:  36px 20px;
     --inner-pad: 22px 30px 30px;
     --h1-font:   700 30px/1.15 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -66,14 +66,14 @@
   }
 
   h1 { margin: 4px 0 0; text-align: center; font: var(--h1-font); letter-spacing: .5px; color: var(--h1-color); text-shadow: var(--h1-shadow); }
-  :root[data-theme="modern"] h1 {
+  :root[data-theme="subtle"] h1 {
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
     overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
   }
   .tagline { text-align: center; color: var(--dim); font-size: 14px; margin: 4px 0 0; }
-  :root[data-theme="modern"] .tagline { display: none; }
+  :root[data-theme="subtle"] .tagline { display: none; }
   hr.rule { border: 0; border-top: var(--rule); margin: 12px 0; }
-  :root[data-theme="modern"] hr.rule { display: none; }
+  :root[data-theme="subtle"] hr.rule { display: none; }
 
   .panel h2 {
     font: bold 14px Arial, Helvetica, sans-serif;
@@ -92,9 +92,9 @@
   }
   button { cursor: pointer; }
   button:active:not(:disabled) { border-style: inset; }
-  :root[data-theme="modern"] button:hover { background: #f4f5f7; }
-  :root[data-theme="modern"][data-mode="dark"] button:hover { background: #2f333d; }
-  :root[data-theme="modern"] button:active:not(:disabled) { border-style: solid; transform: translateY(1px); }
+  :root[data-theme="subtle"] button:hover { background: #f4f5f7; }
+  :root[data-theme="subtle"][data-mode="dark"] button:hover { background: #2f333d; }
+  :root[data-theme="subtle"] button:active:not(:disabled) { border-style: solid; transform: translateY(1px); }
   button:disabled { opacity: .5; cursor: default; }
   label { user-select: none; }
   .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -144,8 +144,8 @@
      let the CRT grow to fill it too, instead of stranding it at the fixed
      860px size while everything around it is wide. Still the same 4:3
      tube, just bigger. */
-  :root[data-theme="modern"] .monitor { width: 100%; }
-  :root[data-theme="modern"] #screen { width: 100%; max-width: 1400px; margin: 0 auto; }
+  :root[data-theme="subtle"] .monitor { width: 100%; }
+  :root[data-theme="subtle"] #screen { width: 100%; max-width: 1400px; margin: 0 auto; }
   /* pointer-events: none so the focusing click reaches the canvas underneath. */
   .boot-notice {
     position: absolute; left: 50%; top: 50%; z-index: 7; max-width: 320px;
@@ -467,7 +467,7 @@
     <span class="pb-tag">80286 &middot; 8&nbsp;MHz &middot; running entirely in your browser</span>
     <span class="pb-tools">
       <label class="pb-theme">Theme
-        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Windows 95</button>
+        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Subtle</button>
       </label>
       <span class="pb-winbtns"><button type="button" class="pb-min" title="Minimize" aria-label="Minimize" aria-pressed="false">_</button><button type="button" class="pb-max" title="Maximize" aria-label="Maximize">&#9633;</button><a class="pb-close" href="../" title="back to all machines" aria-label="close &mdash; back to all machines">&times;</a></span>
     </span>

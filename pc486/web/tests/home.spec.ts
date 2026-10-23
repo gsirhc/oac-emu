@@ -139,11 +139,12 @@ test.describe("landing page", () => {
   test("the theme selector switches the page and persists to retro8080.theme", async ({ page }) => {
     await page.goto(HOME);
     const root = page.locator("html");
-    await expect(root).toHaveAttribute("data-theme", "win");
+    await expect(root).toHaveAttribute("data-theme", "subtle");
+    await expect(root).not.toHaveAttribute("data-mode");
 
-    await chooseTheme(page, "modern");
-    await expect(root).toHaveAttribute("data-theme", "modern");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    await chooseTheme(page, "win");
+    await expect(root).toHaveAttribute("data-theme", "win");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("win");
 
     await chooseTheme(page, "web94");
     await expect(root).toHaveAttribute("data-theme", "web94");
@@ -152,10 +153,10 @@ test.describe("landing page", () => {
 
   test("a stored retro8080.theme is honoured on load", async ({ page }) => {
     await page.goto(HOME);
-    await page.evaluate(() => localStorage.setItem("retro8080.theme", "modern"));
+    await page.evaluate(() => localStorage.setItem("retro8080.theme", "win"));
     await page.reload();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
-    await expect(page.locator("#pageThemeBtn")).toHaveText("Modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "win");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Windows 95");
   });
 
   test("Windows title-bar buttons: soft-minimize collapses the page; close is disabled", async ({ page }) => {

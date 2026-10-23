@@ -15,9 +15,10 @@ test.describe("page theme", () => {
     await boot(page);
   });
 
-  test("defaults to Windows 95 (retro8080.theme unset)", async ({ page }) => {
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "win");
-    await expect(page.locator("#pageThemeBtn")).toHaveText("Windows 95");
+  test("defaults to Subtle light (retro8080.theme unset)", async ({ page }) => {
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
+    await expect(page.locator("html")).not.toHaveAttribute("data-mode");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Subtle");
   });
 
   test("every theme is selectable and sets the expected data-theme/data-mode", async ({ page }) => {
@@ -25,8 +26,8 @@ test.describe("page theme", () => {
       ["win", "light", "win", null],
       ["winxp", "light", "winxp", null],
       ["web94", "light", "web94", null],
-      ["modern", "light", "modern", null],
-      ["modern", "dark", "modern", "dark"],
+      ["subtle", "light", "subtle", null],
+      ["subtle", "dark", "subtle", "dark"],
       ["aurora", "light", "aurora", null],
       ["winxp", "dark", "winxp", "dark"],
     ];
@@ -38,21 +39,21 @@ test.describe("page theme", () => {
     }
   });
 
-  test("System mode follows the OS appearance on the Modern palette", async ({ page }) => {
+  test("System mode follows the OS appearance on the Subtle palette", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" });
-    await chooseTheme(page, "modern", "system");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await chooseTheme(page, "subtle", "system");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).not.toHaveAttribute("data-mode");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("subtle");
     expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("system");
 
     await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
 
-    await chooseTheme(page, "modern", "light");
+    await chooseTheme(page, "subtle", "light");
     await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).not.toHaveAttribute("data-mode");
   });
 
@@ -69,14 +70,14 @@ test.describe("page theme", () => {
     await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
   });
 
-  test("aurora and modern keep the case at the Win95 fascia width", async ({ page }) => {
+  test("aurora and subtle keep the case at the Win95 fascia width", async ({ page }) => {
     const vp = page.viewportSize()!;
     try {
       await page.setViewportSize({ width: 1400, height: 900 });
       await chooseTheme(page, "win");
       const winWidth = await page.evaluate(() =>
         document.querySelector("#frontPanelCard .at-case")!.getBoundingClientRect().width);
-      for (const theme of ["aurora", "modern"] as const) {
+      for (const theme of ["aurora", "subtle"] as const) {
         await chooseTheme(page, theme);
         const width = await page.evaluate(() =>
           document.querySelector("#frontPanelCard .at-case")!.getBoundingClientRect().width);
@@ -95,6 +96,6 @@ test.describe("page theme", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "web94");
     await expect(page.locator("#pageThemeBtn")).toHaveText("Mid-1990s Web");
     expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("web94");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("light");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("dark");
   });
 });

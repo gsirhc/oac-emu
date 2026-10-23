@@ -13,9 +13,10 @@ test.describe("page theme", () => {
     await expect(page.locator("#screen .xterm-rows")).toContainText("\\", { timeout: 45000 });
   });
 
-  test("defaults to Windows 95 (retro8080.theme unset)", async ({ page }) => {
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "win");
-    await expect(page.locator("#pageThemeBtn")).toHaveText("Windows 95");
+  test("defaults to Subtle light (retro8080.theme unset)", async ({ page }) => {
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
+    await expect(page.locator("html")).not.toHaveAttribute("data-mode");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Subtle");
   });
 
   test("every theme is selectable and sets the expected data-theme/data-mode", async ({ page }) => {
@@ -23,8 +24,8 @@ test.describe("page theme", () => {
       ["win", "light", "win", null],
       ["winxp", "light", "winxp", null],
       ["web94", "light", "web94", null],
-      ["modern", "light", "modern", null],
-      ["modern", "dark", "modern", "dark"],
+      ["subtle", "light", "subtle", null],
+      ["subtle", "dark", "subtle", "dark"],
     ];
     for (const [theme, mode, dataTheme, dataMode] of cases) {
       await chooseTheme(page, theme, mode);
@@ -34,21 +35,21 @@ test.describe("page theme", () => {
     }
   });
 
-  test("System mode follows the OS appearance on the Modern palette", async ({ page }) => {
+  test("System mode follows the OS appearance on the Subtle palette", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" });
-    await chooseTheme(page, "modern", "system");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await chooseTheme(page, "subtle", "system");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).not.toHaveAttribute("data-mode");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("subtle");
     expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("system");
 
     await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
 
-    await chooseTheme(page, "modern", "light");
+    await chooseTheme(page, "subtle", "light");
     await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).not.toHaveAttribute("data-mode");
   });
 
@@ -72,7 +73,7 @@ test.describe("page theme", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "web94");
     await expect(page.locator("#pageThemeBtn")).toHaveText("Mid-1990s Web");
     expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("web94");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("light");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("dark");
   });
 
   test("the board and terminal still work under every theme", async ({ page }) => {

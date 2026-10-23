@@ -58,13 +58,14 @@ test.describe("landing page", () => {
   test("the theme selector switches the page and persists to retro8080.theme", async ({ page }) => {
     await page.goto(HOME);
     const root = page.locator("html");
-    await expect(root).toHaveAttribute("data-theme", "win"); // default
+    await expect(root).toHaveAttribute("data-theme", "subtle"); // default
+    await expect(root).not.toHaveAttribute("data-mode");
 
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
 
-    await chooseTheme(page, "modern");
-    await expect(root).toHaveAttribute("data-theme", "modern");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    await chooseTheme(page, "win");
+    await expect(root).toHaveAttribute("data-theme", "win");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("win");
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
 
     await chooseTheme(page, "web94");
@@ -76,43 +77,43 @@ test.describe("landing page", () => {
   test("System follows the OS appearance on the landing page and about page", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" });
     await page.goto(HOME);
-    await chooseTheme(page, "modern", "system");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await chooseTheme(page, "subtle", "system");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).not.toHaveAttribute("data-mode");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("subtle");
     expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("system");
     expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(236, 238, 242)");
 
     await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
-    await expect(page.locator("#pageThemeBtn")).toHaveText("Modern");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Subtle");
     expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(18, 19, 23)");
 
     await page.reload();
-    await expect(page.locator("#pageThemeBtn")).toHaveText("Modern");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Subtle");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
 
     await page.goto(HOME + "about.html");
     await expect(page).toHaveURL(/\/about\.html$/);
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
-    await expect(page.locator("#pageThemeBtn")).toHaveText("Modern");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Subtle");
 
     await page.emulateMedia({ colorScheme: "light" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).not.toHaveAttribute("data-mode");
-    await expect(page.locator("#pageThemeBtn")).toHaveText("Modern");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Subtle");
     expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(236, 238, 242)");
   });
 
   test("a stored retro8080.theme is honoured on load", async ({ page }) => {
     await page.goto(HOME);
-    await page.evaluate(() => localStorage.setItem("retro8080.theme", "modern"));
+    await page.evaluate(() => localStorage.setItem("retro8080.theme", "win"));
     await page.reload();
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
-    await expect(page.locator("#pageThemeBtn")).toHaveText("Modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "win");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Windows 95");
   });
 
   test("the public footer has no Help control, and about.html still returns home", async ({ page }) => {

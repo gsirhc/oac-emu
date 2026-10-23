@@ -25,9 +25,9 @@ h1, h2, h3 { font-weight: 600; }
   box-shadow: var(--page-shadow);
   overflow: hidden;
 }
-/* Modern theme goes almost full page width on every machine page. */
-:root[data-theme="modern"] { --page-max: min(1600px, 95vw); }
-/* Atmosphere sits between the 90s fixed column and Modern's near-bleed. */
+/* Subtle theme goes almost full page width on every machine page. */
+:root[data-theme="subtle"] { --page-max: min(1600px, 95vw); }
+/* Atmosphere sits between the 90s fixed column and Subtle's near-bleed. */
 :root[data-theme="aurora"] { --page-max: min(1180px, 86vw); }
 
 .pagebar {
@@ -38,11 +38,11 @@ h1, h2, h3 { font-weight: 600; }
 }
 .pagebar a { color: inherit; }
 .pb-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Windows title-bar app icon; Modern uses .pb-name/.pb-tag instead. */
+/* Windows title-bar app icon; Subtle uses .pb-name/.pb-tag instead. */
 .pb-icon { width: 14px; height: 14px; vertical-align: -2px; margin-right: 3px; }
-:root[data-theme="modern"] .pb-icon { display: none; }
+:root[data-theme="subtle"] .pb-icon { display: none; }
 .pb-home { flex: 0 0 auto; display: none; text-decoration: none; font-weight: bold; }
-.pb-name, .pb-tag { display: none; }   /* Modern uses these instead */
+.pb-name, .pb-tag { display: none; }   /* Subtle uses these instead */
 .pb-tools { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .pb-theme { display: inline-flex; align-items: center; gap: 5px; font: inherit; }
 .pb-theme-btn {
@@ -211,19 +211,19 @@ h1, h2, h3 { font-weight: 600; }
 :root[data-theme="web94"] .pb-home { display: inline; color: var(--link); text-decoration: underline; font-weight: normal; }
 :root[data-theme="web94"] .pb-home:visited { color: var(--link-visited); }
 
-:root[data-theme="modern"] .pagebar {
+:root[data-theme="subtle"] .pagebar {
   background: var(--titlebar-bg); color: var(--titlebar-fg);
   border-bottom: 1px solid #ecedf1; border-radius: 14px 14px 0 0;
   font: 500 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   padding: 10px 16px;
 }
-:root[data-theme="modern"][data-mode="dark"] .pagebar { border-bottom: var(--rule); }
-:root[data-theme="modern"] .pb-title   { display: none; }
-:root[data-theme="modern"] .pb-winbtns { display: none; }
-  :root[data-theme="modern"] .pb-home { display: inline; color: var(--link); text-decoration: none; font-weight: 600; font-size: 14px; opacity: .85; }
-  :root[data-theme="modern"] .pb-name { display: block; flex: 0 0 auto; margin-left: 2px; font-weight: 700; font-size: 17px; letter-spacing: .3px; color: var(--h1-color); }
-  :root[data-theme="modern"] .pb-tag { display: block; flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 14px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 700px) { :root[data-theme="modern"] .pb-tag { display: none; } }
+:root[data-theme="subtle"][data-mode="dark"] .pagebar { border-bottom: var(--rule); }
+:root[data-theme="subtle"] .pb-title   { display: none; }
+:root[data-theme="subtle"] .pb-winbtns { display: none; }
+  :root[data-theme="subtle"] .pb-home { display: inline; color: var(--link); text-decoration: none; font-weight: 600; font-size: 14px; opacity: .85; }
+  :root[data-theme="subtle"] .pb-name { display: block; flex: 0 0 auto; margin-left: 2px; font-weight: 700; font-size: 17px; letter-spacing: .3px; color: var(--h1-color); }
+  :root[data-theme="subtle"] .pb-tag { display: block; flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 14px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 700px) { :root[data-theme="subtle"] .pb-tag { display: none; } }
 
 .inner { padding: 16px 20px 20px; }
 :root[data-theme="win"] .inner,
