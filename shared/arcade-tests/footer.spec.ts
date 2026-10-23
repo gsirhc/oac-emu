@@ -4,7 +4,7 @@ test("site footer is present and the Help control points at ../about.html", asyn
   await page.goto("/?test=1");
   const footer = page.locator("#siteFooter");
   await expect(footer).toContainText(/© 2026 oac-emu\.dev/);
-  await expect(footer).toContainText(/old-ass computer/);
+  await expect(footer).toContainText(/Old-Ass Computer/);
   await expect(footer).toContainText(/Source code available on GitHub/);
   await expect(footer.locator("a.source-link")).toHaveText("GitHub");
   await expect(footer.locator("a.source-link")).toHaveAttribute(

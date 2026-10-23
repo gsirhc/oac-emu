@@ -21,8 +21,8 @@
       '<a class="about-sign" href="' + aboutHref() +
       '" title="Help" aria-label="Help">Help</a></p>';
     footer.innerHTML = help +
-      "<p>&copy; 2026 oac-emu.dev - An indie project featuring old-ass computer " +
-      "emulation you can use for free.</p>" +
+      "<p>&copy; 2026 oac-emu.dev - Featuring Old-Ass Computer " +
+      "Emulation you can use for free.</p>" +
       '<p>Source code available on <a class="source-link" href="' +
       SOURCE_HREF + '" target="_blank" rel="noopener noreferrer">GitHub</a></p>';
     var page = document.querySelector(".page");
