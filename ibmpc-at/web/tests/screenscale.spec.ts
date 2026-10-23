@@ -52,7 +52,7 @@ test.describe("screen scaling", () => {
     await boot(page);
     const vp = page.viewportSize()!;
     await page.setViewportSize({ width: 1920, height: 1080 });
-    await chooseTheme(page, "modern");
+    await chooseTheme(page, "subtle");
     await expect.poll(async () => (await measure(page)).cssW).toBeGreaterThan(860);
     await expect.poll(async () => { const m = await measure(page); return m.cw / m.fw === axisScale(m.cssW, m.dpr, m.fw); }).toBe(true);
     const m = await measure(page);

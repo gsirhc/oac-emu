@@ -4,7 +4,7 @@
 :root { --title-font: 900 30px "Arial Black", Arial, sans-serif; }
 :root[data-theme="winxp"] { --title-font: bold 28px Tahoma, "Segoe UI", sans-serif; }
 :root[data-theme="web94"] { --title-font: bold 26px "Times New Roman", Times, serif; }
-:root[data-theme="modern"] { --title-font: 700 28px/1.15 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+:root[data-theme="subtle"] { --title-font: 700 28px/1.15 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 :root[data-theme="aurora"] { --title-font: 800 30px/1.15 Inter, Helvetica, Arial, sans-serif; }
 :root[data-theme="aurora"] body {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -57,7 +57,7 @@ h1 {
 }
 :root[data-theme="winxp"] .section-heading { font: bold 15px Tahoma, "Segoe UI", sans-serif; letter-spacing: .4px; }
 :root[data-theme="web94"] .section-heading { font: bold 19px "Times New Roman", Times, serif; letter-spacing: normal; text-transform: none; }
-:root[data-theme="modern"] .section-heading { font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--muted); }
+:root[data-theme="subtle"] .section-heading { font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--muted); }
 
 .machines {
   display: grid;
@@ -92,7 +92,7 @@ h1 {
 }
 :root[data-theme="winxp"] .section-blurb { font: 15px/1.35 Tahoma, "Segoe UI", sans-serif; }
 :root[data-theme="web94"] .section-blurb { font: 15px/1.35 "Times New Roman", Times, serif; }
-:root[data-theme="modern"] .section-blurb {
+:root[data-theme="subtle"] .section-blurb {
   font: 15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 :root[data-theme="aurora"] .section-blurb {
@@ -107,10 +107,10 @@ h1 {
   transition: transform .12s ease, box-shadow .12s ease;
 }
 .machine-card:hover { transform: translateY(-2px); }
-:root[data-theme="modern"] .machine-card:hover {
+:root[data-theme="subtle"] .machine-card:hover {
   box-shadow: 0 6px 20px rgba(16,24,40,.12);
 }
-:root:not([data-theme="modern"]) .machine-card:active { border-style: inset; }
+:root:not([data-theme="subtle"]) .machine-card:active { border-style: inset; }
 
 /* Thumbnail-only tiles. Shots are 286×128 (2.234:1) except the AT fascia
    (712×128); object-fit: cover + left keeps that crop on the badge/LEDs. */
@@ -140,7 +140,7 @@ h1 {
   transition: transform .12s ease, box-shadow .12s ease;
 }
 .arcade-portal:hover { transform: translateY(-2px); }
-:root[data-theme="modern"] .arcade-portal:hover {
+:root[data-theme="subtle"] .arcade-portal:hover {
   box-shadow: 0 6px 20px rgba(16,24,40,.12);
 }
 :root[data-theme="aurora"] .arcade-portal:hover {

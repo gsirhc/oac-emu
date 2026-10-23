@@ -1,4 +1,4 @@
-/* Shared theme color tokens: Windows 95 / Windows XP / Mid-1990s Web / Modern /
+/* Shared theme color tokens: Windows 95 / Windows XP / Mid-1990s Web / Subtle /
    Atmosphere, each light and dark (data-mode="dark"). Page-specific layout
    tuning stays in each page's own <style>. Machines copy this into
    web/shared/; index.html links it directly. */
@@ -217,7 +217,7 @@
   color: #e8e8f0;
   font-family: "Times New Roman", Times, serif;
 }
-:root[data-theme="modern"] {
+:root[data-theme="subtle"] {
   --desktop:   #eceef2;
   --page-bg:   #ffffff;
   --page-border: 1px solid #e4e6ea;
@@ -251,9 +251,8 @@
   --accent2:      #0a8f4c;
   --warn:         #d1435b;
 }
-/* Dark Modern: scripts set data-theme="modern" + data-mode="dark" so Modern's
-   layout rules still apply. */
-:root[data-theme="modern"][data-mode="dark"] {
+/* Dark Subtle: scripts set data-theme="subtle" + data-mode="dark" so Subtle's layout rules still apply. */
+:root[data-theme="subtle"][data-mode="dark"] {
   color-scheme: dark;
   --desktop:   #121317;
   --page-bg:   #1b1d22;

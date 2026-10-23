@@ -47,7 +47,7 @@ test.describe("analytics", () => {
   test("a theme change counts once, when the dialog closes", async ({ page }) => {
     await load(page);
     await page.locator("#pageThemeBtn").click();
-    await page.locator('#themeDialog input[name="pageThemeFamily"][value="modern"]').check();
+    await page.locator('#themeDialog input[name="pageThemeFamily"][value="subtle"]').check();
     await page.locator('#themeDialog input[name="pageThemeFamily"][value="winxp"]').check();
     await page.locator('#themeDialog input[name="pageThemeMode"][value="dark"]').check();
     await page.locator("#themeDialogDone").click();

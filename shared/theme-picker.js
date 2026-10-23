@@ -1,33 +1,29 @@
 "use strict";
 // ---- page theme ----
 // retro8080.theme + retro8080.mode, shared site-wide. data-theme is the family;
-// data-mode="dark" when the resolved appearance is dark. Legacy composite keys
-// (moderndark, system, systemaurora, ai) migrate on first interactive load.
+// data-mode="dark" when the resolved appearance is dark.
 // initThemePicker(onChange) wires #pageThemeBtn, builds #themeDialog, resolves
-// ?theme=/&mode=, then storage, then theme-init.js's stamp, then win+light.
+// ?theme=/&mode=, then storage, then theme-init.js's stamp, then subtle+light.
 // Returns the family; onChange runs after later interactive changes.
 
 function initThemePicker(onChange) {
-  const THEMES = ["win", "winxp", "web94", "modern", "aurora"];
+  const THEMES = ["win", "winxp", "web94", "subtle", "aurora"];
   const MODES = ["light", "dark", "system"];
   const LABELS = {
     win: "Windows 95",
     winxp: "Windows XP",
     web94: "Mid-1990s Web",
-    modern: "Modern",
+    subtle: "Subtle",
     aurora: "Atmosphere",
   };
   const root = document.documentElement;
   const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
   const btn = document.getElementById("pageThemeBtn");
-  if (!btn) return "win";
+  if (!btn) return "subtle";
 
-  const migrateLegacy = (theme, mode) => {
+  const normalize = (theme, mode) => {
     let t = theme, m = mode;
-    if (t === "ai" || t === "systemaurora") { t = "aurora"; if (!m) m = "system"; }
-    else if (t === "moderndark") { t = "modern"; if (!m) m = "dark"; }
-    else if (t === "system") { t = "modern"; if (!m) m = "system"; }
-    if (!THEMES.includes(t)) t = "win";
+    if (!THEMES.includes(t)) t = "subtle";
     if (!MODES.includes(m)) m = "light";
     return { theme: t, mode: m };
   };
@@ -38,7 +34,7 @@ function initThemePicker(onChange) {
       theme = localStorage.getItem("retro8080.theme");
       mode = localStorage.getItem("retro8080.mode");
     } catch {}
-    return migrateLegacy(theme || "win", mode);
+    return normalize(theme || "subtle", mode || "light");
   };
 
   const writeStored = (theme, mode) => {
@@ -55,7 +51,7 @@ function initThemePicker(onChange) {
   const qTheme = params.get("theme");
   const qMode = params.get("mode");
   if (qTheme || qMode) {
-    current = migrateLegacy(qTheme || current.theme, qMode || current.mode);
+    current = normalize(qTheme || current.theme, qMode || current.mode);
   } else if (root.dataset.theme && THEMES.includes(root.dataset.theme)) {
     current = { theme: current.theme, mode: current.mode };
   }
@@ -64,7 +60,7 @@ function initThemePicker(onChange) {
     mode === "dark" || (mode === "system" && systemDark.matches);
 
   const apply = (theme, mode, persist) => {
-    const next = migrateLegacy(theme, mode);
+    const next = normalize(theme, mode);
     current = next;
     root.dataset.theme = next.theme;
     if (isDark(next.mode)) root.dataset.mode = "dark";

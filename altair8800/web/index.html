@@ -35,8 +35,8 @@
     font-weight: 700; font-display: swap;
   }
 
-  /* ---- page themes: default = Windows 95; web94 = mid-90s Mosaic web;
-     modern = clean; the color palette for all five themes (moderndark and
+  /* ---- page themes: default = Subtle light; web94 = mid-90s Mosaic web;
+     subtle = clean; the color palette for all five themes (subtle dark and
      ai included) lives in shared/theme.css (linked above) -- editing a
      color there reaches this page and every other one. Only this page's
      own layout-sizing token values (page width, padding, heading size, and
@@ -55,14 +55,14 @@
     --body-pad:  26px 16px;
     --h1-font:   bold 27px "Times New Roman", Times, serif;
   }
-  :root[data-theme="modern"] {
+  :root[data-theme="subtle"] {
     --body-pad:  36px 20px;
     --inner-pad: 22px 30px 30px;
     --h1-font:   700 30px/1.15 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     --altair-bg:     #16181c;
     --altair-radius: 14px;
   }
-  :root[data-theme="modern"][data-mode="dark"] {
+  :root[data-theme="subtle"][data-mode="dark"] {
     --altair-bg:     #0c0d10;
   }
   :root[data-theme="aurora"] {
@@ -77,20 +77,20 @@
   /* .pagebar's dark-modern border-bottom now comes from shared/pagebar.css's
      var(--rule) reuse (see --rule above), which already resolves to this
      same #2c2f37. */
-  :root[data-theme="modern"][data-mode="dark"] button:hover,
-  :root[data-theme="modern"][data-mode="dark"] label.filebtn:hover,
-  :root[data-theme="modern"][data-mode="dark"] .pg-toggle:hover { background: #2f333d; }
-  :root[data-theme="modern"][data-mode="dark"] button:active,
-  :root[data-theme="modern"][data-mode="dark"] label.filebtn:active { background: #24272e; }
-  :root[data-theme="modern"][data-mode="dark"] .titlebar .btns span { color: #9aa0aa; }
-  :root[data-theme="modern"][data-mode="dark"] .titlebar .btns span:hover { background: #2f333d; color: #e8eaee; }
-  :root[data-theme="modern"][data-mode="dark"] .desc,
-  :root[data-theme="modern"][data-mode="dark"] .help-doc pre { background: #17181d; border-color: #2c2f37; }
-  :root[data-theme="modern"][data-mode="dark"] .help-doc h4 { color: #e8eaee; }
-  :root[data-theme="modern"][data-mode="dark"] .disk-note { color: #9aa0aa; }
-  :root[data-theme="modern"][data-mode="dark"] .disk-meta { color: #9aa0aa; }
-  :root[data-theme="modern"][data-mode="dark"] .preset-note { color: #ff7a7a; }
-  :root[data-theme="modern"][data-mode="dark"] .dialog { box-shadow: 0 10px 44px rgba(0,0,0,.6); }
+  :root[data-theme="subtle"][data-mode="dark"] button:hover,
+  :root[data-theme="subtle"][data-mode="dark"] label.filebtn:hover,
+  :root[data-theme="subtle"][data-mode="dark"] .pg-toggle:hover { background: #2f333d; }
+  :root[data-theme="subtle"][data-mode="dark"] button:active,
+  :root[data-theme="subtle"][data-mode="dark"] label.filebtn:active { background: #24272e; }
+  :root[data-theme="subtle"][data-mode="dark"] .titlebar .btns span { color: #9aa0aa; }
+  :root[data-theme="subtle"][data-mode="dark"] .titlebar .btns span:hover { background: #2f333d; color: #e8eaee; }
+  :root[data-theme="subtle"][data-mode="dark"] .desc,
+  :root[data-theme="subtle"][data-mode="dark"] .help-doc pre { background: #17181d; border-color: #2c2f37; }
+  :root[data-theme="subtle"][data-mode="dark"] .help-doc h4 { color: #e8eaee; }
+  :root[data-theme="subtle"][data-mode="dark"] .disk-note { color: #9aa0aa; }
+  :root[data-theme="subtle"][data-mode="dark"] .disk-meta { color: #9aa0aa; }
+  :root[data-theme="subtle"][data-mode="dark"] .preset-note { color: #ff7a7a; }
+  :root[data-theme="subtle"][data-mode="dark"] .dialog { box-shadow: 0 10px 44px rgba(0,0,0,.6); }
 
   /* box-sizing reset and .page/.pagebar/.pb-* structure now live in
      shared/pagebar.css (linked in <head> above) -- shared verbatim across
@@ -133,32 +133,32 @@
     background: #c0c0c0;
     border: 1px outset #dfdfdf;
   }
-  :root[data-theme="modern"] .titlebar .btns span {
+  :root[data-theme="subtle"] .titlebar .btns span {
     background: transparent; border: 0; color: #6b7280;
     width: 20px; height: 20px; line-height: 20px; font-size: 14px;
     border-radius: 5px;
   }
-  :root[data-theme="modern"] .titlebar .btns span:hover { background: #e6e8ec; color: #1b1e24; }
+  :root[data-theme="subtle"] .titlebar .btns span:hover { background: #e6e8ec; color: #1b1e24; }
 
   /* .pagebar/.pb-* structure (flex layout, which part shows under which
      theme) is in shared/pagebar.css above. This page's own padding/
      font-size numbers differ slightly from ibmpc-at's/assembler6502's own,
      so those specific values stay local, layered on top via the cascade. */
   .pagebar { padding: 3px 5px; }
-  :root[data-theme="modern"] .pagebar { padding: 8px 14px; }
-  :root[data-theme="modern"] .pb-name { font-size: 16px; }
-  :root[data-theme="modern"] .pb-tag { font-size: 13px; }
-  :root[data-theme="modern"] .pb-tag::before { content: "\2014\00a0"; }  /* em dash */
-  :root[data-theme="modern"] .pb-theme select {
+  :root[data-theme="subtle"] .pagebar { padding: 8px 14px; }
+  :root[data-theme="subtle"] .pb-name { font-size: 16px; }
+  :root[data-theme="subtle"] .pb-tag { font-size: 13px; }
+  :root[data-theme="subtle"] .pb-tag::before { content: "\2014\00a0"; }  /* em dash */
+  :root[data-theme="subtle"] .pb-theme select {
     font-size: 13px; border-radius: 6px; padding: 4px 8px;
   }
   /* Modern: the title now lives in the bar, so drop the big in-page header */
-  :root[data-theme="modern"] .inner > h1 {
+  :root[data-theme="subtle"] .inner > h1 {
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
     overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
   }
-  :root[data-theme="modern"] .inner > .tagline,
-  :root[data-theme="modern"] .inner > .head-rule { display: none; }
+  :root[data-theme="subtle"] .inner > .tagline,
+  :root[data-theme="subtle"] .inner > .head-rule { display: none; }
 
   .inner { padding: var(--inner-pad); }
 
@@ -172,10 +172,10 @@
   }
   .tagline { text-align: var(--center); font-style: italic; margin: 4px 0 0; }
   /* the ~ * ~ line is a deliberate period touch, retro themes only */
-  .modern-only { display: none; }
-  :root[data-theme="modern"] .retro-only { display: none; }
-  :root[data-theme="modern"] .modern-only { display: block; }
-  :root[data-theme="modern"] .tagline {
+  .subtle-only { display: none; }
+  :root[data-theme="subtle"] .retro-only { display: none; }
+  :root[data-theme="subtle"] .subtle-only { display: block; }
+  :root[data-theme="subtle"] .tagline {
     font-style: normal; font-size: 15px; opacity: .8; margin-top: 6px;
   }
 
@@ -183,7 +183,7 @@
 
   /* ===== Mid-1990s Web, NCSA Mosaic / early-Netscape page chrome =========
      Every rule is scoped to [data-theme="web94"], so nothing here touches the
-     Windows 95 or Modern themes. Only the page chrome is period-dressed; the
+     Windows 95 or Subtle themes. Only the page chrome is period-dressed; the
      emulated hardware keeps its photoreal look in every theme. */
   :root[data-theme="web94"] h1,
   :root[data-theme="web94"] h2,
@@ -245,10 +245,10 @@
     cursor: pointer;
   }
   button:active, label.filebtn:active { border-style: inset; }
-  :root[data-theme="modern"] button:hover,
-  :root[data-theme="modern"] label.filebtn:hover { background: #f4f5f7; }
-  :root[data-theme="modern"] button:active,
-  :root[data-theme="modern"] label.filebtn:active {
+  :root[data-theme="subtle"] button:hover,
+  :root[data-theme="subtle"] label.filebtn:hover { background: #f4f5f7; }
+  :root[data-theme="subtle"] button:active,
+  :root[data-theme="subtle"] label.filebtn:active {
     border-style: solid; background: #eceef1; transform: translateY(1px);
   }
 
@@ -334,7 +334,7 @@
     box-shadow: 0 0 6px 2px rgba(51,255,102,.8), 0 0 0 1px #0a2a15;
   }
 
-  /* bare mode: Modern + Teletype get a thin frame, no CRT housing */
+  /* bare mode: Subtle + Teletype get a thin frame, no CRT housing */
   .monitor.bare {
     padding: 0; background: none; border-radius: 0;
     box-shadow: none; margin-top: 12px;
@@ -421,7 +421,7 @@
     box-shadow: inset 0 1px 2px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.2);
     white-space: pre; overflow-x: auto;
   }
-  :root[data-theme="modern"] .statusline { box-shadow: none; border-radius: 7px; }
+  :root[data-theme="subtle"] .statusline { box-shadow: none; border-radius: 7px; }
 
   /* footer -------------------------------------------------------- */
   .footer { margin-top: 14px; text-align: center; font-size: 12px; }
@@ -442,7 +442,7 @@
     box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.4);
     overflow: hidden;
   }
-  :root[data-theme="modern"] .dialog {
+  :root[data-theme="subtle"] .dialog {
     box-shadow: 0 8px 40px rgba(16,24,40,.24);
   }
   .dialog .titlebar { display: flex; }   /* the modal keeps its bar in every theme */
@@ -466,7 +466,7 @@
     font-size: 12px;
     line-height: 1.45;
   }
-  :root[data-theme="modern"] .desc {
+  :root[data-theme="subtle"] .desc {
     background: #f3f4f6; border: 1px solid #e4e6ea; border-radius: 7px;
   }
   #romFileName { font-size: 11px; font-style: italic; margin-left: 6px; }
@@ -700,7 +700,7 @@
     padding: 2px 10px; cursor: pointer; white-space: nowrap;
   }
   .pg-toggle:active { border-style: inset; }
-  :root[data-theme="modern"] .pg-toggle:hover { background: #f4f5f7; }
+  :root[data-theme="subtle"] .pg-toggle:hover { background: #f4f5f7; }
   /* a movable floating panel, starts on the right so the front panel and
      the guide are both visible without scrolling */
   .pg-body {
@@ -904,13 +904,13 @@
   /* the disk picker reuses .dialog; a couple of extras */
   .disk-note { color: #555; font-size: 12px; line-height: 1.5; margin-top: 8px; }
   .disk-meta { color: #555; font-size: 12px; margin: 2px 0 6px; }
-  :root[data-theme="modern"] .disk-meta { color: #6b7280; }
-  :root[data-theme="modern"] .disk-note { color: #6b7280; }
+  :root[data-theme="subtle"] .disk-meta { color: #6b7280; }
+  :root[data-theme="subtle"] .disk-note { color: #6b7280; }
 
   /* preset bar --------------------------------------------------- */
   .preset-bar select { max-width: 100%; }
   .preset-note { color: #a03; font: 12px Arial, sans-serif; }
-  :root[data-theme="modern"] .preset-note { color: #b4232f; }
+  :root[data-theme="subtle"] .preset-note { color: #b4232f; }
   :root[data-theme="web94"] .preset-note { color: #800; }
 
   /* S-100 expansion-card strip --------------------------------- */
@@ -1101,10 +1101,10 @@
     white-space: pre-wrap; overflow-x: auto;
   }
   .help-doc .divider { border-top: 1px solid #b9b9b9; margin: 12px 0; }
-  :root[data-theme="modern"] .help-doc pre {
+  :root[data-theme="subtle"] .help-doc pre {
     background: #f3f4f6; border-color: #e4e6ea; border-radius: 6px;
   }
-  :root[data-theme="modern"] .help-doc h4 { color: #1b1e24; }
+  :root[data-theme="subtle"] .help-doc h4 { color: #1b1e24; }
 
   .dialog .addrs { margin-top: 8px; }
   .dialog .addrs input { width: 78px; font: 11px "Courier New", monospace; }
@@ -1208,7 +1208,7 @@
   /* ---- workspace: front panel / terminal / devices -------------------
      Every theme now flows front panel -> terminal -> devices. The wrappers
      are transparent (display:contents) so the retro themes are a plain single
-     column, just as before. Modern drops the section rules for gaps; and on a
+     column, just as before. Subtle drops the section rules for gaps; and on a
      wide enough screen .workspace becomes a grid — terminal left, front panel
      right, the loadable devices in a full-width row below — with the terminal
      settings folded into the PRESET bar (app.js moves that node). */
@@ -1227,28 +1227,28 @@
     margin-right: auto;
   }
 
-  :root[data-theme="modern"] .workspace {
+  :root[data-theme="subtle"] .workspace {
     display: flex; flex-direction: column; gap: 16px;
   }
-  :root[data-theme="modern"] .ws-machine { display: block; }
-  :root[data-theme="modern"] .ws-devices { display: block; }
-  :root[data-theme="modern"] .ws-rule    { display: none; }
+  :root[data-theme="subtle"] .ws-machine { display: block; }
+  :root[data-theme="subtle"] .ws-devices { display: block; }
+  :root[data-theme="subtle"] .ws-rule    { display: none; }
 
   @media (min-width: 1560px) {
-    :root[data-theme="modern"] { --page-max: min(1640px, 95vw); }
+    :root[data-theme="subtle"] { --page-max: min(1640px, 95vw); }
 
     /* PRESET + TERMINAL settings share one bar */
-    :root[data-theme="modern"] .toolbars {
+    :root[data-theme="subtle"] .toolbars {
       display: flex; flex-wrap: wrap; align-items: center; gap: 4px 22px;
       background: var(--panel-bg); border: var(--panel-border);
       border-radius: var(--panel-radius); padding: 8px 12px;
     }
-    :root[data-theme="modern"] .toolbars > .toolbar {
+    :root[data-theme="subtle"] .toolbars > .toolbar {
       background: none; border: 0; border-radius: 0; padding: 0; margin: 0;
       flex: 0 1 auto;
     }
 
-    :root[data-theme="modern"] .workspace {
+    :root[data-theme="subtle"] .workspace {
       display: grid;
       /* terminal keeps a comfortable min so it never squishes; the panel column
          yields (it scrolls internally) when the screen isn't wide enough for both */
@@ -1258,16 +1258,16 @@
       align-items: start;
       margin-top: 14px;
     }
-    :root[data-theme="modern"] .ws-machine  { grid-area: machine; }
-    :root[data-theme="modern"] .ws-terminal { grid-area: terminal; }
+    :root[data-theme="subtle"] .ws-machine  { grid-area: machine; }
+    :root[data-theme="subtle"] .ws-terminal { grid-area: terminal; }
     /* the loadable devices stack at their designed width (as in the retro themes) */
-    :root[data-theme="modern"] .ws-devices  {
+    :root[data-theme="subtle"] .ws-devices  {
       grid-area: devices;
       display: flex; flex-direction: column; align-items: flex-start; gap: 16px;
     }
-    :root[data-theme="modern"] .ws-devices > * { width: 100%; max-width: 900px; }
-    :root[data-theme="modern"] #backplane { max-width: 900px; }
-    :root[data-theme="modern"] .workspace .monitor { margin: 0; }
+    :root[data-theme="subtle"] .ws-devices > * { width: 100%; max-width: 900px; }
+    :root[data-theme="subtle"] #backplane { max-width: 900px; }
+    :root[data-theme="subtle"] .workspace .monitor { margin: 0; }
   }
 </style>
 </head>
@@ -1281,7 +1281,7 @@
     <span class="pb-tag">running entirely in your browser</span>
     <span class="pb-tools">
       <label class="pb-theme">Theme
-        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Windows 95</button>
+        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Subtle</button>
       </label>
       <span class="pb-winbtns"><button type="button" class="pb-min" title="Minimize" aria-label="Minimize" aria-pressed="false">_</button><button type="button" class="pb-max" title="Maximize" aria-label="Maximize">&#9633;</button><a class="pb-close" href="../" title="back to all machines" aria-label="close &mdash; back to all machines">&times;</a></span>
     </span>
@@ -1290,7 +1290,7 @@
   <div class="inner">
     <h1>ALTAIR 8800</h1>
     <p class="tagline retro-only">~ * ~ &nbsp;An Intel 8080 Microcomputer running entirely in your browser!&nbsp; ~ * ~</p>
-    <p class="tagline modern-only">The MITS Altair 8800, running entirely in your browser.</p>
+    <p class="tagline subtle-only">The MITS Altair 8800, running entirely in your browser.</p>
 
     <hr class="rule head-rule">
 

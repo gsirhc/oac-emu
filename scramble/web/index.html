@@ -26,7 +26,7 @@
     --body-pad:  26px 16px;
     --h1-font:   bold 26px "Times New Roman", Times, serif;
   }
-  :root[data-theme="modern"] {
+  :root[data-theme="subtle"] {
     --body-pad:  36px 20px;
     --inner-pad: 22px 30px 30px;
     --h1-font:   700 28px/1.15 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -41,14 +41,14 @@
   :root[data-theme="aurora"] .pagebar { border-bottom: 1px solid rgba(168,140,255,.35); }
 
   h1 { margin: 4px 0 0; text-align: center; font: var(--h1-font); letter-spacing: .5px; color: var(--h1-color); text-shadow: var(--h1-shadow); }
-  :root[data-theme="modern"] h1 {
+  :root[data-theme="subtle"] h1 {
     position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
     overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
   }
   .tagline { text-align: center; color: var(--dim); font-size: 14px; margin: 4px 0 0; }
-  :root[data-theme="modern"] .tagline { display: none; }
+  :root[data-theme="subtle"] .tagline { display: none; }
   hr.rule { border: 0; border-top: var(--rule); margin: 12px 0; }
-  :root[data-theme="modern"] hr.rule { display: none; }
+  :root[data-theme="subtle"] hr.rule { display: none; }
 
   .inner { padding: var(--inner-pad); }
 
@@ -138,7 +138,7 @@
     <span class="pb-tag">dual Z80 &middot; 3.072&nbsp;MHz &middot; running entirely in your browser</span>
     <span class="pb-tools">
       <label class="pb-theme">Theme
-        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Windows 95</button>
+        <button type="button" class="pb-theme-btn" id="pageThemeBtn">Subtle</button>
       </label>
       <span class="pb-winbtns"><button type="button" class="pb-min" title="Minimize" aria-label="Minimize" aria-pressed="false">_</button><button type="button" class="pb-max" title="Maximize" aria-label="Maximize">&#9633;</button><a class="pb-close" href="../arcade/" title="back to Arcade" aria-label="close, back to Arcade">&times;</a></span>
     </span>

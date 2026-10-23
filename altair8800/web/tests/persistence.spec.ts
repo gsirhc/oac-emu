@@ -13,7 +13,7 @@ async function chooseTheme(page, theme, mode = "light") {
 test.describe("page chrome, persistence, URL params", () => {
   test("the page theme select drives data-theme and persists", async ({ page }) => {
     await boot(page);
-    for (const t of ["web94", "modern", "win"]) {
+    for (const t of ["web94", "subtle", "win"]) {
       await chooseTheme(page, t);
       await expect(page.locator("html")).toHaveAttribute("data-theme", t);
       expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe(t);
@@ -25,12 +25,12 @@ test.describe("page chrome, persistence, URL params", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "web94");
   });
 
-  test("Modern + Dark sets data-mode=dark; Light clears it", async ({ page }) => {
+  test("Subtle + Dark sets data-mode=dark; Light clears it", async ({ page }) => {
     await boot(page);
-    await chooseTheme(page, "modern", "dark");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await chooseTheme(page, "subtle", "dark");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("subtle");
     expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("dark");
     expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(18, 19, 23)");
 
@@ -38,31 +38,31 @@ test.describe("page chrome, persistence, URL params", () => {
     await page.reload();
     await page.waitForFunction(() => !!(window as any).__test?.machine);
     await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
-    await expect(page.locator("#pageThemeBtn")).toHaveText("Modern");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Subtle");
 
     await chooseTheme(page, "win", "light");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "win");
     expect(await page.evaluate(() => document.documentElement.hasAttribute("data-mode"))).toBe(false);
   });
 
-  test("System follows the OS appearance on the Modern palette", async ({ page }) => {
+  test("System follows the OS appearance on the Subtle palette", async ({ page }) => {
     await boot(page);
     await page.emulateMedia({ colorScheme: "light" });
-    await chooseTheme(page, "modern", "system");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await chooseTheme(page, "subtle", "system");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     expect(await page.evaluate(() => document.documentElement.hasAttribute("data-mode"))).toBe(false);
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("modern");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("subtle");
     expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("system");
 
     await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).toHaveAttribute("data-mode", "dark");
     expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(18, 19, 23)");
-    await expect(page.locator("#pageThemeBtn")).toHaveText("Modern");
+    await expect(page.locator("#pageThemeBtn")).toHaveText("Subtle");
 
-    await chooseTheme(page, "modern");
+    await chooseTheme(page, "subtle");
     await page.emulateMedia({ colorScheme: "dark" });
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     expect(await page.evaluate(() => document.documentElement.hasAttribute("data-mode"))).toBe(false);
   });
 
@@ -70,14 +70,14 @@ test.describe("page chrome, persistence, URL params", () => {
     await boot(page);
     await expect(page.locator(".pagebar #pageThemeBtn")).toBeVisible();
     await expect(page.locator(".toolbar #pageThemeBtn")).toHaveCount(0);
-    await expect(page.locator(".pagebar #pageThemeBtn")).toHaveText(/Windows 95/);
+    await expect(page.locator(".pagebar #pageThemeBtn")).toHaveText(/Subtle/);
   });
 
   test("every theme offers a way back to the landing page", async ({ page }) => {
     await boot(page);
-    for (const t of ["win", "winxp", "web94", "modern", "aurora"]) {
+    for (const t of ["win", "winxp", "web94", "subtle", "aurora"]) {
       await chooseTheme(page, t);
-      // win: the titlebar close box; web94/modern: the "All machines" link
+      // win: the titlebar close box; web94/subtle: the "All machines" link
       const home = page.locator('.pagebar a[href="../"]:visible');
       await expect(home).toHaveCount(1);
     }
@@ -85,7 +85,7 @@ test.describe("page chrome, persistence, URL params", () => {
 
   test("every theme flows front panel -> terminal -> devices", async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 900 }); // below the side-by-side breakpoint
-    for (const t of ["win", "winxp", "web94", "modern", "aurora"]) {
+    for (const t of ["win", "winxp", "web94", "subtle", "aurora"]) {
       await boot(page, { params: `theme=${t}&preset=cassette` });
       await expect(page.locator("#ptr")).toBeVisible();
       const y = async (s: string) => (await page.locator(s).boundingBox())!.y;
@@ -98,7 +98,7 @@ test.describe("page chrome, persistence, URL params", () => {
 
   test("every theme caps the front panel, terminal, drives and bus at the Windows 95 width", async ({ page }) => {
     await page.setViewportSize({ width: 1500, height: 900 }); // below the side-by-side breakpoint
-    for (const t of ["win", "winxp", "web94", "modern", "aurora"]) {
+    for (const t of ["win", "winxp", "web94", "subtle", "aurora"]) {
       await boot(page, { params: `theme=${t}&preset=cpm` });
       await expect(page.locator("#dcdd")).toBeVisible();
       await expect(page.locator("#backplane")).toBeVisible();
@@ -113,9 +113,9 @@ test.describe("page chrome, persistence, URL params", () => {
     }
   });
 
-  test("Modern, wide screen: terminal left of the panel, its settings folded into the PRESET bar", async ({ page }) => {
+  test("Subtle, wide screen: terminal left of the panel, its settings folded into the PRESET bar", async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 1000 });
-    await boot(page, { params: "theme=modern&preset=cassette" });
+    await boot(page, { params: "theme=subtle&preset=cassette" });
     const panel = (await page.locator("#altair").boundingBox())!;
     const term = (await page.locator(".ws-terminal").boundingBox())!;
     expect(term.x + term.width).toBeLessThanOrEqual(panel.x + 1);   // fully to the left
@@ -143,11 +143,11 @@ test.describe("page chrome, persistence, URL params", () => {
     await expect(links.locator("a").first()).not.toHaveCSS("color", "rgb(0, 0, 255)");
   });
 
-  test("Modern folds the page header into the top bar; retro keeps the big header", async ({ page }) => {
-    await boot(page, { params: "theme=modern" });
+  test("Subtle folds the page header into the top bar; retro keeps the big header", async ({ page }) => {
+    await boot(page, { params: "theme=subtle" });
     await expect(page.locator(".pagebar .pb-name")).toHaveText("ALTAIR 8800");
     expect((await page.locator(".inner > h1").boundingBox())!.height).toBeLessThan(4); // h1 kept for a11y, collapsed
-    await expect(page.locator(".inner .tagline.modern-only")).not.toBeVisible();
+    await expect(page.locator(".inner .tagline.subtle-only")).not.toBeVisible();
     await expect(page.locator(".spec")).toHaveCount(0);                   // description removed
 
     await chooseTheme(page, "win");
@@ -169,7 +169,7 @@ test.describe("page chrome, persistence, URL params", () => {
 
   test("the terminal settings bar sits above the monitor in every other layout", async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 900 });
-    for (const t of ["win", "winxp", "web94", "modern", "aurora"]) {
+    for (const t of ["win", "winxp", "web94", "subtle", "aurora"]) {
       await boot(page, { params: `theme=${t}` });
       await expect(page.locator(".ws-terminal .term-bar"), t).toHaveCount(1);
       await expect(page.locator(".toolbars .term-bar"), t).toHaveCount(0);
@@ -178,10 +178,10 @@ test.describe("page chrome, persistence, URL params", () => {
 
   test("a stored theme is restored on the next visit", async ({ page }) => {
     await boot(page);
-    await chooseTheme(page, "modern");
+    await chooseTheme(page, "subtle");
     await page.reload();
     await page.waitForFunction(() => !!(window as any).__test?.machine);
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "modern");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
   });
 
   test("the register bar shows A / BC / DE / HL / PC / SP and a clock rate", async ({ page }) => {
