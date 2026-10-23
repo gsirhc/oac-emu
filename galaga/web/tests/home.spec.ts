@@ -60,7 +60,7 @@ test.describe("landing page", () => {
     await page.goto(HOME);
     const footer = page.locator("#siteFooter");
     await expect(footer).toContainText(/© 2026 oac-emu\.dev/);
-    await expect(footer).toContainText(/old-ass computer/);
+    await expect(footer).toContainText(/Old-Ass Computer/);
     await expect(footer.locator("a.about-sign")).toHaveCount(0);
     await page.goto(HOME + "about.html");
     await expect(page).toHaveURL(/\/about\.html$/);
