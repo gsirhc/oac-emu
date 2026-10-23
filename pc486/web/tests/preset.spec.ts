@@ -302,12 +302,21 @@ test.describe("preset C: (?disk=tyrian)", () => {
   });
 });
 
-test.describe("locked Doom page", () => {
+test.describe("locked tease pages", () => {
+  test("/EpicPinball/ forces the Epic Pinball disk and grays out the drive controls", async ({ page }) => {
+    await page.goto("/EpicPinball/?test=1&fast=1&disk=doom");
+    await page.waitForFunction(() => !!(window as any).__test?.machine, null, { timeout: 15_000 });
+    await expect(page.locator("body")).toHaveClass(/tease-only/);
+    await expect(page.locator("#hddStatus")).toHaveText(/Using: Epic Pinball shareware/);
+    await expect(page.locator("#libraryBtn")).toBeDisabled();
+    await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
+  });
+
   test("/Doom/ forces the Doom disk and grays out the drive controls", async ({ page }) => {
     await page.goto("/Doom/?test=1&fast=1&disk=wolf3d");
     await page.waitForFunction(() => !!(window as any).__test?.machine, null, { timeout: 15_000 });
     await expect(page).toHaveURL(/\/Doom\//);
-    await expect(page.locator("body")).toHaveClass(/doom-only/);
+    await expect(page.locator("body")).toHaveClass(/tease-only/);
     await expect(page.locator("#hddStatus")).toHaveText(/Using: DOOM shareware/);
     await expect(page.locator("#hddDownloadBtn")).toBeDisabled();
     await expect(page.locator("#libraryBtn")).toBeDisabled();
@@ -329,7 +338,7 @@ test.describe("locked Doom page", () => {
   test("a token on /Doom/ does not unlock the page", async ({ page }) => {
     await page.goto(`/Doom/?test=1&fast=1&full=${PC486_FULL}`);
     await page.waitForFunction(() => !!(window as any).__test?.machine, null, { timeout: 15_000 });
-    await expect(page.locator("body")).toHaveClass(/doom-only/);
+    await expect(page.locator("body")).toHaveClass(/tease-only/);
     await expect(page.locator("#hddStatus")).toHaveText(/Using: DOOM shareware/);
   });
 
@@ -345,12 +354,12 @@ test.describe("locked Doom page", () => {
     }, PC486_FULL);
     await page.goto("/Doom/?test=1&fast=1");
     await page.waitForFunction(() => !!(window as any).__test?.machine, null, { timeout: 15_000 });
-    await expect(page.locator("body")).toHaveClass(/doom-only/);
+    await expect(page.locator("body")).toHaveClass(/tease-only/);
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
 
     await page.goto(`/full/?test=1&fast=1&full=${PC486_FULL}`);
     await page.waitForFunction(() => !!(window as any).__test?.machine, null, { timeout: 15_000 });
-    await expect(page.locator("body")).not.toHaveClass(/doom-only/);
+    await expect(page.locator("body")).not.toHaveClass(/tease-only/);
     await expect(page.locator("#hddStatus")).toHaveText(/Using: FreeDOS \(default\)/);
     await expect(page.locator("#libraryBtn")).toBeEnabled();
     await expect(page.locator("#hddDownloadBtn")).toBeEnabled();
@@ -361,7 +370,7 @@ test.describe("locked Doom page", () => {
 
     await page.goto("/Doom/?test=1&fast=1");
     await page.waitForFunction(() => !!(window as any).__test?.machine, null, { timeout: 15_000 });
-    await expect(page.locator("body")).toHaveClass(/doom-only/);
+    await expect(page.locator("body")).toHaveClass(/tease-only/);
     await expect(page.locator("#hddStatus")).toHaveText(/Using: DOOM shareware/);
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
   });

@@ -90,14 +90,15 @@ test.describe("landing page", () => {
     await expect(tyrian.locator("img.shot")).toHaveJSProperty("naturalWidth", 286);
   });
 
-  test("the public page links Doom and explains the coming-soon 486", async ({ page }) => {
+  test("the public page links Epic Pinball and explains the coming-soon 486", async ({ page }) => {
     await page.goto(HOME);
     await expect(page.locator("h2.section-heading")).toHaveCount(0);
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
     await expect(page.locator("a.machine-card")).toHaveCount(1);
-    const doom = page.locator('a.machine-card[href="pc486/Doom/"]');
-    await expect(doom.locator(".name")).toHaveText("Doom");
-    await expect(doom.locator(".meta")).toHaveText("486 DX2-66 Gaming PC");
+    const pinball = page.locator('a.machine-card[href="pc486/EpicPinball/"]');
+    await expect(pinball.locator(".name")).toHaveText("Epic Pinball");
+    await expect(pinball.locator(".meta")).toHaveText("486 DX2-66 Gaming PC");
+    await expect(pinball.locator("img.shot")).toHaveAttribute("src", "assets/pinball-android.jpg");
     const soon = page.locator("#pc486Soon");
     await expect(soon.locator(".name")).toHaveText("486 DX2-66 Gaming PC");
     await expect(soon.locator(".meta")).toHaveText("Coming soon");

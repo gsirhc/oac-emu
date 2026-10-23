@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Install shared pc486 entry HTML under Doom/ and full/ (one source index.html)."""
+"""Install shared pc486 entry HTML under Doom/, EpicPinball/ and full/ (one source index.html)."""
 import argparse
 import os
 import sys
 
-# From /pc486 (no trailing slash) a relative "Doom/" resolves to /Doom/ at the
+# From /pc486 (no trailing slash) a relative "EpicPinball/" resolves to /EpicPinball/ at the
 # site root. Build the target from pathname so both /pc486 and /pc486/ work.
 REDIRECT = """\
 <!DOCTYPE html>
@@ -16,16 +16,16 @@ REDIRECT = """\
 (function () {
   var p = location.pathname;
   var base = p.charAt(p.length - 1) === "/" ? p : p + "/";
-  location.replace(base + "Doom/");
+  location.replace(base + "EpicPinball/");
 })();
 </script>
 </head>
 <body>
-<p><a id="go" href="Doom/">Doom</a></p>
+<p><a id="go" href="EpicPinball/">Epic Pinball</a></p>
 <script>
 (function () {
   var p = location.pathname;
-  document.getElementById("go").href = (p.charAt(p.length - 1) === "/" ? p : p + "/") + "Doom/";
+  document.getElementById("go").href = (p.charAt(p.length - 1) === "/" ? p : p + "/") + "EpicPinball/";
 })();
 </script>
 </body>
@@ -57,7 +57,7 @@ def main() -> None:
     ap.add_argument(
         "--redirect-root",
         action="store_true",
-        help="write dest/index.html as a redirect to Doom/ (staging only)",
+        help="write dest/index.html as a redirect to EpicPinball/ (staging only)",
     )
     args = ap.parse_args()
     dest = os.path.abspath(args.dest)
@@ -65,10 +65,10 @@ def main() -> None:
     if not os.path.isfile(src):
         sys.exit(f"install_pc486_pages: missing {src}")
     html = open(src, encoding="utf-8").read()
-    if "location.replace(base + \"Doom/\")" in html or len(html) < 2000:
+    if "location.replace(base + \"EpicPinball/\")" in html or len(html) < 2000:
         sys.exit(f"install_pc486_pages: --page looks like a redirect, not the machine HTML: {src}")
     page = with_base(html)
-    for name in ("Doom", "full"):
+    for name in ("Doom", "EpicPinball", "full"):
         d = os.path.join(dest, name)
         os.makedirs(d, exist_ok=True)
         open(os.path.join(d, "index.html"), "w", encoding="utf-8").write(page)
