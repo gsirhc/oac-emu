@@ -117,6 +117,7 @@ test.describe("landing page", () => {
   });
 
   test("the public footer has no Help control, and about.html still returns home", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("retro8080.theme", "win"));
     await page.goto(HOME);
     const footer = page.locator("#siteFooter");
     await expect(footer).toContainText(/© 2026 oac-emu\.dev/);
@@ -132,6 +133,7 @@ test.describe("landing page", () => {
   });
 
   test("Windows title-bar buttons: soft-minimize collapses the page; close is disabled", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("retro8080.theme", "win"));
     await page.goto(HOME);
     await expect(page.locator(".pb-close.is-disabled")).toHaveAttribute("aria-disabled", "true");
     await expect(page.locator("a.pb-close")).toHaveCount(0);

@@ -62,13 +62,27 @@ test.describe("HIGH SCORE persist", () => {
       await t.saveHiscoreNow(t.readHiscore());
     }, SAMPLE);
 
+    // hold HI-SCORE nonzero after every slice, from the first frame, so the gate is checked against it
+    await page.addInitScript(() => {
+      const w = window as any;
+      let t: any;
+      w.__holdHiscore = true;
+      Object.defineProperty(w, "__test", {
+        configurable: true,
+        get: () => t,
+        set: (v) => {
+          t = v;
+          const run = v.machine.runCycles.bind(v.machine);
+          v.machine.runCycles = (n: number) => { run(n); if (w.__holdHiscore) v.writeHiscore([0x00, 0x11, 0x00]); };
+        },
+      });
+    });
     await page.reload();
     await expect(page.locator("#romStatus")).toHaveText("Loaded stored ROM set");
-    await page.evaluate(() => (window as any).__test.writeHiscore([0x00, 0x11, 0x00]));
-    await page.waitForFunction(() => (window as any).__test.machine.state().frames > 120);
+    await page.waitForFunction(() => { const m = (window as any).__test.machine.state(); return m.frames > 120 && m.nmiEnable; });
     expect(await page.evaluate(() => (window as any).__test.hiscoreRestored)).toBe(false);
 
-    await page.evaluate(() => (window as any).__test.writeHiscore([0, 0, 0]));
+    await page.evaluate(() => { (window as any).__holdHiscore = false; (window as any).__test.writeHiscore([0, 0, 0]); });
     await expect.poll(() => page.evaluate(() => (window as any).__test.hiscoreRestored)).toBe(true);
     expect(await page.evaluate(() => (window as any).__test.readHiscore())).toEqual(SAMPLE);
   });

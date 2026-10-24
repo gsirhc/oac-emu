@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "fs";
-import { HWTEST_FILES as PARTS } from "./cabinet";
+import { HWTEST_FILES as PARTS, ROM_DB } from "./cabinet";
 
 function buf(path: string, name?: string, patch?: (b: Buffer) => Buffer) {
   let buffer: Buffer = readFileSync(path);
@@ -122,6 +122,14 @@ test.describe("ROM set loader", () => {
       };
       req.onerror = () => resolve("");
     }))).toBe("hwtest");
+    // the set is written after the status changes; reload only once it's there
+    await expect.poll(() => page.evaluate((db) => new Promise((ok) => {
+      const r = indexedDB.open(db);
+      r.onsuccess = () => {
+        const q = r.result.transaction("roms").objectStore("roms").get("set");
+        q.onsuccess = () => { r.result.close(); ok(!!q.result); };
+      };
+    }), ROM_DB)).toBe(true);
     await page.reload();
     await expect(page.locator("#romStatus")).toHaveText("Loaded stored ROM set");
   });

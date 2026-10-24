@@ -49,12 +49,16 @@ test.describe("fullscreen", () => {
   });
 
   test("the title-bar maximize button enters fullscreen like the bezel control", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("retro8080.theme", "win"));
+    await page.reload();
     await page.locator(".pb-max").click();
     await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true);
     await expect(page.locator("#fullscreenBtn")).toHaveAttribute("aria-label", "Exit fullscreen");
   });
 
   test("the title-bar minimize button soft-collapses the page body", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("retro8080.theme", "win"));
+    await page.reload();
     await expect(page.locator(".inner")).toBeVisible();
     await page.locator(".pb-min").click();
     await expect(page.locator(".page")).toHaveClass(/is-minimized/);

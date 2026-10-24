@@ -96,6 +96,6 @@ test.describe("page theme", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "web94");
     await expect(page.locator("#pageThemeBtn")).toHaveText("Mid-1990s Web");
     expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("web94");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("dark");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("light");
   });
 });

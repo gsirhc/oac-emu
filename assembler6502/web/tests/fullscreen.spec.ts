@@ -56,6 +56,9 @@ test.describe("fullscreen", () => {
 
   test("entering fullscreen scales the terminal up to fill the screen, keeping its aspect ratio", async ({ page }) => {
     await page.setViewportSize({ width: 1600, height: 900 });
+    await page.addInitScript(() => localStorage.setItem("retro8080.theme", "win"));
+    await page.reload();
+    await expect(page.locator("#screen .xterm-rows")).toContainText("\\", { timeout: 45000 });
     await page.evaluate(() => localStorage.setItem("retro8080.fsEscHintSeen", "2"));
     const before = await page.locator("#screen").boundingBox();
     await page.locator("#fullscreenBtn").click();
@@ -81,6 +84,8 @@ test.describe("fullscreen", () => {
   });
 
   test("the title-bar maximize button enters fullscreen like the bezel control", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("retro8080.theme", "win"));
+    await page.reload();
     await page.evaluate(() => localStorage.setItem("retro8080.fsEscHintSeen", "2"));
     await page.locator(".pb-max").click();
     await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true);
@@ -88,6 +93,8 @@ test.describe("fullscreen", () => {
   });
 
   test("the title-bar minimize button soft-collapses the page body", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("retro8080.theme", "win"));
+    await page.reload();
     await expect(page.locator(".inner")).toBeVisible();
     await page.locator(".pb-min").click();
     await expect(page.locator(".page")).toHaveClass(/is-minimized/);

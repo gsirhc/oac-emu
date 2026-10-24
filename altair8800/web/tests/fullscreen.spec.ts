@@ -84,6 +84,7 @@ test.describe("fullscreen", () => {
   });
 
   test("the title-bar maximize button enters fullscreen like the bezel control", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("retro8080.theme", "win"));
     await boot(page);
     await page.evaluate(() => localStorage.setItem("retro8080.fsEscHintSeen", "2"));
     await page.locator(".pb-max").click();
@@ -92,6 +93,7 @@ test.describe("fullscreen", () => {
   });
 
   test("the title-bar minimize button soft-collapses the page body", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("retro8080.theme", "win"));
     await boot(page);
     await expect(page.locator(".inner")).toBeVisible();
     await page.locator(".pb-min").click();

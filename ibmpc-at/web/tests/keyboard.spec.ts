@@ -5,9 +5,10 @@ import { boot, screenText, waitForScreen, focusScreen, clickCtrlAltDel, typeStr,
 
 test.describe("keyboard", () => {
   test("typing through the real focused keyboard reaches COMMAND.COM", async ({ page }) => {
-    await boot(page);
+    test.setTimeout(240_000);
+    // real speed: at 20x the BIOS's 500ms typematic delay is 25ms of wall time, under CI jitter
+    await boot(page, { realtime: true });
     await focusScreen(page);
-    // held for emulated time, not wall time, so a fast test clock can't trip typematic repeat
     for (const key of ["d", "i", "r", "Enter"]) {
       await page.keyboard.down(key);
       await emuWait(page, 60);
