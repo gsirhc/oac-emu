@@ -4040,3 +4040,49 @@ It now takes about 29 s, and the CPU, disk and floppy timing are untouched.
   fingerprints it).
 - `boot.spec.ts` checks the served image carries the edits and the notes,
   and that a boot shows none of the removed output.
+
+## 62. TOPBENCH gap against a real 5170-339: no documentable fix
+
+Re-checked the §47 / §56 calibration gap with the Performance panel (§23 of
+the 486 review's pattern, now on this machine) and a scratch native harness
+that boots the shipped FreeDOS HDD, mounts `TOPBENCH.img`, and runs
+`TOPBENCH /i`. The harness is not in the tree.
+
+| Test | Real 339 | This run | |
+|------|---------:|---------:|--:|
+| MemTest | 923 | 941 | +2% |
+| MemEA | 514 | 476 | -7% |
+| Opcodes | 397 | 376 | -5% |
+| VidMem (Enhanced Display) | 1470 | 1339 | -9% |
+| 3DGames | 388 | 368 | -5% |
+
+Same as §56.4 within a few µs. Suspects from the Intel 80C286 data sheet,
+iAPX 286 Programmer's Reference Manual / Hardware Reference Manual, IBM
+PC/AT Technical Reference ("System Performance"), and IBM EGA Technical
+Reference:
+
+- **EA cost and prefetch overlap.** Note 1's +1 clock for base+index+disp
+  is charged (`decode_modrm`). Prefixes are +2. `prefetch()` treats EA and
+  other non-bus EU time as idle for code fetch, which matches the HRM Bus
+  Unit ("when not performing other bus duties"). No further EA clocks in
+  the data sheet.
+- **Data vs code sharing the bus.** `idle = exec_clocks - bus_busy_` gives
+  the BIU only the clocks the EU is not using the bus; wait states stay in
+  `bus_busy_`. The HRM allows Ts directly after Tc (no mandatory idle
+  state between cycles). MemEA still sits on the 3-clock-per-cycle bus
+  floor plus refresh (§47.4); the real 339 is ~0.85 clocks/instruction
+  slower than that floor. Nothing in those documents accounts for it.
+- **EGA cycle length beyond the 8-bit 6 clocks.** The AT TR's 6-clock
+  8-bit cycle is already the floor in `byte_clocks`. Sequencer slots are
+  still the derived 32 dots / 5 (§47.3); the EGA TR states the 4-of-5 /
+  2-of-5 split but not the cycle length in dots. Stretching a granted
+  slot to 6 clocks was tried and rejected: callers already advance time
+  by the charged length, so it only slowed medium-res without a source.
+- **339 RAM wait state on code fetches.** `mem_clocks` is 3 for board RAM
+  for both data and prefetch. MemTest (data-bound strings) is within 2%,
+  so the wait state itself is right; applying it to code is what the TR's
+  undifferentiated "bus cycle" wording requires.
+
+MemTest is already inside ~2%. MemEA, Opcodes, VidMem and 3DGames are not,
+and no primary source found closes them without a fitted constant. They
+stay open as T9 and E20 in `IBM_PCAT_PARITY.md`.

@@ -66,14 +66,15 @@ page, a Playwright test, in the same commit.
 ## 2. Timing
 
 - **T9. Fetch-bound code runs fast.** Against the real 5170-339 in
-  TOPBENCH's database, MemEA is 7% fast, Opcodes 6%, 3DGames 5% (§47.4,
-  §56.4).
+  TOPBENCH's database, MemEA is 7% fast, Opcodes 5%, 3DGames 5% (§47.4,
+  §56.4, §62).
   MemEA sits on the bus limit the data sheet and §46.1 allow, so the real
   286 leaves its bus idle about 0.85 clocks per instruction somewhere the
-  published timings don't describe. Needs a logic-analyzer trace of a
-  real 286 bus unit or a cycle-level 286 model to source, not a fitted
-  constant. Not the base costs: correcting the last flat-costed opcodes
-  (§56) moved Opcodes and 3DGames 1% further from the real machine.
+  published timings don't describe. §62 re-checked EA Note 1, prefetch
+  idle accounting, and code-fetch wait states against the 80C286 data
+  sheet and the iAPX 286 HRM; still no source. Needs a logic-analyzer
+  trace of a real 286 bus unit or a cycle-level 286 model, not a fitted
+  constant.
 
 ## 3. EGA
 
@@ -88,10 +89,12 @@ page, a Playwright test, in the same commit.
   until a clean public-domain set turns up.
 - **E20. EGA memory-cycle length isn't sourced.** §47.3 derives 32 dots
   per five memory cycles. With the Enhanced Display, TOPBENCH's VidMem
-  reads 1335 against the real 5170-339's 1470 (-9%); with a 200-line
+  reads 1339 against the real 5170-339's 1470 (-9%); with a 200-line
   colour display it reads 1514 (+3%). The real run didn't record its
-  monitor (§47.4). Needs a VidMem reading from a 5170 with an EGA and a
-  5154, or the cycle timing from the EGA's sequencer documentation.
+  monitor (§47.4). §62 confirmed the AT's 6-clock 8-bit floor is already
+  applied and that the EGA TR still does not give the cycle length.
+  Needs a VidMem reading from a 5170 with an EGA and a 5154, or the
+  cycle timing from the EGA's sequencer documentation.
 - **E21. The palette address source bit is dropped.** Bit 5 of the 3C0h
   index is PAS: clear, the CPU owns the palette and the screen goes
   blank; set, the display reads it. `Ega::out` masks the index to 5 bits,
