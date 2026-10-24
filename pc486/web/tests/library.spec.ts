@@ -81,7 +81,7 @@ test.describe("Disk library", () => {
     await tap(page, "Escape");
     await waitForScreen(page, /C:\\>\s*$/);
     await typeStr(page, "COPY C:\\FDCONFIG.SYS A:");
-    await waitForScreen(page, /=>> a:fdconfig\.sys/i, 60_000);
+    await waitForScreen(page, /=>> a:fdconfig\.sys[\s\S]*C:\\>\s*$/i, 60_000);
     await expect(save).toBeVisible();
     const dl = page.waitForEvent("download");
     await save.click();

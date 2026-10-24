@@ -84,6 +84,7 @@ test.describe("landing page", () => {
   });
 
   test("the welcome banner links to the news, and that page returns home", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("retro8080.theme", "win"));
     await page.goto(HOME);
     const news = page.locator(".welcome-banner a");
     await expect(news).toHaveText("News & Info");
@@ -124,6 +125,7 @@ test.describe("landing page", () => {
   });
 
   test("Windows title-bar buttons: soft-minimize collapses the page; close is disabled", async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem("retro8080.theme", "win"));
     await page.goto(HOME);
     await expect(page.locator(".pb-close.is-disabled")).toHaveAttribute("aria-disabled", "true");
     await expect(page.locator("a.pb-close")).toHaveCount(0);

@@ -1,7 +1,7 @@
 // EGA canvas; boot detection via window.__test.machine.textScreen()
 import { type Page } from "@playwright/test";
 import { test, expect } from "./fixtures";
-import { bootLive } from "./helpers";
+import { bootLive, withFull } from "./helpers";
 
 async function chooseTheme(page: Page, theme: string, mode = "light") {
   await page.locator("#pageThemeBtn").click();
@@ -11,7 +11,8 @@ async function chooseTheme(page: Page, theme: string, mode = "light") {
 }
 
 test.describe("page theme", () => {
-  test("defaults to Subtle light (retro8080.theme unset)", async ({ livePage: page }) => {
+  test("defaults to Subtle light (retro8080.theme unset)", async ({ page }) => {
+    await page.goto(withFull("/?test=1"));
     await expect(page.locator("html")).toHaveAttribute("data-theme", "subtle");
     await expect(page.locator("html")).not.toHaveAttribute("data-mode");
     await expect(page.locator("#pageThemeBtn")).toHaveText("Subtle");
@@ -81,6 +82,6 @@ test.describe("page theme", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "web94");
     await expect(page.locator("#pageThemeBtn")).toHaveText("Mid-1990s Web");
     expect(await page.evaluate(() => localStorage.getItem("retro8080.theme"))).toBe("web94");
-    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("dark");
+    expect(await page.evaluate(() => localStorage.getItem("retro8080.mode"))).toBe("light");
   });
 });

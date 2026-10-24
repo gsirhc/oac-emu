@@ -115,7 +115,7 @@ h1 {
 /* Thumbnail-only tiles, all 286×128. */
 .machine-card .shot {
   display: block; width: 100%; height: auto; aspect-ratio: 286 / 128;
-  object-fit: cover;
+  object-fit: cover; object-position: left center;
 }
 .machine-card.art .shot { object-fit: cover; object-position: center; background: #000; }
 .art-pending .machine-card[data-art] .shot:not(.art-ready) { visibility: hidden; }
