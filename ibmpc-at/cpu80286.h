@@ -21,7 +21,26 @@
 #include <cstdint>
 #include <functional>
 
+// Performance panel counters, compiled out unless IBMPCAT_PERF.
+#ifdef IBMPCAT_PERF
+#define IBMPCAT_PERF_ADD(field, n) ((field) += (n))
+#define IBMPCAT_NOTE_MEM(addr, clocks) note_mem_wait((addr), (clocks))
+#define IBMPCAT_NOTE_IO(eight, clocks) note_io_wait((eight), (clocks))
+#else
+#define IBMPCAT_PERF_ADD(field, n) ((void)0)
+#define IBMPCAT_NOTE_MEM(addr, clocks) ((void)0)
+#define IBMPCAT_NOTE_IO(eight, clocks) ((void)0)
+#endif
+
 namespace cpu80286 {
+
+#ifdef IBMPCAT_PERF
+// Order is the Performance panel's class list.
+enum PerfClass : int {
+    kPerfAlu, kPerfMov, kPerfStack, kPerfFlow,
+    kPerfString, kPerfIo, kPerfMisc, kPerfHlt, kPerfClassCount
+};
+#endif
 
 // FLAGS bits.
 enum Flag : uint16_t {
@@ -76,6 +95,17 @@ public:
 
     bool     halted = false;
     uint64_t cycles = 0;   // total clock cycles executed (includes wait states)
+
+#ifdef IBMPCAT_PERF
+    // Clocks since the last read. Class clocks exclude waits, the queue tax and prefetch stalls.
+    struct Perf {
+        uint64_t cls[kPerfClassCount]{};
+        uint64_t wait_ram = 0, wait_rom = 0, wait_ega = 0;
+        uint64_t wait_io8 = 0, wait_io16 = 0, wait_slot = 0;
+        uint64_t stall = 0, qtax = 0;
+    };
+    Perf perf{};
+#endif
 
     // Called with (CS, IP, opcode-word) on an opcode firmware runs that this
     // core skips as a no-op: 0x00xx single-byte, 0x0Fxx two-byte. Also LOADALL
@@ -164,14 +194,25 @@ private:
         if (slotted(a)) k = std::max(k, bus_.mem_wait(a, cycles + uint64_t(bus_busy_ + after)));
         return k;
     }
-    void charge_byte(uint32_t a) { charge(byte_clocks(a)); }
+    void charge_byte(uint32_t a) {
+        int k = byte_clocks(a);
+        charge(k);
+        IBMPCAT_NOTE_MEM(a, k);
+    }
     int  io_clk(uint16_t p) const { return bus_.io_clocks ? bus_.io_clocks(p) : 2; }
     // A word is one cycle to a 16-bit device at an even address, two at an odd
     // one, and always two byte cycles to an 8-bit device.
     int  word_clocks(int k, bool odd) const { return (k >= 6 || odd) ? 2 * k : k; }
     void charge_word(uint32_t a) {
-        if (slotted(a)) { int lo = byte_clocks(a); charge(lo + byte_clocks(a + 1, lo)); return; }
-        charge(word_clocks(mem_clk(a), a & 1));
+        int k;
+        if (slotted(a)) {
+            int lo = byte_clocks(a);
+            k = lo + byte_clocks(a + 1, lo);
+        } else {
+            k = word_clocks(mem_clk(a), a & 1);
+        }
+        charge(k);
+        IBMPCAT_NOTE_MEM(a, k);
     }
 
     uint8_t  raw_rb(uint16_t seg, uint16_t off)            { return fault_ ? uint8_t(0xFF) : bus_.read(phys(seg, off)); }
@@ -188,10 +229,32 @@ private:
         charge_word(phys(seg, off));
         raw_wb(seg, off, v & 0xFF); raw_wb(seg, uint16_t(off + 1), v >> 8);
     }
-    uint8_t  in8(uint16_t p)  { charge(io_clk(p)); return bus_.in(p); }
-    void     out8(uint16_t p, uint8_t v) { charge(io_clk(p)); bus_.out(p, v); }
-    uint16_t in16(uint16_t p) { charge(word_clocks(io_clk(p), p & 1)); return bus_.in16(p); }
-    void     out16(uint16_t p, uint16_t v) { charge(word_clocks(io_clk(p), p & 1)); bus_.out16(p, v); }
+    uint8_t  in8(uint16_t p) {
+        int k = io_clk(p);
+        charge(k);
+        IBMPCAT_NOTE_IO(k >= 6, k);
+        return bus_.in(p);
+    }
+    void     out8(uint16_t p, uint8_t v) {
+        int k = io_clk(p);
+        charge(k);
+        IBMPCAT_NOTE_IO(k >= 6, k);
+        bus_.out(p, v);
+    }
+    uint16_t in16(uint16_t p) {
+        int k = io_clk(p);
+        int clocks = word_clocks(k, p & 1);
+        charge(clocks);
+        IBMPCAT_NOTE_IO(k >= 6, clocks);
+        return bus_.in16(p);
+    }
+    void     out16(uint16_t p, uint16_t v) {
+        int k = io_clk(p);
+        int clocks = word_clocks(k, p & 1);
+        charge(clocks);
+        IBMPCAT_NOTE_IO(k >= 6, clocks);
+        bus_.out16(p, v);
+    }
 
     // 6-byte prefetch queue, filled a word at a time while the bus is idle
     // (Intel iAPX 286 PRM, bus unit). Published counts assume it's full.
@@ -249,7 +312,12 @@ private:
     uint32_t code_base() const { return (cs_high_ && cs == 0xF000) ? 0xFF0000u : uint32_t(cs) << 4; }
     void ud() { raise(EXC_UD); }
     // #DE and #BR, found once the operands are in: vectors now and pays INT n like a fault.
-    void exception(uint8_t vec) { ip = instr_start_ip_; interrupt(vec); extra_cycles_ += 23 + kQueueRefillTax; }
+    void exception(uint8_t vec) {
+        ip = instr_start_ip_;
+        interrupt(vec);
+        extra_cycles_ += 23 + kQueueRefillTax;
+        IBMPCAT_PERF_ADD(perf_tax_step_, kQueueRefillTax);
+    }
 
     // Machine status word and descriptor-table registers. MSW resets to FFF0h
     // and the IDT to base 0, limit 3FFh (Intel iAPX 286 PRM, "Reset").
@@ -354,7 +422,16 @@ private:
     static constexpr int kQueueRefillTax = 2;
     // A taken control transfer empties the prefetch queue, even one to the next instruction.
     bool transfer_ = false;
-    int flush() { transfer_ = true; return kQueueRefillTax; }
+    int flush() {
+        transfer_ = true;
+        IBMPCAT_PERF_ADD(perf_tax_step_, kQueueRefillTax);
+        return kQueueRefillTax;
+    }
+#ifdef IBMPCAT_PERF
+    int perf_tax_step_ = 0;
+    void note_mem_wait(uint32_t addr, int clocks);
+    void note_io_wait(bool eight, int clocks);
+#endif
 
     bool cond(int cc) const;          // Jcc/LOOPcc condition, cc = opcode low nibble
     void jcc(bool taken);

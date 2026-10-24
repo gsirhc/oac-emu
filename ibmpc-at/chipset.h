@@ -58,7 +58,22 @@ public:
     // A DMA transfer is 5 DMA clocks at half the CPU clock (same source, 3 MHz on the 6 MHz board).
     static constexpr int kDmaCycleClocks = 10;
     // Clocks refresh and DMA have held the CPU off the bus since the last call.
-    int take_held_clocks() { int c = held_clocks_; held_clocks_ = 0; return c; }
+    int take_held_clocks() {
+        int c = held_clocks_;
+        held_clocks_ = 0;
+#ifdef IBMPCAT_PERF
+        perf_refresh += uint64_t(perf_refresh_pending_);
+        perf_dma += uint64_t(perf_dma_pending_);
+        perf_refresh_pending_ = 0;
+        perf_dma_pending_ = 0;
+#endif
+        return c;
+    }
+#ifdef IBMPCAT_PERF
+    // Clocks take_held_clocks() has returned, split into refresh and DMA.
+    uint64_t perf_refresh = 0;
+    uint64_t perf_dma = 0;
+#endif
 
     Pic8259 pic_master{0x20, true};
     Pic8259 pic_slave{0xA0, false};
@@ -100,6 +115,10 @@ private:
     uint8_t port61_ = 0x00;
     bool refresh_toggle_ = false;
     int held_clocks_ = 0;
+#ifdef IBMPCAT_PERF
+    int perf_refresh_pending_ = 0;
+    int perf_dma_pending_ = 0;
+#endif
     uint8_t last_post_code_ = 0x00;
     std::string debug_console_;
 

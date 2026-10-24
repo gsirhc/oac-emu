@@ -239,8 +239,10 @@ jobs:
         if: steps.pc486-cd.outputs.cache-hit != 'true'
         run: bash pc486/disks/fetch-freedos-cd.sh
 
+      # Both binaries: the shipped one and the instrumented twin ?perf loads.
+      # Building only the shipped one would let the IBMPCAT_PERF paths rot.
       - working-directory: ibmpc-at/web
-        run: make ibmpcat.js hdd-image library-images
+        run: make ibmpcat.js ibmpcat-perf.js hdd-image library-images
 
       - uses: actions/setup-node@v4
         with:
@@ -251,6 +253,16 @@ jobs:
 
       - working-directory: ibmpc-at/web
         run: make test
+
+      # The suite above runs against whichever binary ?perf picks, which is
+      # the instrumented one. Run the Performance panel again with that
+      # binary hidden, so the shipped-build path is exercised too.
+      - name: IBM PC/AT Performance panel against the shipped binary
+        working-directory: ibmpc-at/web
+        run: |
+          mv ibmpcat-perf.js ibmpcat-perf.js.hidden
+          npx playwright test tests/performance.spec.ts
+          mv ibmpcat-perf.js.hidden ibmpcat-perf.js
 
       - if: failure()
         uses: actions/upload-artifact@v4

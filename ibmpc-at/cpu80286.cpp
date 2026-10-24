@@ -61,11 +61,92 @@ void Cpu::interrupt(uint8_t vector) {
 int Cpu::hardware_interrupt(uint8_t vector) {
     bus_busy_ = bus_extra_ = 0;
     interrupt(vector);
-    int c = 23 + kQueueRefillTax + 2 * io_clk(0x20) + bus_extra_;
+    int ioclk = io_clk(0x20);
+    int c = 23 + kQueueRefillTax + 2 * ioclk + bus_extra_;
+#ifdef IBMPCAT_PERF
+    // Each INTA cycle's 2 clocks stay with the instruction; the rest is the wait.
+    perf.qtax += kQueueRefillTax;
+    int extra = ioclk - 2;
+    if (extra > 0) {
+        if (ioclk >= 6) perf.wait_io8 += uint64_t(2 * extra);
+        else perf.wait_io16 += uint64_t(2 * extra);
+    }
+    perf.cls[kPerfFlow] += uint64_t(23 + 4);
+#endif
     flushed_ = true;
     cycles += c;
     return c;
 }
+
+#ifdef IBMPCAT_PERF
+void Cpu::note_mem_wait(uint32_t addr, int clocks) {
+    int extra = clocks - 2;
+    if (extra <= 0) return;
+    // RAM below A0000, EGA to C0000, EGA BIOS, system ROM from E0000 and its alias.
+    uint64_t n = uint64_t(extra);
+    if (addr < 0xA0000) perf.wait_ram += n;
+    else if (addr < 0xC0000) perf.wait_ega += n;
+    else if (addr < 0xC8000 || (addr >= 0xE0000 && addr < 0x100000) || addr >= 0xFF0000)
+        perf.wait_rom += n;
+    else perf.wait_slot += n;
+}
+
+void Cpu::note_io_wait(bool eight, int clocks) {
+    int extra = clocks - 2;
+    if (extra <= 0) return;
+    if (eight) perf.wait_io8 += uint64_t(extra);
+    else perf.wait_io16 += uint64_t(extra);
+}
+
+int perf_class(uint8_t op, int grp) {
+    if (op == 0xF4) return kPerfHlt;
+    if (op == 0xFF) {
+        int r = grp & 7;
+        if (r <= 1) return kPerfAlu;
+        if (r == 6) return kPerfStack;
+        return kPerfFlow;
+    }
+    if (op < 0x40) {
+        if ((op & 7) <= 5) return kPerfAlu;
+        if (op == 0x0F) return kPerfMisc;
+        if (op == 0x27 || op == 0x2F || op == 0x37 || op == 0x3F) return kPerfAlu;
+        return kPerfStack;
+    }
+    if (op <= 0x4F) return kPerfAlu;
+    if (op <= 0x61) return kPerfStack;
+    if (op < 0x68) return kPerfMisc;
+    if (op == 0x68 || op == 0x6A) return kPerfStack;
+    if (op == 0x69 || op == 0x6B) return kPerfAlu;
+    if (op <= 0x6F) return kPerfString;
+    if (op <= 0x7F) return kPerfFlow;
+    if (op <= 0x85) return kPerfAlu;
+    if (op <= 0x8E) return kPerfMov;
+    if (op == 0x8F) return kPerfStack;
+    if (op <= 0x99) return op == 0x9A ? kPerfFlow : kPerfMov;
+    if (op == 0x9B) return kPerfMisc;
+    if (op <= 0x9D) return kPerfStack;
+    if (op <= 0x9F) return kPerfMisc;
+    if (op <= 0xA3) return kPerfMov;
+    if (op <= 0xA7) return kPerfString;
+    if (op <= 0xA9) return kPerfAlu;
+    if (op <= 0xAF) return kPerfString;
+    if (op <= 0xBF) return kPerfMov;
+    if (op <= 0xC1) return kPerfAlu;
+    if (op <= 0xC3) return kPerfFlow;
+    if (op <= 0xC7) return kPerfMov;
+    if (op <= 0xC9) return kPerfStack;
+    if (op <= 0xCF) return kPerfFlow;
+    if (op <= 0xD5) return kPerfAlu;
+    if (op == 0xD7) return kPerfMov;
+    if (op <= 0xDF) return kPerfMisc;
+    if (op <= 0xE3) return kPerfFlow;
+    if (op <= 0xE7) return kPerfIo;
+    if (op <= 0xEB) return kPerfFlow;
+    if (op <= 0xEF) return kPerfIo;
+    if (op == 0xF6 || op == 0xF7 || op == 0xFE) return kPerfAlu;
+    return kPerfMisc;
+}
+#endif
 
 int Cpu::prefetch(int exec_clocks) {
     int k = mem_clk(code_base() + instr_start_ip_);
@@ -1103,7 +1184,14 @@ int Cpu::grp5(uint8_t op) {  // 0xFE: INC/DEC r/m8   0xFF: INC/DEC/CALL/JMP/PUSH
 // --- main decode loop ------------------------------------------------------
 
 int Cpu::step() {
-    if (halted) { cycles += 2; return 2; }  // idling for an interrupt
+    if (halted) {
+        IBMPCAT_PERF_ADD(perf.cls[kPerfHlt], 2);
+        cycles += 2;
+        return 2;  // idling for an interrupt
+    }
+#ifdef IBMPCAT_PERF
+    perf_tax_step_ = 0;
+#endif
 
     seg_override_ = -1;
     rep_ = REP_NONE;
@@ -1157,12 +1245,27 @@ int Cpu::step() {
         ip = instr_start_ip_;
         interrupt(vec);
         c += 23 + kQueueRefillTax;
+        IBMPCAT_PERF_ADD(perf_tax_step_, kQueueRefillTax);
     } else if (trap && !vectored_ && !shadow_) {
         interrupt(EXC_DB);
         c += 23 + kQueueRefillTax;
+        IBMPCAT_PERF_ADD(perf_tax_step_, kQueueRefillTax);
     }
     c += bus_extra_;
+#ifdef IBMPCAT_PERF
+    // Class clocks exclude wait states, the queue tax and prefetch stalls.
+    int stall = 0;
+    if (bus_.mem_clocks) stall = prefetch(c);
+    perf.stall += stall;
+    c += stall;
+    int tax = perf_tax_step_;
+    perf.qtax += tax;
+    perf_tax_step_ = 0;
+    int base = c - bus_extra_ - stall - tax;
+    if (base > 0) perf.cls[perf_class(op, last_reg_)] += uint64_t(base);
+#else
     if (bus_.mem_clocks) c += prefetch(c);
+#endif
     cycles += c;
     return c;
 }

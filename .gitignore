@@ -84,6 +84,8 @@ ibmpc-at/disks/x86DSK0*.img
 
 ibmpc-at/web/ibmpcat.js
 ibmpc-at/web/ibmpcat.wasm
+ibmpc-at/web/ibmpcat-perf.js
+ibmpc-at/web/ibmpcat-perf.wasm
 ibmpc-at/web/roms/
 ibmpc-at/web/disks/
 ibmpc-at/disks/freedos-hdd.img

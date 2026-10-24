@@ -25,6 +25,10 @@ void Chipset::reset() {
     port61_ = 0;
     refresh_toggle_ = false;
     held_clocks_ = 0;
+#ifdef IBMPCAT_PERF
+    perf_refresh_pending_ = 0;
+    perf_dma_pending_ = 0;
+#endif
     pic_master.reset();
     pic_slave.reset();
     pit.reset();
@@ -153,6 +157,9 @@ void Chipset::tick(uint64_t cpu_cycles, double cpu_hz) {
     // Port 61h bit 4 toggles with each refresh request (IBM PC/AT Technical Reference, port 61h).
     if (refreshes & 1) refresh_toggle_ = !refresh_toggle_;
     held_clocks_ += refreshes * kRefreshClocks;
+#ifdef IBMPCAT_PERF
+    perf_refresh_pending_ += refreshes * kRefreshClocks;
+#endif
     speaker.update(cpu_cycles, (port61_ & 0x02) != 0, pit.channel2_output());
 
     fdc.tick(cpu_cycles);
@@ -199,6 +206,9 @@ void Chipset::run_fdc_dma() {
         ++n;
     }
     held_clocks_ += int(n) * kDmaCycleClocks;
+#ifdef IBMPCAT_PERF
+    perf_dma_pending_ += int(n) * kDmaCycleClocks;
+#endif
     fdc.finish_transfer(n);
     dma1.set_dreq(2, false);
 }

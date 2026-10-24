@@ -22,6 +22,7 @@ export default [
       "assembler6502/web/cgoac6502.js",
       "assembler6502/web/roms/entrypoints.js",
       "ibmpc-at/web/ibmpcat.js",
+      "ibmpc-at/web/ibmpcat-perf.js",
       "pacman/web/pacman.js",
       "frogger/web/frogger.js",
       "galaxian/web/galaxian.js",

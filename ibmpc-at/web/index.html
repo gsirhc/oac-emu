@@ -99,6 +99,11 @@
   label { user-select: none; }
   .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .row + .row { margin-top: 8px; }
+  .perf-row { align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .perf-readout { margin: 0; font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+    white-space: pre; color: var(--fg); }
+  #perfChart, #perfChart2 { width: 480px; max-width: 100%; height: 120px;
+    background: #0b0f0b; border: 1px solid #2a3a2a; border-radius: 3px; }
   /* Author rules of equal specificity beat the UA stylesheet's own
      [hidden] { display: none }, so a plain hidden attribute on a .row
      does nothing without this. */
@@ -598,6 +603,18 @@
       </div>
     </div>
 
+    <div class="panel" id="perfCard" hidden>
+      <h2>Performance</h2>
+      <div class="row perf-row">
+        <canvas id="perfChart" width="480" height="120" aria-label="80286 clock over the last minute"></canvas>
+        <canvas id="perfChart2" width="480" height="120" aria-label="Host core share and frame rate over the last minute"></canvas>
+        <pre class="perf-readout" id="perfReadout"></pre>
+      </div>
+      <div class="row">
+        <span class="muted" id="perfTier"></span>
+      </div>
+    </div>
+
     <div class="panel" id="hddCard">
       <h2>Hard disk</h2>
       <div class="row">
@@ -658,7 +675,6 @@
   </div>
 </div>
 
-<script src="ibmpcat.js"></script>
 <script src="shared/theme-picker.js"></script>
 <script src="shared/fullscreen.js"></script>
 <script src="shared/winbtns.js"></script>

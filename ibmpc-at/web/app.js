@@ -26,6 +26,8 @@
   const testParams = new URLSearchParams(location.search);
   const TEST_CPU_MULTIPLIER =
     testParams.get("test") === "1" && testParams.get("fast") === "1" ? 20 : 1;
+  // ?perf loads the instrumented build, a separate binary with the emulator's counters (Tier 2).
+  const perfRequested = testParams.has("perf");
 
   // ---- keyboard: key -> AT Set 1 scan code ----
   // number = one byte, array = 0xE0-prefixed. Break = make | 0x80 on the last byte.
@@ -401,15 +403,249 @@
     })();
   }
 
+  // Per-second accumulators for the Performance panel. dbg.on is set only while it is open.
+  const dbg = { on: false, emuMs: 0, renderMs: 0, frames: 0, dropped: 0 };
+  const kCpuHz = 8000000;
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const el = document.createElement("script");
+      el.src = src;
+      el.onload = () => resolve();
+      el.onerror = () => reject(new Error("could not load " + src));
+      document.head.appendChild(el);
+    });
+  }
+  // Only one module is fetched. A missing twin falls back so the panel keeps its host-side half.
+  async function loadEmulatorModule() {
+    let src = "ibmpcat.js";
+    if (perfRequested) {
+      try {
+        const head = await fetch("ibmpcat-perf.js", { method: "HEAD" });
+        if (head.ok) src = "ibmpcat-perf.js";
+      } catch {
+        // The panel says the counters are absent.
+      }
+    }
+    await loadScript(src);
+  }
+
+  // Clock against 8 MHz over the last minute. 100% is the line the clock should sit on.
+  function drawClockChart(c, canvas, history) {
+    const w = canvas.width, h = canvas.height;
+    c.fillStyle = "#0b0f0b";
+    c.fillRect(0, 0, w, h);
+    c.strokeStyle = "#1e2c1e";
+    c.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const y = Math.round(h * i / 4) + 0.5;
+      c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke();
+    }
+    for (let i = 1; i < 6; i++) {
+      const x = Math.round(w * i / 6) + 0.5;
+      c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke();
+    }
+    const n = 60;
+    const xAt = (i) => (i / (n - 1)) * w;
+    const yAt = (pct) => h - Math.max(0, Math.min(120, pct)) / 120 * h;
+    const first = n - history.length;
+    if (history.length > 1) {
+      c.beginPath();
+      history.forEach((p, i) => {
+        const x = xAt(first + i), y = yAt(p.clock);
+        if (i === 0) c.moveTo(x, y); else c.lineTo(x, y);
+      });
+      c.strokeStyle = "#6f6";
+      c.lineWidth = 1.5;
+      c.stroke();
+    }
+    const full = Math.round(yAt(100)) + 0.5;
+    c.strokeStyle = "#4a5a4a";
+    c.setLineDash([3, 3]);
+    c.beginPath(); c.moveTo(0, full); c.lineTo(w, full); c.stroke();
+    c.setLineDash([]);
+    c.font = "11px ui-monospace, Menlo, Consolas, monospace";
+    c.fillStyle = "#6f6";
+    c.fillText("clock", 6, 13);
+    c.fillStyle = "#6a7a6a";
+    c.fillText("60s", w - 26, h - 5);
+  }
+
+  // Share of one core, and frame rate on its own scale. A stall shows here while the clock barely moves.
+  let fpsScale = 60, fpsShrinkFrames = 0;
+  function drawHostChart(c, canvas, history) {
+    const w = canvas.width, h = canvas.height;
+    c.fillStyle = "#0b0f0b";
+    c.fillRect(0, 0, w, h);
+    c.strokeStyle = "#1e2c1e";
+    c.lineWidth = 1;
+    for (let i = 1; i < 4; i++) {
+      const y = Math.round(h * i / 4) + 0.5;
+      c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke();
+    }
+    for (let i = 1; i < 6; i++) {
+      const x = Math.round(w * i / 6) + 0.5;
+      c.beginPath(); c.moveTo(x, 0); c.lineTo(x, h); c.stroke();
+    }
+    const n = 60;
+    const xAt = (i) => (i / (n - 1)) * w;
+    const first = n - history.length;
+    let wanted = 60;
+    for (const p of history) if (p.fps > wanted) wanted = p.fps;
+    wanted = Math.ceil(wanted / 30) * 30;
+    if (wanted >= fpsScale) {
+      fpsScale = wanted;
+      fpsShrinkFrames = 0;
+    } else if (++fpsShrinkFrames >= 90) {
+      fpsScale = wanted;
+      fpsShrinkFrames = 0;
+    }
+    const fpsMax = fpsScale;
+    if (history.length > 1) {
+      c.beginPath();
+      c.moveTo(xAt(first), h);
+      history.forEach((p, i) => c.lineTo(xAt(first + i), h - Math.min(100, p.host) / 120 * h));
+      c.lineTo(xAt(first + history.length - 1), h);
+      c.closePath();
+      c.fillStyle = "rgba(255, 176, 64, 0.26)";
+      c.fill();
+      c.beginPath();
+      history.forEach((p, i) => {
+        const x = xAt(first + i), y = h - Math.min(100, p.host) / 120 * h;
+        if (i === 0) c.moveTo(x, y); else c.lineTo(x, y);
+      });
+      c.strokeStyle = "#ffb040";
+      c.lineWidth = 1.5;
+      c.stroke();
+      c.beginPath();
+      history.forEach((p, i) => {
+        const x = xAt(first + i), y = h - Math.min(1, p.fps / fpsMax) * h * (100 / 120);
+        if (i === 0) c.moveTo(x, y); else c.lineTo(x, y);
+      });
+      c.strokeStyle = "#8ad";
+      c.lineWidth = 1.5;
+      c.stroke();
+    }
+    const full = Math.round(h - 100 / 120 * h) + 0.5;
+    c.strokeStyle = "#4a5a4a";
+    c.setLineDash([3, 3]);
+    c.beginPath(); c.moveTo(0, full); c.lineTo(w, full); c.stroke();
+    c.setLineDash([]);
+    c.font = "11px ui-monospace, Menlo, Consolas, monospace";
+    c.fillStyle = "#ffb040";
+    c.fillText("host core", 6, 13);
+    c.fillStyle = "#8ad";
+    c.fillText("fps (max " + fpsMax + ")", 72, 13);
+    c.fillStyle = "#6a7a6a";
+    c.fillText("60s", w - 26, h - 5);
+  }
+
+  // Output goes in the page, not the console: DevTools and a log line a second spend the budget being measured.
+  let perfStarted = false;
+  function startPerfPanel() {
+    if (perfStarted) return;
+    perfStarted = true;
+    const card = document.getElementById("perfCard");
+    const out = document.getElementById("perfReadout");
+    card.hidden = false;
+    dbg.on = true;
+    const tier2 = typeof machine.perfBuild === "function" && machine.perfBuild() &&
+      typeof machine.perfStats === "function";
+    document.getElementById("perfTier").textContent = tier2
+      ? "Instrumented build (ibmpcat-perf.wasm): host metrics and the emulator's own counters."
+      : "Shipped build: host metrics only. Reload with ?perf after 'make perf-build' for " +
+        "the emulator's internal counters.";
+    const chart = document.getElementById("perfChart");
+    const cctx = chart.getContext("2d");
+    const chart2 = document.getElementById("perfChart2");
+    const cctx2 = chart2.getContext("2d");
+    const history = [];
+    let c0 = machine.totalCycles(), t0 = performance.now();
+    // The panel opens as the machine powers on, so the first sample spans that idle gap.
+    let first = true;
+    const recent = [];
+    if (tier2) machine.perfStats();
+    const classes = ["alu", "mov", "stack", "flow", "string", "io", "misc", "hlt"];
+    const waits = [["ram", "RAM"], ["rom", "ROM"], ["ega", "EGA"],
+      ["io8", "8-bit I/O"], ["io16", "16-bit I/O"], ["slot", "slot"]];
+    setInterval(() => {
+      if (!machine) return;
+      const secs = (performance.now() - t0) / 1000;
+      const cyc = Number(machine.totalCycles() - c0);
+      const stats = tier2 ? machine.perfStats() : "";
+      c0 = machine.totalCycles();
+      t0 = performance.now();
+      if (cyc < 0) return;
+      if (secs <= 0 || cyc <= 0) return;
+      const mhz = cyc / secs / 1e6;
+      if (first) {
+        first = false;
+        dbg.emuMs = dbg.renderMs = dbg.dropped = 0;
+        dbg.frames = 0;
+        return;
+      }
+      recent.push(mhz);
+      if (recent.length > 30) recent.shift();
+      const avg = recent.reduce((a, b) => a + b, 0) / recent.length;
+      const worst = Math.min(...recent);
+      const raw = {};
+      for (const pair of stats.split(" ")) {
+        const eq = pair.indexOf("=");
+        if (eq <= 0) continue;
+        raw[pair.slice(0, eq)] = Number(pair.slice(eq + 1));
+      }
+      const emuMs = dbg.emuMs / secs, renderMs = dbg.renderMs / secs;
+      const fps = dbg.frames / secs, dropped = dbg.dropped / secs;
+      dbg.emuMs = dbg.renderMs = dbg.dropped = 0;
+      dbg.frames = 0;
+      const cpuPct = Math.min(100, (emuMs + renderMs) / 10);
+      const cores = navigator.hardwareConcurrency || 0;
+      history.push({ clock: mhz / 8 * 100, host: cpuPct, fps });
+      if (history.length > 60) history.shift();
+      drawClockChart(cctx, chart, history);
+      drawHostChart(cctx2, chart2, history);
+      const row = (key, label) => {
+        const n = raw[key] || 0;
+        const pct = cyc > 0 ? n / cyc * 100 : 0;
+        return "  " + label.padEnd(10) + pct.toFixed(1).padStart(5) + "%  " +
+          (n / secs / 1e6).toFixed(2) + "M clk/s\n";
+      };
+      let detail = "";
+      if (tier2) {
+        detail = "\nclasses\n" + classes.map((k) => row(k, k)).join("") +
+          "waits\n" + waits.map(([k, label]) => row(k, label)).join("") +
+          row("stall", "prefetch") +
+          row("qtax", "queue tax") +
+          row("refresh", "refresh") +
+          row("dma", "dma");
+      }
+      out.innerHTML =
+        "clock   " + mhz.toFixed(1) + " MHz of 8.0  (" + (mhz / 8 * 100).toFixed(0) + "%)\n" +
+        "        avg " + avg.toFixed(1) + " (30s)   min " + worst.toFixed(1) + "\n" +
+        "dropped " + (dropped / 1e6).toFixed(2) + "M cyc/s  " +
+          (dropped / kCpuHz * 100).toFixed(1) + "% of clock\n" +
+        "\n" +
+        "<b>host</b>    " + cpuPct.toFixed(0) + "% of one core" +
+        (cores ? "  (" + cores + " cores)" : "") + "\n" +
+        "  emul  " + emuMs.toFixed(0) + " ms/s\n" +
+        "  draw  " + renderMs.toFixed(0) + " ms/s   " + fps.toFixed(1) + " fps\n" +
+        detail;
+    }, 1000);
+  }
+
   function frame(t) {
     if (!poweredOn || !machine) return;  // powered off mid-loop, stop rescheduling
     if (lastT === null) lastT = t;
     let dtSeconds = (t - lastT) / 1000;
     lastT = t;
-    dtSeconds = Math.min(dtSeconds, 0.25);  // clamp backgrounded-tab gap
+    if (dtSeconds > 0.25) {
+      if (dbg.on) dbg.dropped += (dtSeconds - 0.25) * kCpuHz * TEST_CPU_MULTIPLIER;
+      dtSeconds = 0.25;  // clamp backgrounded-tab gap
+    }
 
+    const emuT0 = dbg.on ? performance.now() : 0;
     // real 8 MHz; TEST_CPU_MULTIPLIER is 1 outside ?test=1&fast=1
-    cycleCredit += dtSeconds * 8000000 * TEST_CPU_MULTIPLIER;
+    cycleCredit += dtSeconds * kCpuHz * TEST_CPU_MULTIPLIER;
     let cyclesThisFrame = Math.floor(cycleCredit);
     cycleCredit -= cyclesThisFrame;
     const frameStartCycle = machine.totalCycles();
@@ -423,11 +659,14 @@
         machine.runCycles(n);
         cyclesThisFrame -= n;
       }
+      if (dbg.on) dbg.dropped += cyclesThisFrame;
       cycleCredit = 0;
     }
+    if (dbg.on) dbg.emuMs += performance.now() - emuT0;
 
     pumpAudio(frameStartCycle, machine.totalCycles() - frameStartCycle, dtSeconds);
 
+    const drawT0 = dbg.on ? performance.now() : 0;
     const rgba = machine.renderFrame();
     // Resolution varies by mode (640x350 text, 320x200 CGA graphics, ega_render.h); the 4:3 box stays put.
     const frameW = machine.renderWidth(), frameH = machine.renderHeight();
@@ -436,6 +675,10 @@
     img.data.set(rgba);
     frameCtx.putImageData(img, 0, 0);
     presentFrame();
+    if (dbg.on) {
+      dbg.renderMs += performance.now() - drawT0;
+      dbg.frames++;
+    }
 
     for (const bay of bays) {
       const drive = parseInt(bay.dataset.drive, 10);
@@ -604,6 +847,7 @@
     const factoryC = !savedHdd;
     if (!machine) {
       machine = new firmware.Module.Machine();
+      if (perfRequested) startPerfPanel();
       machine.loadRom(0x100000 - firmware.bios.byteLength, new Uint8Array(firmware.bios));
       machine.loadRom(0xC0000, new Uint8Array(firmware.videoBios));
       machine.mountHdd(savedHdd || new Uint8Array(firmware.hdd));
@@ -727,6 +971,7 @@
     beginLoad("Loading\u2026");
     try {
       await paintLoadOverlay();
+      await loadEmulatorModule();
       const [Module, savedHddResult, bios, videoBios, hdd] = await Promise.all([
         IbmPcAt({}),
         loadSavedHdd(),

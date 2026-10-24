@@ -648,6 +648,11 @@ separate suite.
   §61), `make -C
   ibmpc-at/web test` (Playwright; `make test-install` once for
   `npm ci` + Chromium).
+  `make -C ibmpc-at/web ibmpcat-perf.js` builds a second wasm with the
+  emulator's own performance counters compiled in (`IBMPCAT_PERF`), which
+  `?perf` loads for the Performance panel's Tier 2. The shipped binary
+  carries none of them. Deploy CI builds both binaries; nightly also
+  re-runs the panel against the shipped binary.
 - **Pac-Man Arcade** (`pacman/`): `make -C pacman check`
   (GoogleTest over the tilemap/sprite video + Namco WSG + machine, including
   `Smoke.HwtestBootsSignatureWatchdogAndPaints`), `make -C
@@ -759,7 +764,7 @@ separate suite.
   check`. A new shared chip gets a `tests/` folder the same way.
 - Front ends live in each machine's own `web/`; generated wasm/ROM/media
   files (`retro8080.js`/`.wasm`, `cgoac6502.js`/`.wasm`/`roms/*.bin`,
-  `ibmpcat.js`/`.wasm`, `pacman.js`/`.wasm`, `frogger.js`/`.wasm`,
+  `ibmpcat.js`/`.wasm`, `ibmpcat-perf.js`/`.wasm`, `pacman.js`/`.wasm`, `frogger.js`/`.wasm`,
   `scramble.js`/`.wasm`, `galaxian.js`/`.wasm`, `galaga.js`/`.wasm`,
   `asteroids.js`/`.wasm`, `centipede.js`/`.wasm`, `missile.js`/`.wasm`,
   `invaders.js`/`.wasm`, `lunarrescue.js`/`.wasm`, `battlezone.js`/`.wasm`, disk/tape

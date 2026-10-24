@@ -18,6 +18,7 @@
 #include <emscripten/val.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,44 @@ public:
 
     double totalCycles() const { return double(m_.total_cycles()); }
     bool halted() const { return m_.cpu.halted; }
+
+    // Whether this build carries the emulator's own counters. The shipped binary answers false.
+    bool perfBuild() const {
+#ifdef IBMPCAT_PERF
+        return true;
+#else
+        return false;
+#endif
+    }
+#ifdef IBMPCAT_PERF
+    // Counters since the last call, as "name=value" pairs. Reading resets them.
+    std::string perfStats() {
+        auto &p = m_.cpu.perf;
+        char buf[640];
+        std::snprintf(buf, sizeof buf,
+                      "alu=%llu mov=%llu stack=%llu flow=%llu string=%llu io=%llu misc=%llu hlt=%llu "
+                      "ram=%llu rom=%llu ega=%llu io8=%llu io16=%llu slot=%llu "
+                      "stall=%llu qtax=%llu refresh=%llu dma=%llu",
+                      (unsigned long long)p.cls[cpu80286::kPerfAlu],
+                      (unsigned long long)p.cls[cpu80286::kPerfMov],
+                      (unsigned long long)p.cls[cpu80286::kPerfStack],
+                      (unsigned long long)p.cls[cpu80286::kPerfFlow],
+                      (unsigned long long)p.cls[cpu80286::kPerfString],
+                      (unsigned long long)p.cls[cpu80286::kPerfIo],
+                      (unsigned long long)p.cls[cpu80286::kPerfMisc],
+                      (unsigned long long)p.cls[cpu80286::kPerfHlt],
+                      (unsigned long long)p.wait_ram, (unsigned long long)p.wait_rom,
+                      (unsigned long long)p.wait_ega, (unsigned long long)p.wait_io8,
+                      (unsigned long long)p.wait_io16, (unsigned long long)p.wait_slot,
+                      (unsigned long long)p.stall, (unsigned long long)p.qtax,
+                      (unsigned long long)m_.chipset.perf_refresh,
+                      (unsigned long long)m_.chipset.perf_dma);
+        p = {};
+        m_.chipset.perf_refresh = 0;
+        m_.chipset.perf_dma = 0;
+        return buf;
+    }
+#endif
 
     // ---- EGA screen ----
     // Call renderFrame() before renderWidth()/renderHeight().
@@ -203,6 +242,10 @@ EMSCRIPTEN_BINDINGS(ibmpcat_machine) {
         .function("runCycles", &WasmMachine::runCycles)
         .function("totalCycles", &WasmMachine::totalCycles)
         .function("halted", &WasmMachine::halted)
+        .function("perfBuild", &WasmMachine::perfBuild)
+#ifdef IBMPCAT_PERF
+        .function("perfStats", &WasmMachine::perfStats)
+#endif
         .function("renderFrame", &WasmMachine::renderFrame)
         .function("renderWidth", &WasmMachine::renderWidth)
         .function("renderHeight", &WasmMachine::renderHeight)

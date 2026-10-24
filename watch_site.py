@@ -30,7 +30,7 @@ MACHINES = (
 WASM_TARGETS = {
     "altair8800": ["retro8080.js"],
     "assembler6502": ["wasm"],
-    "ibmpc-at": ["ibmpcat.js"],
+    "ibmpc-at": ["ibmpcat.js", "ibmpcat-perf.js"],
     "pacman": ["wasm"],
     "frogger": ["wasm"],
     "galaga": ["wasm"],
@@ -49,6 +49,7 @@ GENERATED_JS = frozenset({
     "retro8080.js",
     "cgoac6502.js",
     "ibmpcat.js",
+    "ibmpcat-perf.js",
     "pacman.js",
     "frogger.js",
     "galaga.js",

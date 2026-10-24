@@ -165,8 +165,10 @@ jobs:
       # mtools trims the startup files on the served copy (disks/tune-freedos-hdd.py)
       - run: sudo apt-get update && sudo apt-get install -y mtools
 
+      # Both binaries: the shipped one and the instrumented twin ?perf loads.
+      # Building only the shipped one would let the IBMPCAT_PERF paths rot.
       - working-directory: ibmpc-at/web
-        run: make ibmpcat.js hdd-image
+        run: make ibmpcat.js ibmpcat-perf.js hdd-image
 
       - uses: actions/setup-node@v4
         with:
@@ -603,8 +605,9 @@ jobs:
       # IBM PC/AT's wasm module -- hdd-image here copies the (cached
       # or just-built) native disks/freedos-hdd.img into web/disks/ and
       # trims its startup files (disks/tune-freedos-hdd.py).
+      # Both binaries, so the IBMPCAT_PERF paths are compiled on every deploy.
       - working-directory: ibmpc-at/web
-        run: make ibmpcat.js roms hdd-image shared
+        run: make ibmpcat.js ibmpcat-perf.js roms hdd-image shared
 
       # Pac-Man arcade board's wasm module + generated hardware self-test ROM
       - working-directory: pacman/web
