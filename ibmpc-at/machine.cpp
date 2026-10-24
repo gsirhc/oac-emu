@@ -17,6 +17,9 @@ void Machine::configure_factory_cmos() {
     // "No bootable device" without a 1st device. 0x21 = A: then C:
     // (IBM_PCAT_REVIEW.md §8).
     c.poke(0x3D, 0x21);
+    // bit 0 skips the stand-in BIOS's "Press F12 for boot menu" pause, which a real AT doesn't have
+    // (BIOS-bochs-legacy F000:13AB reads CMOS 3Fh before printing it)
+    c.poke(0x3F, 0x01);
 
     // Fixed-disk Type 47 geometry (0x12, 0x19, 0x1B-0x23), read by hard_drive_post
     // separately from ata_detect() (wd1003.h), same ST-4038 geometry. 0x12 high

@@ -214,7 +214,8 @@ load-your-own copy), not only the self-test picture.
 `about.html` follows [`.claude/about.md`](.claude/about.md): agents
 may change navigation, header, and footer chrome only. The current developer
 owns the body copy — do not edit content sections. The public page does not link it.
-Help on `super_secret.html` and on the machine pages still opens it.
+The footer's Help (`shared/footer.js`) opens it only when the URL carries the
+486 catalog token (`full=`); otherwise Help opens `news_info.html`.
 `news_info.html` is the public About & News page. It follows
 [`.claude/blog.md`](.claude/blog.md). The current developer owns the
 entries.
@@ -273,8 +274,8 @@ before calling it done.
   `data-cpu`, `data-manufacturer`, plus `data-art` and `data-marquee`,
   the libretro-thumbnails title and Arcade Database set name for the hub's opt-in thumbnails). Cabinets are listed on the hub only;
   `index.html` has a full-width neon Enter the Arcade portal into
-  `/arcade/`. The public page shows only a coming-soon 486 card, which
-  explains that the full PC is coming soon. `super_secret.html` is the
+  `/arcade/`. The public page shows the IBM PC/AT card and a coming-soon
+  486 card, which explains that the full PC is coming soon. `super_secret.html` is the
   unlinked full catalog; its 486 link goes to `/pc486/?full=…`. Without
   the token, `/pc486/` redirects to the landing page. The PCs ship
   no third-party DOS games, shareware or freeware: no preset C:s and no
@@ -507,7 +508,7 @@ logins, or keys here or anywhere in the repo.
   the source for what the PCs ship (FreeDOS 1.3 LiveCD, Bochs BIOS, LGPL
   VGABIOS, the fntcol16 fonts). `publish_sources.sh` builds it, and
   `--upload` publishes it. When a pinned BIOS, FreeDOS release or font
-  changes, rerun it and update the PC's System specs notice rows in the same
+  changes, rerun it and update the PC's footer notices in the same
   change (`notices.spec.ts` checks the pins).
 - **Visit stats:** GoatCounter (`oac-emu.goatcounter.com`), via
   `shared/analytics.js`.
@@ -642,7 +643,9 @@ separate suite.
   `shared/pc/` chips it shares with pc486), `make -C
   ibmpc-at/web ibmpcat.js roms hdd-image library-images` (the shipped FreeDOS HDD
   image is a real, slow installer run the first time — see
-  `IBM_PCAT_REVIEW.md` §11 — cached after that), `make -C
+  `IBM_PCAT_REVIEW.md` §11 — cached after that; copying it into `web/disks/`
+  trims its startup files with `disks/tune-freedos-hdd.py`, which needs mtools,
+  §61), `make -C
   ibmpc-at/web test` (Playwright; `make test-install` once for
   `npm ci` + Chromium).
 - **Pac-Man Arcade** (`pacman/`): `make -C pacman check`

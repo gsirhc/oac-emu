@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Source for the third-party code the PCs ship, published as the
-# "third-party-sources" GitHub release the System specs panels link to.
+# "third-party-sources" GitHub release the PC pages' footer notices link to.
 #   ./publish_sources.sh           # build third_party_sources/ only
 #   ./publish_sources.sh --upload  # also create/update the release (needs gh)
 set -euo pipefail

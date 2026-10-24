@@ -1576,7 +1576,6 @@
     requestAnimationFrame(frame);
   }
 
-  addFooterNote("All shareware and freeware titles remain the property of their respective owners. <a href=\"../about.html#rights\">More info</a>.");
   // Only the gzip ships; the raw 256MB images would put the site over the host's 1GB.
   const kFactoryHddFile = "disks/freedos-hdd.img.gz";
   const kFactoryHddLabel = "FreeDOS (default)";

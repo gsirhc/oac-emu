@@ -409,6 +409,22 @@ TEST_F(Fdc765Test, EjectingA525DiskLeavesDiskChangeAlone) {
     EXPECT_FALSE(fdc.in(0x3F7) & 0x80);
 }
 
+TEST_F(Fdc765Test, AnEmptyDriveNeverEndsAReadUntilReset) {
+    PowerOnMotorAndSelect(0);
+    const uint8_t read[] = {0xE6, 0x00, 0x00, 0x00, 0x01, 0x02, 0x0F, 0x1B, 0xFF};
+    for (uint8_t b : read) fdc.out(0x3F5, b);
+    for (uint64_t c = 0; c < 80'000'000; c += 1000) fdc.tick(c);
+    EXPECT_FALSE(fdc.transfer_ready());
+    EXPECT_FALSE(fdc.irq_pending());
+    EXPECT_EQ(fdc.in(0x3F4) & 0x90, 0x10) << "busy, no RQM";
+
+    fdc.out(0x3F2, 0x08);
+    PowerOnMotorAndSelect(0);
+    EXPECT_EQ(fdc.in(0x3F4) & 0xD0, 0x80);
+    fdc.out(0x3F5, 0x4A); fdc.out(0x3F5, 0x00);  // READ ID
+    EXPECT_EQ(fdc.in(0x3F4) & 0x90, 0x10);
+}
+
 TEST_F(Fdc765Drive35Test, FormatTrackFillsAll18SectorsInOne300RpmRevolution) {
     auto img = MakeImage(80, 2, 18);
     fdc.mount(0, img.data(), img.size());

@@ -37,28 +37,18 @@
   tiles. None
   of it is staged.
 
-- **`ibmpcat-panel.jpg`** — a screenshot of *this project's* rendered IBM
-  PC/AT front panel (`#frontPanelCard .at-case`), captured from the emulator
-  after auto-boot with a diskette inserted in drive A: (power LED lit,
-  A: shown loaded, B: empty) -- not a photo of real hardware. The real 5170
-  case fascia is a wide, short rectangle, so this thumbnail is naturally
-  wider than the other cards' (712×128 vs. 286×128) rather than distorted
-  to match; the 3-column tile crop (`object-fit: cover`, left-anchored)
-  keeps the badge and power LED in frame.
+- **`ibmpcat-panel.jpg`** — the left side of *this project's* rendered IBM
+  PC/AT front panel (`#frontPanelCard .at-case`): the IBM badge, the keylock
+  panel with the power light lit, the grille and the red power switch. Not a
+  photo of real hardware. 286×128 like the other tiles.
 
-  `.at-case` also contains each drive bay's page-UI chrome (`.at-bay-ctl`
-  -- the A:/B: letter and filename/status text under each faceplate).
-  Unlike `altair8800`'s `#altair .fp-case` (which has no controls inside
-  it at all), a bare screenshot of `.at-case` picks that up too. Hide
-  `.at-bay-ctl` first (inject `.at-bay-ctl { display: none !important; }`)
-  so the screenshot shows only the case, switch, and drive faceplates.
-
-  To regenerate: build the front end (`make -C ../ibmpc-at/web`, plus
-  `roms`/`hdd-image` if not already built), serve it, load `/?test=1`, wait
-  for `#powerLed.power-on`, insert any small file into drive A:'s file
-  input, add a style tag hiding `.at-bay-ctl` (see above), then screenshot
-  the `#frontPanelCard .at-case` element and resize to 128 px tall
-  (progressive JPEG q≈88).
+  To regenerate: build the front end (`make -C ../ibmpc-at/web ibmpcat.js
+  roms hdd-image`), serve it, load `/?test=1&fast=1` at a 1200×900 viewport
+  and 3× device scale, wait for `#powerLed.power-on`, insert a library disk
+  into drive A:, add a style tag hiding `.at-bay-ctl` (the A:/B: readout sits
+  on each drive face), then screenshot `#frontPanelCard .at-case`. Crop the
+  leftmost full-height 286:128 window and resize to 286×128 (Lanczos,
+  progressive JPEG q88).
 
 - **`pacman-cabinet.png`** / **`mspacman-cabinet.png`** /
   **`frogger-cabinet.png`** / **`galaga-cabinet.png`** / **`galaxian-cabinet.png`** /

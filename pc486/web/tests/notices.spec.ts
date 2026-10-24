@@ -13,19 +13,21 @@ const MIRROR = "https://github.com/gsirhc/oac-emu/releases/tag/third-party-sourc
 test.describe("footer notices", () => {
   test("credit each third-party part, link its pinned source, and disclaim the trademark owners", async ({ page }) => {
     await page.goto(withFull("/?test=1"));
-    const row = (name: string) => page.locator(".footer .notices p", { has: page.locator(`b:text-is("${name}:")`) });
-    await expect(row("Bochs BIOS")).toContainText("GNU LGPL 2.1");
-    await expect(row("Bochs BIOS").locator("a").first()).toHaveAttribute("href", `https://github.com/bochs-emu/Bochs/tree/${BOCHS}/bochs/bios`);
-    await expect(row("VGA BIOS")).toContainText("GNU LGPL 2.1");
-    await expect(row("VGA BIOS").locator("a").first()).toHaveAttribute("href", `https://github.com/bochs-emu/VGABIOS/tree/${VGABIOS}`);
-    await expect(row("FreeDOS").locator("a").first()).toHaveAttribute("href", LIVECD);
-    for (const name of ["Bochs BIOS", "VGA BIOS", "FreeDOS"]) {
-      await expect(row(name).locator(`a[href="${MIRROR}"]`)).toHaveCount(1);
-    }
-    await expect(row("Trademarks")).toHaveText(/IBM and VGA are trademarks .*Sound Blaster .*Intel486 .*isn't affiliated with or endorsed by any of them\./);
-    const ofl = await page.request.get(await row("Typeface").locator("a").getAttribute("href") as string);
-    expect(ofl.status()).toBe(200);
-    expect(await ofl.text()).toContain("SIL OPEN FONT LICENSE Version 1.1");
+    const notices = page.locator(".footer .notices");
+    const link = (name: string) => notices.locator(`a:text-is("${name}")`);
+    await expect(link("Bochs BIOS")).toHaveAttribute("href", `https://github.com/bochs-emu/Bochs/tree/${BOCHS}/bochs/bios`);
+    await expect(notices).toContainText("Bochs BIOS (LGPL 2.1)");
+    await expect(link("LGPL VGABIOS 0.9d")).toHaveAttribute("href", `https://github.com/bochs-emu/VGABIOS/tree/${VGABIOS}`);
+    await expect(notices).toContainText("LGPL VGABIOS 0.9d (LGPL 2.1)");
+    await expect(notices.locator('a:text-is("LGPL 2.1")')).toHaveCount(2);
+    for (const a of await notices.locator('a:text-is("LGPL 2.1")').all()) await expect(a).toHaveAttribute("href", "roms/LGPL-2.1.txt");
+    const lgpl = await page.evaluate(async () => (await fetch("roms/LGPL-2.1.txt")).text());
+    expect(lgpl).toContain("GNU LESSER GENERAL PUBLIC LICENSE\n                       Version 2.1, February 1999");
+    // ibiblio's FreeDOS tree is unreachable; the Wayback copy matches fetch-freedos-cd.sh's SHA-256
+    await expect(link("FreeDOS 1.3")).toHaveAttribute("href", `https://web.archive.org/web/2023id_/${LIVECD}`);
+    await expect(link("Sources")).toHaveAttribute("href", MIRROR);
+    await expect(notices.locator("p").last()).toHaveText(/^IBM and VGA are trademarks .*Sound Blaster .*Intel486 .*isn't affiliated with or endorsed by any of them\.$/);
+    await expect(link("Inter")).toHaveCount(0);
   });
 
   test("the CuteMouse disk carries its GPL text and a source pointer", async ({ page }) => {

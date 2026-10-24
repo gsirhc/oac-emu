@@ -11,18 +11,20 @@ const MIRROR = "https://github.com/gsirhc/oac-emu/releases/tag/third-party-sourc
 test.describe("footer notices", () => {
   test("credit each third-party part, link its pinned source, and disclaim IBM", async ({ page }) => {
     await page.goto("/?test=1");
-    const row = (name: string) => page.locator(".footer .notices p", { has: page.locator(`b:text-is("${name}:")`) });
-    await expect(row("Bochs BIOS")).toContainText("GNU LGPL 2.1");
-    await expect(row("Bochs BIOS").locator("a").first()).toHaveAttribute("href", `https://github.com/bochs-emu/Bochs/tree/${BOCHS}/bochs/bios`);
-    await expect(row("EGA BIOS")).toContainText("Yossi Gil");
-    await expect(row("FreeDOS").locator("a").first()).toHaveAttribute("href", LIVECD);
-    for (const name of ["Bochs BIOS", "FreeDOS"]) {
-      await expect(row(name).locator(`a[href="${MIRROR}"]`)).toHaveCount(1);
-    }
-    await expect(row("Trademarks")).toHaveText(/IBM, PC\/AT and EGA are trademarks .*isn't affiliated with or endorsed by IBM\./);
-    const ofl = await page.request.get(await row("Typeface").locator("a").getAttribute("href") as string);
-    expect(ofl.status()).toBe(200);
-    expect(await ofl.text()).toContain("SIL OPEN FONT LICENSE Version 1.1");
+    const notices = page.locator(".footer .notices");
+    const link = (name: string) => notices.locator(`a:text-is("${name}")`);
+    await expect(link("Bochs BIOS")).toHaveAttribute("href", `https://github.com/bochs-emu/Bochs/tree/${BOCHS}/bochs/bios`);
+    await expect(notices).toContainText("Bochs BIOS (LGPL 2.1)");
+    await expect(notices.locator('a:text-is("LGPL 2.1")')).toHaveCount(1);
+    for (const a of await notices.locator('a:text-is("LGPL 2.1")').all()) await expect(a).toHaveAttribute("href", "roms/LGPL-2.1.txt");
+    const lgpl = await page.evaluate(async () => (await fetch("roms/LGPL-2.1.txt")).text());
+    expect(lgpl).toContain("GNU LESSER GENERAL PUBLIC LICENSE\n                       Version 2.1, February 1999");
+    await expect(notices).toContainText("VGA ROM fonts by Yossi Gil (public domain)");
+    // ibiblio's FreeDOS tree is unreachable; the Wayback copy matches fetch-freedos-cd.sh's SHA-256
+    await expect(link("FreeDOS 1.3")).toHaveAttribute("href", `https://web.archive.org/web/2023id_/${LIVECD}`);
+    await expect(link("Sources")).toHaveAttribute("href", MIRROR);
+    await expect(notices.locator("p").last()).toHaveText(/^IBM, PC\/AT and EGA are trademarks of IBM Corp\. .*isn't affiliated with or endorsed by IBM\.$/);
+    await expect(link("Inter")).toHaveCount(0);
   });
 
   test("library disks carry a source pointer and the licenses their packages have", async ({ page }) => {

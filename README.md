@@ -88,8 +88,9 @@ Some files aren't mine and keep their own terms:
 
 - [`assembler6502/firmware/wozmon.s`](assembler6502/firmware/wozmon.s) is Steve
   Wozniak's Wozmon, from Apple's 1976 Apple-1 Operation Manual.
-- [`shared/vendor/`](shared/vendor/) holds xterm.js (MIT) and the Inter,
-  Courier Prime and VT323 fonts (SIL Open Font License).
+- [`shared/vendor/`](shared/vendor/) holds xterm.js (MIT) and the
+  Courier Prime and VT323 fonts (SIL Open Font License), each with its license
+  file beside it.
 - Firmware, operating systems and fonts that are fetched at build time aren't
   in this repo. That covers the Bochs BIOS, the LGPL VGA BIOS, FreeDOS, Altair
   BASIC and IBM's VGA ROM font, and each one stays under its own license.

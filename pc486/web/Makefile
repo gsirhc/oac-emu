@@ -50,7 +50,7 @@ SHARED = ../../shared
 roms:
 	$(MAKE) -C $(CORE) bios
 	mkdir -p roms
-	cp $(CORE)/roms/BIOS-bochs-legacy $(CORE)/roms/VGABIOS-lgpl-latest.bin roms/
+	cp $(CORE)/roms/BIOS-bochs-legacy $(CORE)/roms/VGABIOS-lgpl-latest.bin ../../shared/pc/LGPL-2.1.txt roms/
 
 $(CORE)/disks/freedos-hdd.img:
 	$(MAKE) -C $(CORE) hdd-image
