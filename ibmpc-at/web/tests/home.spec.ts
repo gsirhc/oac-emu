@@ -15,22 +15,24 @@ const HOME = "http://localhost:8310/";
 const CATALOG = HOME + "super_secret.html";
 
 test.describe("landing page", () => {
-  test("lists the IBM PC/AT with a launch link to /ibmpc-at/", async ({ page }) => {
-    await page.goto(CATALOG);
-    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+  for (const [where, url] of [["public page", HOME], ["catalog", CATALOG]]) {
+    test(`the ${where} lists the IBM PC/AT with a launch link to /ibmpc-at/`, async ({ page }) => {
+      await page.goto(url);
+      await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
 
-    const card = page.locator('a.machine-card[href="ibmpc-at/"]');
-    await expect(card).toHaveAttribute("href", "ibmpc-at/");
-    await expect(card.locator(".name")).toHaveText(/IBM PC\/AT/i);
+      const card = page.locator('a.machine-card[href="ibmpc-at/"]');
+      await expect(card).toHaveAttribute("href", "ibmpc-at/");
+      await expect(card.locator(".name")).toHaveText(/IBM PC\/AT/i);
 
-    const shot = card.locator("img.shot");
-    await expect(shot).toHaveAttribute("src", /assets\/ibmpcat-panel\.jpg$/);
-    await expect(shot).toHaveAttribute("width", "712");
-    await expect(shot).toHaveAttribute("height", "128");
-    await expect(shot).toHaveJSProperty("complete", true);
-    expect(await shot.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(712);
-    expect(await shot.evaluate((img: HTMLImageElement) => img.naturalHeight)).toBe(128);
-  });
+      const shot = card.locator("img.shot");
+      await expect(shot).toHaveAttribute("src", /assets\/ibmpcat-panel\.jpg$/);
+      await expect(shot).toHaveAttribute("width", "286");
+      await expect(shot).toHaveAttribute("height", "128");
+      await expect(shot).toHaveJSProperty("complete", true);
+      expect(await shot.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(286);
+      expect(await shot.evaluate((img: HTMLImageElement) => img.naturalHeight)).toBe(128);
+    });
+  }
 
   test("the theme selector switches the page and persists to retro8080.theme", async ({ page }) => {
     await page.goto(HOME);

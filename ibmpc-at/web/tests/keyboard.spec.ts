@@ -7,11 +7,13 @@ test.describe("keyboard", () => {
   test("typing through the real focused keyboard reaches COMMAND.COM", async ({ page }) => {
     await boot(page);
     await focusScreen(page);
-    await page.keyboard.type("dir", { delay: 40 });
-    await page.keyboard.down("Enter");
-    await emuWait(page, 60);
-    await page.keyboard.up("Enter");
-    await waitForScreen(page, /COMMAND/);
+    // held for emulated time, not wall time, so a fast test clock can't trip typematic repeat
+    for (const key of ["d", "i", "r", "Enter"]) {
+      await page.keyboard.down(key);
+      await emuWait(page, 60);
+      await page.keyboard.up(key);
+    }
+    await waitForScreen(page, /COMMAND\s+COM/);
     // the prompt returns once DIR finishes, proving the line was actually
     // submitted and processed, not just echoed
     await waitForScreen(page, /C:\\>\s*$/);

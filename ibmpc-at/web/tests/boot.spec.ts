@@ -11,6 +11,21 @@ test.describe("boot and power", () => {
     await expect.poll(() => screenText(page)).toMatch(/C:\\>/);
   });
 
+  test("the shipped C: skips the menu countdown, MEM and CD-ROM, and says so in its startup files", async ({ page }) => {
+    await boot(page);
+    const screen = await screenText(page);
+    expect(screen).toMatch(/Done processing startup files/);
+    expect(screen).not.toMatch(/Modules using memory|CD-ROM not configured|CuteMouse/);
+    const img = await page.evaluate(async () => {
+      const r = await fetch("disks/freedos-hdd.img");
+      return Array.from(new Uint8Array(await r.arrayBuffer()), (b) => String.fromCharCode(b)).join("");
+    });
+    expect(img).toContain("MENUDEFAULT=1,0\r\n");
+    expect(img).not.toContain("MENUDEFAULT=1,5");
+    expect(img).toContain("; Changed by oac-emu 2026-10-23:");
+    expect(img).toContain("REM Changed by oac-emu 2026-10-23:");
+  });
+
   test("the EGA BIOS sets 350-line text for the Enhanced Color Display", async ({ page }) => {
     await boot(page);
     const size = await page.evaluate(() => {

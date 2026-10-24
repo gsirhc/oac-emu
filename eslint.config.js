@@ -82,7 +82,6 @@ export default [
         initThemePicker: "readonly",
         initFullscreen: "readonly",
         initFocusHint: "readonly",
-        addFooterNote: "readonly",
         trackEvent: "readonly",
         initDiskDrop: "readonly",
         initDiskLibrary: "readonly",
@@ -116,7 +115,7 @@ export default [
       "no-unused-vars": ["error", {
         argsIgnorePattern: "^_",
         caughtErrors: "none",
-        varsIgnorePattern: "^(_|initThemePicker|initFullscreen|initFocusHint|initDiskDrop|initDiskLibrary|initPcKeyboard|initArcadeTouch|arcadeTouchOnly|arcadeCrc32|arcadeHexCrc|arcadeUnzip|arcadeReadRomFiles|arcadeStore|arcadePrefs|arcadeAudio|arcadeHiscore|arcadeHiscoreReset|arcadeRomLoader|arcadeLoop|addFooterNote|initThumbArt|termDumbFilter|termVt52Filter|termAdm3aFilter|trackEvent)$",
+        varsIgnorePattern: "^(_|initThemePicker|initFullscreen|initFocusHint|initDiskDrop|initDiskLibrary|initPcKeyboard|initArcadeTouch|arcadeTouchOnly|arcadeCrc32|arcadeHexCrc|arcadeUnzip|arcadeReadRomFiles|arcadeStore|arcadePrefs|arcadeAudio|arcadeHiscore|arcadeHiscoreReset|arcadeRomLoader|arcadeLoop|initThumbArt|termDumbFilter|termVt52Filter|termAdm3aFilter|trackEvent)$",
       }],
     },
   },

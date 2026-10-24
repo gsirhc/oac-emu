@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 
 // Shared site footer (shared/footer.js)
 
-test("site footer is present and the Help control points at ../about.html", async ({ page }) => {
+test("site footer is present and the Help control points at ../news_info.html", async ({ page }) => {
   await page.goto("/");
   const footer = page.locator("#siteFooter");
   await expect(footer).toContainText(/© 2026 oac-emu\.dev/);
@@ -14,6 +14,6 @@ test("site footer is present and the Help control points at ../about.html", asyn
     "https://github.com/gsirhc/oac-emu/tree/main/",
   );
   const help = footer.locator("a.about-sign");
-  await expect(help).toHaveAttribute("href", "../about.html");
+  await expect(help).toHaveAttribute("href", "../news_info.html");
   await expect(help).toHaveText("Help");
 });

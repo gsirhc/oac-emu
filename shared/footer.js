@@ -1,12 +1,14 @@
 /* Injects the shared site footer. a.pb-close[href] starting with ../ marks a
-   machine page (or arcade hub), so about.html is one level up; landing uses a
-   disabled close span instead. */
+   machine page (or arcade hub), so Help's target is one level up. */
 (function () {
-  function aboutHref() {
+  // the 486 catalog token; with it Help opens about.html, without it news_info.html
+  var FULL_TOKEN = "c4e8a1f07b2d49e6a3c58f1d6e90b274";
+
+  function helpHref() {
+    var page = new URLSearchParams(location.search).get("full") === FULL_TOKEN ? "about.html" : "news_info.html";
     var close = document.querySelector("a.pb-close");
-    if (!close) return "about.html";
-    var href = close.getAttribute("href") || "";
-    return href.indexOf("..") === 0 ? "../about.html" : "about.html";
+    var href = close ? close.getAttribute("href") || "" : "";
+    return (href.indexOf("..") === 0 ? "../" : "") + page;
   }
 
   var SOURCE_HREF = "https://github.com/gsirhc/oac-emu/tree/main/";
@@ -18,7 +20,7 @@
     footer.className = "site-footer";
     var help = document.documentElement.hasAttribute("data-no-help") ? "" :
       '<p class="site-footer-about">' +
-      '<a class="about-sign" href="' + aboutHref() +
+      '<a class="about-sign" href="' + helpHref() +
       '" title="Help" aria-label="Help">Help</a></p>';
     footer.innerHTML = help +
       "<p>&copy; 2026 oac-emu.dev - Featuring Old-Ass Computer " +
@@ -32,17 +34,3 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mount);
   else mount();
 })();
-
-/* One extra line above the source link. Runs after mount, which footer.js queued first. */
-function addFooterNote(html) {
-  function add() {
-    var footer = document.getElementById("siteFooter");
-    if (!footer) return;
-    var p = document.createElement("p");
-    p.className = "site-footer-note";
-    p.innerHTML = html;
-    footer.insertBefore(p, footer.lastElementChild);
-  }
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", add);
-  else add();
-}

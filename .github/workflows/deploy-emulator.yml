@@ -162,6 +162,9 @@ jobs:
         if: steps.ibmpcat-hdd.outputs.cache-hit != 'true'
         run: make -C ibmpc-at hdd-image
 
+      # mtools trims the startup files on the served copy (disks/tune-freedos-hdd.py)
+      - run: sudo apt-get update && sudo apt-get install -y mtools
+
       - working-directory: ibmpc-at/web
         run: make ibmpcat.js hdd-image
 
@@ -593,9 +596,13 @@ jobs:
         if: steps.ibmpcat-hdd.outputs.cache-hit != 'true'
         run: make -C ibmpc-at hdd-image
 
-      # IBM PC/AT's wasm module -- hdd-image here just copies the (cached
-      # or just-built) native disks/freedos-hdd.img into web/disks/, it
-      # doesn't rebuild it (see web/Makefile).
+      # mtools: the IBM PC/AT's startup-file trim below and the 486's
+      # CuteMouse driver floppy (pc486/disks/build-ctmouse-floppy.sh).
+      - run: sudo apt-get update && sudo apt-get install -y mtools
+
+      # IBM PC/AT's wasm module -- hdd-image here copies the (cached
+      # or just-built) native disks/freedos-hdd.img into web/disks/ and
+      # trims its startup files (disks/tune-freedos-hdd.py).
       - working-directory: ibmpc-at/web
         run: make ibmpcat.js roms hdd-image shared
 
@@ -636,10 +643,6 @@ jobs:
       # PC486_REVIEW.md §5) -- genuinely slow, so it's cached across runs,
       # keyed on everything that could change its bytes. The CD-ROM ISO is
       # a ~400MB download with its own cache.
-      # mtools builds the CuteMouse driver floppy from the FreeDOS image --
-      # see pc486/disks/build-ctmouse-floppy.sh.
-      - run: sudo apt-get update && sudo apt-get install -y mtools
-
       - name: Cache pc486 FreeDOS CD-ROM ISO
         id: pc486-cd
         uses: actions/cache@v4

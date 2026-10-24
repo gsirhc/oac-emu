@@ -45,8 +45,6 @@ def stage(out, title=None, message=None):
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             shutil.copyfile(os.path.join(ROOT, r), dest)
             copied.append(r)
-    if any(p.startswith("shared/vendor/fonts/inter-") for p in copied):
-        shutil.copyfile(os.path.join(ROOT, "shared/vendor/fonts/Inter-OFL.txt"), os.path.join(out, "shared/vendor/fonts/Inter-OFL.txt"))
     for name in ("index.html", "404.html"):
         open(os.path.join(out, name), "w", encoding="utf-8").write(page)
     errs = check(out)
@@ -64,7 +62,7 @@ def selftest():
         assert open(os.path.join(out, "index.html"), encoding="utf-8").read() == page
         staged = {os.path.relpath(os.path.join(r, f), out) for r, _, fs in os.walk(out) for f in fs}
         assert not any(p.endswith((".wasm", ".img", ".gz")) for p in staged), staged
-        assert {"shared/theme-picker.js", "shared/theme.css", "shared/footer.js", "shared/vendor/fonts/inter-700.woff2", "shared/vendor/fonts/Inter-OFL.txt"} <= staged, staged
+        assert {"shared/theme-picker.js", "shared/theme.css", "shared/footer.js"} <= staged, staged
         stage(out)
         page = open(os.path.join(out, "index.html"), encoding="utf-8").read()
         assert ">Out of Order<" in page, "default title"

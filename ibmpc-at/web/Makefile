@@ -28,14 +28,16 @@ SHARED = ../../shared
 roms:
 	$(MAKE) -C $(CORE) bios
 	mkdir -p roms
-	cp $(CORE)/roms/BIOS-bochs-legacy $(CORE)/roms/egabios/egabios.bin roms/
+	cp $(CORE)/roms/BIOS-bochs-legacy $(CORE)/roms/egabios/egabios.bin ../../shared/pc/LGPL-2.1.txt roms/
 
 $(CORE)/disks/freedos-hdd.img:
 	$(MAKE) -C $(CORE) hdd-image
 
-disks/freedos-hdd.img: $(CORE)/disks/freedos-hdd.img
+disks/freedos-hdd.img: $(CORE)/disks/freedos-hdd.img $(CORE)/disks/tune-freedos-hdd.py
 	mkdir -p disks
-	cp $(CORE)/disks/freedos-hdd.img disks/
+	cp $(CORE)/disks/freedos-hdd.img disks/freedos-hdd.img.tmp
+	python3 $(CORE)/disks/tune-freedos-hdd.py disks/freedos-hdd.img.tmp
+	mv disks/freedos-hdd.img.tmp disks/freedos-hdd.img
 
 hdd-image: disks/freedos-hdd.img
 

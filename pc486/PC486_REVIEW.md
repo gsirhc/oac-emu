@@ -7262,3 +7262,11 @@ DSKCHG, a step only clears it with a disk in). pc486 keeps its inline
 too. The tests live in `shared/pc/tests/fdc765_test.cpp`, with a 3.5"
 fixture for the 486's drive, and both machines run them.
 
+
+## 57. An empty drive is not ready
+
+The shared floppy controller holds READ DATA, WRITE DATA, READ ID and FORMAT
+TRACK in the execution phase when the drive has no disk, since a drive
+with no disk gives no INDEX pulses (TEAC FD-235HF spec 8.3.9) and the
+uPD765 ends those commands only on the index hole. The BIOS times out and
+DOS reports the drive not ready. Details are in IBM_PCAT_REVIEW.md §60.

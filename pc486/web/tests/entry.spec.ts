@@ -20,9 +20,7 @@ test.describe("entry page", () => {
     await expect(page.locator('.at-bay[data-drive="0"] [data-role="file"]')).toBeEnabled();
     await expect(page.locator('.at-bay[data-drive="cdrom"] [data-role="file"]')).toBeEnabled();
     await expect(page.locator("#siteFooter a.about-sign")).toHaveText("Help");
-    const note = page.locator("#siteFooter .site-footer-note");
-    await expect(note).toContainText("All shareware and freeware titles remain the property of their respective owners");
-    await expect(note.locator("a")).toHaveAttribute("href", "../about.html#rights");
+    await expect(page.locator("#siteFooter")).not.toContainText("shareware");
     await expect(page.locator(".inner h1")).toHaveText("486 DX2-66 Gaming PC");
   });
 

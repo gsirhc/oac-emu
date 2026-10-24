@@ -185,6 +185,13 @@ void Fdc765::begin_transfer(bool is_write) {
 
 void Fdc765::run_command() {
     uint8_t base = uint8_t(cmd_ & 0x1F);
+    // No disk, no INDEX (TEAC FD-55 manual, Ready state; TEAC FD-235HF spec 8.3.9). These
+    // commands end only on index holes (NEC uPD765 data sheet), so they hang until RESET.
+    bool needs_index = base == 0x05 || base == 0x06 || base == 0x09 || base == 0x0A || base == 0x0C || base == 0x0D;
+    if (needs_index && !drives[params_[0] & 1].present) {
+        phase_ = Phase::kExecution;
+        return;
+    }
     switch (base) {
         case 0x03:  // SPECIFY: accepted, not used
             phase_ = Phase::kIdle;

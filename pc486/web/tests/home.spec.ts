@@ -56,12 +56,13 @@ test.describe("landing page", () => {
     await expect(page.locator("#readyArt")).toHaveCount(0);
   });
 
-  test("the public page shows only the coming-soon 486", async ({ page }) => {
+  test("the public page links the IBM PC/AT and shows the 486 as coming soon", async ({ page }) => {
     await page.goto(HOME);
     await expect(page.locator("h2.section-heading")).toHaveCount(0);
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
-    await expect(page.locator(".machines .machine-card")).toHaveCount(1);
-    await expect(page.locator("a.machine-card")).toHaveCount(0);
+    await expect(page.locator(".machines .machine-card .name")).toHaveText(["IBM PC/AT", "486 DX2-66 Gaming PC"]);
+    await expect(page.locator("a.machine-card")).toHaveCount(1);
+    await expect(page.locator('a.machine-card[href^="pc486"]')).toHaveCount(0);
     const soon = page.locator("#pc486Soon");
     await expect(soon.locator(".name")).toHaveText("486 DX2-66 Gaming PC");
     await expect(soon.locator(".meta")).toHaveText("Coming soon");

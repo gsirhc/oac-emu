@@ -108,7 +108,7 @@ test.describe("floppy drives", () => {
     await expect(bayB.locator('[data-role="eject"]')).toBeDisabled();
   });
 
-  test("load overlay shows while a floppy image is being read", async ({ page }) => {
+  test("load overlay and the drive's own spinner show while a floppy image is being read", async ({ page }) => {
     await boot(page);
     await expect(page.locator("#loadOverlay")).not.toHaveClass(/visible/);
 
@@ -127,9 +127,14 @@ test.describe("floppy drives", () => {
     const done = insertFloppy(page, 0, imagePath);
     await expect(page.locator("#loadOverlay")).toHaveClass(/visible/);
     await expect(page.locator("#loadOverlayLabel")).toHaveText(/Loading floppy/);
+    const bayA = bay(page, 0);
+    await expect(bayA).toHaveClass(/\bloading\b/);
+    await expect(bayA.locator('[data-role="label"]')).toHaveText("Loading\u2026");
     await page.evaluate(() => (window as any).__releaseRead());
     await done;
     await expect(page.locator("#loadOverlay")).not.toHaveClass(/visible/);
+    await expect(bayA).not.toHaveClass(/\bloading\b/);
+    await expect(bayA.locator('[data-role="label"]')).toHaveText(path.basename(imagePath));
   });
 
   test("a drive's LED lights while its motor runs, not while it sits idle", async ({ page }) => {
@@ -154,6 +159,16 @@ test.describe("floppy drives", () => {
     await expect(bay(page, 1).locator('[data-role="led"]')).not.toHaveClass(/\bon\b/);
     // the BIOS turns the motor off about 2s after the last access
     await expect(ledA).not.toHaveClass(/\bon\b/, { timeout: 30_000 });
+  });
+
+  test("DIR on an empty drive gets DOS's not-ready error, and Abort returns to the prompt", async ({ page }) => {
+    await boot(page);
+    await insertFloppy(page, 0, makeBlankImage(1228800));
+    await ejectFloppy(page, 0);
+    await typeStr(page, "DIR A:");
+    await waitForScreen(page, /drive not ready\s+\(A\)bort, \(I\)gnore, \(R\)etry, \(F\)ail\?/, 60_000);
+    await typeStr(page, "A", { pressEnterAfter: false });
+    await waitForScreen(page, /C:\\>\s*$/, 30_000);
   });
 
   test("FORMAT B: formats a 360KB diskette end to end", async ({ page }) => {

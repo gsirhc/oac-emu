@@ -17,6 +17,7 @@ TEST(MachineTest, ConstructorSeedsFactoryCmosConfiguration) {
     EXPECT_EQ(m.chipset.cmos.peek(0x16), 0x02);  // base memory high byte -> 640KB
     EXPECT_EQ(m.chipset.cmos.peek(0x3D) & 0x0F, 0x01);         // 1st boot device = floppy
     EXPECT_EQ((m.chipset.cmos.peek(0x3D) >> 4) & 0x0F, 0x02);  // 2nd = hard disk fallback
+    EXPECT_EQ(m.chipset.cmos.peek(0x3F) & 0x01, 0x01);          // no F12 boot-menu pause
     // Checksum 0x2E/0x2F covers 0x10-0x2D.
     uint16_t sum = 0;
     for (uint16_t reg = 0x10; reg <= 0x2D; ++reg) sum = uint16_t(sum + m.chipset.cmos.peek(uint8_t(reg)));

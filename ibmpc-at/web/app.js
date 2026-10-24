@@ -182,12 +182,27 @@
   }
   async function insertFloppy(drive, name, data) {
     saveFloppy(drive);
-    await withLoad("Loading floppy\u2026", async () => {
-      const bytes = await data;
-      pendingFloppy[drive] = { name, bytes };
-      if (machine) machine.mountFloppy(drive, bytes);
-      setBayLoaded(bays[drive], name);
-    });
+    const bay = bays[drive];
+    const label = bay.querySelector('[data-role="label"]');
+    const before = { text: label.textContent, empty: label.classList.contains("empty") };
+    // the front panel is often scrolled away from the screen's overlay
+    bay.classList.add("loading");
+    label.textContent = "Loading\u2026";
+    label.classList.remove("empty");
+    try {
+      await withLoad("Loading floppy\u2026", async () => {
+        const bytes = await data;
+        pendingFloppy[drive] = { name, bytes };
+        if (machine) machine.mountFloppy(drive, bytes);
+        setBayLoaded(bay, name);
+      });
+    } catch (e) {
+      label.textContent = before.text;
+      label.classList.toggle("empty", before.empty);
+      throw e;
+    } finally {
+      bay.classList.remove("loading");
+    }
   }
   for (const bay of bays) {
     const drive = parseInt(bay.dataset.drive, 10);
@@ -433,7 +448,6 @@
     requestAnimationFrame(frame);
   }
 
-  addFooterNote("All shareware and freeware titles remain the property of their respective owners. <a href=\"../about.html#rights\">More info</a>.");
   const kFactoryHddLabel = "factory FreeDOS (default)";
 
   // ---- hard disk persistence (IndexedDB, shared/hdd-worker.js) ----

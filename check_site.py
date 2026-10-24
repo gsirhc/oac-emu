@@ -1,4 +1,4 @@
-"""Fails if a staged site carries dev files, a test-only CPU speed path, a dangling reference, a page without analytics, or tops 1 GB."""
+"""Fails if a staged site carries dev files, a test-only CPU speed path, a dangling reference, a page without analytics, a font without its license, or tops 1 GB."""
 import json
 import os
 import re
@@ -36,6 +36,12 @@ def check(site, limit=PAGES_LIMIT):
 
     total = 0
     for root, dirs, files in os.walk(site):
+        # OFL 1.1: the license travels with the font files
+        if any(f.endswith(".woff2") for f in files) and not any(f.endswith(".txt") for f in files):
+            errors.append(f"{os.path.relpath(root, site)}: fonts without a license file")
+        # LGPL 2.1 §1: the license text goes with the Bochs and VGA BIOS binaries
+        if {"BIOS-bochs-legacy", "VGABIOS-lgpl-latest.bin"} & set(files) and "LGPL-2.1.txt" not in files:
+            errors.append(f"{os.path.relpath(root, site)}: BIOS without LGPL-2.1.txt")
         for name in dirs + files:
             if dev_file(name):
                 errors.append(f"dev file staged: {os.path.relpath(os.path.join(root, name), site)}")
@@ -104,6 +110,8 @@ def selftest():
         "big": "over the",
         "nostats": "without analytics.js",
         "rm img.png via /": "img.png missing",
+        "rm m/f/OFL.txt": "fonts without a license file",
+        "rm m/r/LGPL-2.1.txt": "BIOS without LGPL-2.1.txt",
     }
     for case, want in cases.items():
         with tempfile.TemporaryDirectory() as site:
@@ -117,9 +125,13 @@ def selftest():
                 "m/m.wasm": "",
                 "m/w.js": "",
                 "m/r/a.bin": "",
+                "m/r/BIOS-bochs-legacy": "",
+                "m/r/LGPL-2.1.txt": "",
                 "m/d/list.json": '{"disks": [{"file": "x.dsk"}]}',
                 "m/d/x.dsk": "",
                 "m/disks/hdd.img.gz": "",
+                "m/f/a.woff2": "",
+                "m/f/OFL.txt": "",
                 # Shared entry under a subdir: assets resolve via <base href="../">.
                 "m/sub/index.html": '<base href="../"><script src="app.js"></script><link href="s.css">',
                 "404.html": '<base href="/"><img src="img.png"><link href="m/s.css">',

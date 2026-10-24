@@ -27,9 +27,7 @@ see §6 for the exact state and what's still unexplained there.
 
 **Not yet done**: nothing boots to a usable state yet (no floppy/HDD/EGA),
 there's no WASM/browser build, and the `F000:0C49` wait loop in §6 isn't
-diagnosed. See the approved plan
-(`/Users/chrisgall/.claude/plans/golden-wishing-walrus.md`) for the
-remaining roadmap: floppy+EGA-text boot-to-prompt (3), WD1003 HDD with a
+diagnosed. Remaining roadmap: floppy+EGA-text boot-to-prompt (3), WD1003 HDD with a
 pre-loaded FreeDOS image (4), full EGA graphics (5), PC speaker (6), full
 front end (7), test suites + site integration (8).
 
@@ -3946,3 +3944,99 @@ is `shared/pc-keyboard.js`, shared with pc486 (PC486_REVIEW.md
 The machine ships no third-party DOS games. C: is the factory FreeDOS image,
 the Disk library holds only FreeDOS packages, and there is no `?disk=`
 preset C:. Visitors bring their own floppy and hard disk images.
+
+## 59. Front panel to scale
+
+The fascia is drawn to the real case's proportions, so the drives sit on
+it the way they do on a 5170.
+
+- **Case**: 540 mm wide, 162 mm high (IBM announcement letter 184-097).
+  It is drawn 540 × 135 mm (`aspect-ratio: 540 / 135`), leaving off the
+  plain strip under the grille and the drives. `.at-case` is a size
+  container. Everything
+  on the right half is in `cqw`, so it scales with the case.
+- **Layout**: a raised left panel, a drive recess, and a raised pillar at
+  the right edge (*Guide to Operations* 1502490, p. 1-5, and a photo of a
+  5170 on Wikimedia Commons, `IBM_PC_AT.jpg`). The left panel holds a small
+  IBM badge, the keylock panel with its two square indicator windows, and
+  a vertical-slot grille over the left half that stops short of the
+  bottom edge.
+- **Drive bay**: drive A above B, filling the recess behind a raised lip,
+  set high on the case with its lip level with the badge, as in the photo.
+  Each drive is a half-high 5.25" face, 41.3 mm high. They are drawn about
+  10% wider than the real 146 mm, with the right pillar narrowed to match,
+  so the face has room for the readout.
+- **Drive face**: Y-E Data YD-380 (1.2 MB) and YD-580 (360 KB), the
+  drives the 339 shipped with. The face is light grey (Ingenium museum
+  record 1997.0270: "light grey disk drive casing").
+- **Lever**: a flat paddle inside a recessed rectangular plate (shape
+  from the Commons photo's lower drive). It pivots at its left end, just
+  above the slot. Open, it lies flat pointing right. Closed, it hangs down
+  across the slot. It turns counterclockwise to open (*Guide to
+  Operations* pp. 1-6, 1-8). The slot is notched at its left end and the
+  activity light is a small round lamp above the slot's right end.
+- Each drive's file name readout and Save button sit on its face, under
+  the slot where a paper label would go. Below 640 px they move under the
+  case.
+- The power switch sits on the right side of a real 5170. Here it is on
+  the front panel beside the keylock, as a labelled web control.
+- At a case narrower than 520 px, the model line, badge text and switch
+  caption drop out and the switch shrinks.
+
+## 60. An empty drive is not ready
+
+With no diskette in a drive, READ DATA, WRITE DATA, READ ID and FORMAT
+TRACK ran as if one were there. The DMA moved nothing and the command
+ended with a normal ST0, so DOS read blank sectors and `DIR A:` said
+"File not found".
+
+A drive with no disk gives no INDEX pulses. The TEAC FD-55 manual's ready
+state "means that a disk is inserted, front lever closed, and the disk
+rotates normally", and the TEAC FD-235HF spec (8.3.9) gates INDEX with that
+ready state. The uPD765 ends those commands only after it sees the index
+hole twice (NEC uPD765 data sheet, READ DATA and READ ID), so without a
+disk it stays in the execution phase and raises no interrupt. The BIOS
+times out waiting for IRQ6 and resets the controller through the DOR, and
+DOS reports "Error reading from drive A: DOS area: drive not ready" with
+Abort, Ignore, Retry, Fail.
+
+- `Fdc765::run_command()` holds those four commands in execution when the
+  drive has no media. A DOR reset ends them.
+- `Fdc765Test.AnEmptyDriveNeverEndsAReadUntilReset` covers the controller,
+  and `floppy.spec.ts` checks the DOS error and the Abort.
+- The change is in `shared/pc/`, so the 486 gets it too (PC486_REVIEW.md §57).
+
+## 61. A faster boot without a faster machine
+
+A real-speed boot took about 58 s to `C:\>`. Most of that was the stock
+FreeDOS 1.3 startup files and one stand-in BIOS prompt, not the hardware.
+It now takes about 29 s, and the CPU, disk and floppy timing are untouched.
+
+| Time (before) | Stage | Change |
+|---|---|---|
+| 0-4 s | POST and drive detect | none |
+| 4-7 s | "Press F12 for boot menu" pause | skipped |
+| 7-12 s | BIOS tries the empty A:, then C: | none, a real AT does this |
+| 12-20 s | FreeDOS kernel and InitDisk | none |
+| 20-26 s | FDCONFIG.SYS menu, `MENUDEFAULT=1,5` | `MENUDEFAULT=1,0` |
+| 34-52 s | FDAUTO.BAT runs `MEM /C /N` twice on a 286 | both REMmed out |
+| 52-55 s | `cdrom.bat display`, though the AT has no CD-ROM | REMmed out |
+
+- **F12 pause.** The Bochs BIOS prints "Press F12 for boot menu." and waits
+  unless bit 0 of CMOS 3Fh is set (BIOS-bochs-legacy disassembly, F000:13AB
+  reads 3Fh through ports 70h/71h and returns early when the bit is set). A
+  5170 has no such prompt, so `configure_factory_cmos()` sets the bit.
+  3Fh is outside the 10h-2Dh checksum range.
+- **Startup files.** `disks/tune-freedos-hdd.py` edits `FDCONFIG.SYS` and
+  `FDAUTO.BAT` with mtools when `web/Makefile` copies the installer's image
+  into `web/disks/`, so the slow installer image and its CI cache are
+  unchanged. It also REMs out `CTMOUSE` on the 286 path, since the AT has no
+  mouse. Each file gets a dated "Changed by oac-emu" line at the top, per
+  GPL v2 section 2(a). No FreeDOS program changes, and the menu stays in
+  `FDCONFIG.SYS` for anyone who wants it back. The script fails if any line
+  it expects is missing.
+- A saved C: that a visitor has changed keeps its own startup files. An
+  unchanged one picks up the new factory image (shared/hdd-worker.js
+  fingerprints it).
+- `boot.spec.ts` checks the served image carries the edits and the notes,
+  and that a boot shows none of the removed output.
