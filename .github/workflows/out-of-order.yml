@@ -1,4 +1,4 @@
-name: Kill switch
+name: Out of Order
 
 # Replaces the whole Pages site with maintenance.html (as index.html and 404.html).
 # Every emulator path 404s to the same page. Deploy site skips its deploy while
@@ -22,7 +22,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages-kill-switch
+  group: pages-out-of-order
   cancel-in-progress: true
 
 jobs:

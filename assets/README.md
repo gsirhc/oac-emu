@@ -1,5 +1,13 @@
 # landing-page assets
 
+- **Favicons** (`favicon-16.png`, `favicon-32.png`, `favicon-48.png`,
+  `favicon.ico`, `apple-touch-icon.png`, `icon-512.png`) — pixel-art beige
+  IBM PC (CRT + drive bays + case front with power/HDD LEDs). Small sizes
+  show `C:\` on the screen; 48px and up show `OAC`. Also used as the landing
+  page `.site-icon` and each machine page's title-bar `.pb-icon`. Regenerate
+  with `python3 shared/gen_favicon.py` (Pillow); that also copies the four
+  files each machine stages into every `*/web/assets/`.
+
 - **`altair-panel.jpg`** — a screenshot of *this project's* rendered Altair 8800
   front panel (`#altair .fp-case`), captured from the emulator running Kill the
   Bit: MEMR / M1 / WO status lamps lit, the rotating bit on A11, the loop

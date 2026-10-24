@@ -142,7 +142,7 @@ test.describe("landing page", () => {
 
 });
 
-test.describe("kill switch page", () => {
+test.describe("Out of Order page", () => {
   test("renders styled at a dead emulator path, with the theme picker working", async ({ page }) => {
     const body = await (await page.request.get(HOME + "maintenance.html")).text();
     await page.route("**/pc486/full/", (route) => route.fulfill({ status: 404, contentType: "text/html", body }));

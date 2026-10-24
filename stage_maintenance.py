@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage the kill-switch site: maintenance.html as index.html and 404.html, plus only what it loads."""
+"""Stage the Out of Order site: maintenance.html as index.html and 404.html, plus only what it loads."""
 import argparse
 import html
 import os

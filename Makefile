@@ -21,8 +21,8 @@
 #                    editing the source run `make site` to refresh what it serves
 #                    (or use `make watch` / `make watch-bg` instead)
 #   make preview-uninstall  remove that agent
-#   make down-preview  stage the kill-switch page into _down/ and serve it on :8000
-#   make site-down   take the live site down: set SITE_DOWN and run the Kill switch
+#   make down-preview  stage the Out of Order page into _down/ and serve it on :8000
+#   make site-down   take the live site down: set SITE_DOWN and run the Out of Order
 #                    workflow (TITLE="..." MESSAGE="..." override the sign; needs gh)
 #   make site-up     clear SITE_DOWN and run Deploy site to bring everything back
 #   make clean       remove _site/
@@ -264,14 +264,14 @@ lint-actions:
 	@sh fetch-actionlint.sh >/dev/null
 	.tools/actionlint-1.7.12/actionlint
 
-# --- kill switch (.github/workflows/kill-switch.yml) ---
+# --- Out of Order (.github/workflows/out-of-order.yml) ---
 down-preview:
 	python3 stage_maintenance.py _down $(if $(TITLE),--title "$(TITLE)",) $(if $(MESSAGE),--message "$(MESSAGE)",)
 	python3 serve_nocache.py $(PREVIEW_PORT) _down 127.0.0.1
 
 site-down:
 	gh variable set SITE_DOWN --body true
-	gh workflow run kill-switch.yml -f title="$(TITLE)" -f message="$(MESSAGE)"
+	gh workflow run out-of-order.yml -f title="$(TITLE)" -f message="$(MESSAGE)"
 
 site-up:
 	gh variable delete SITE_DOWN

@@ -552,7 +552,7 @@ jobs:
         battlezone-test,
         battlezone-web-test,
       ]
-    # SITE_DOWN latches the kill switch (kill-switch.yml) so a push can't undo it
+    # SITE_DOWN latches Out of Order (out-of-order.yml) so a push can't undo it
     if: github.event_name != 'pull_request' && vars.SITE_DOWN != 'true'
     runs-on: ubuntu-latest
     steps:

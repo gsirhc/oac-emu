@@ -42,7 +42,11 @@ header.brand-row {
   gap: 16px; flex-wrap: wrap; margin-bottom: 22px;
 }
 .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.site-icon { width: 56px; height: 56px; flex: 0 0 auto; border-radius: 4px; }
+.site-icon {
+  width: 56px; height: 56px; flex: 0 0 auto; border-radius: 4px;
+  /* Beige chassis ≈ page gray; hard offset keeps the silhouette readable. */
+  filter: drop-shadow(1px 1px 0 #606060);
+}
 .brand-text { min-width: 0; }
 h1 {
   margin: 0; font: var(--title-font); color: var(--title-color);

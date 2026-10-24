@@ -496,8 +496,8 @@ What the project uses outside this repo. Never put account details,
 logins, or keys here or anywhere in the repo.
 
 - **Hosting:** GitHub Pages, deployed by `deploy-emulator.yml`.
-- **Kill switch:** `make site-down` sets the `SITE_DOWN` repo variable and
-  runs `kill-switch.yml`, which replaces the whole site with
+- **Out of Order:** `make site-down` sets the `SITE_DOWN` repo variable and
+  runs `out-of-order.yml`, which replaces the whole site with
   `maintenance.html` (as `index.html` and `404.html`, so every emulator path
   shows it). Deploy site skips build and deploy while `SITE_DOWN` is `true`.
   `make site-up` clears it and redeploys. `make down-preview` serves the page
