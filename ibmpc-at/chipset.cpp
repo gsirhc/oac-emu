@@ -65,7 +65,7 @@ uint8_t Chipset::bus_read(uint32_t addr) {
 void Chipset::bus_write(uint32_t addr, uint8_t v) {
     if (ega.owns_mem(addr)) { ega.mem_write(addr, v); return; }
     if (addr >= mem.size()) return;
-    if (rom_[addr]) return;
+    if (addr < rom_.size() && rom_[addr]) return;
     mem[addr] = v;
 }
 
@@ -131,7 +131,9 @@ cpu80286::Bus Chipset::make_bus() {
     for (uint32_t page = 0; page < mem_clocks.size(); ++page) {
         uint32_t a = page << 12;
         bool board = a < 0xA0000 || (a >= 0xF0000 && a < 0x100000) || a >= kRomAlias;
-        mem_clocks[page] = board ? kClocks16 : kClocks8;  // EGA, its ROM and empty slots are 8-bit
+        // Extended memory is a 16-bit adapter, assumed timed like port 1F0h (IBM_PCAT_REVIEW.md §63.6).
+        bool ext = a >= 0x100000 && a < mem.size();
+        mem_clocks[page] = (board || ext) ? kClocks16 : kClocks8;  // EGA, its ROM and empty slots are 8-bit
         if (a >= 0xA0000 && a < 0xC0000) mem_clocks[page] |= cpu80286::Bus::kMemSlotted;
     }
     bus.mem_clocks = mem_clocks.data();

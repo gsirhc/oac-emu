@@ -1,6 +1,6 @@
 // Emscripten wrapper: binds the 80286 core + AT chipset into one Machine for the browser.
 // JS surface via embind:
-//   const m = new Module.Machine();
+//   const m = new Module.Machine(extKb); // KB of extended memory, fixed for this power-on
 //   m.loadRom(0xF0000, biosBytes);       // BIOS-bochs-legacy at the reset vector
 //   m.loadRom(0xC0000, egaBiosBytes);    // egabios.bin extension ROM
 //   m.mountHdd(hddBytes);                // C: image, chosen before power-on
@@ -31,9 +31,9 @@ using ibmpcat::Machine;
 
 class WasmMachine {
 public:
-    WasmMachine() { m_.reset(); }
+    explicit WasmMachine(double ext_kb) : m_(uint32_t(ext_kb)) { m_.reset(); }
 
-    // reset keeps CMOS, like the real reset button
+    // CMOS is battery-backed and survives
     void reset() { m_.reset(); }
 
     // BIOS-bochs-legacy at 0x100000-size (reset vector F000:FFF0 needs a 64KB image) or the EGA BIOS at 0xC0000
@@ -183,7 +183,6 @@ public:
     }
 
     // ---- PC speaker ----
-    // drains the (cpu_cycle, level) edges since the last call; cycles/8e6 is seconds
     // current level, for frames with no edges
     bool speakerLevel() const { return m_.chipset.speaker.level(); }
 
@@ -207,6 +206,7 @@ public:
         return out;
     }
 
+    // drains the (cpu_cycle, level) edges since the last call; cycles/8e6 is seconds
     val speakerEdges() {
         std::vector<ibmpcat::PcSpeaker::Edge> edges = m_.chipset.speaker.drain_edges();
         std::vector<double> cycles(edges.size());
@@ -236,7 +236,7 @@ private:
 
 EMSCRIPTEN_BINDINGS(ibmpcat_machine) {
     emscripten::class_<WasmMachine>("Machine")
-        .constructor<>()
+        .constructor<double>()
         .function("reset", &WasmMachine::reset)
         .function("loadRom", &WasmMachine::loadRom)
         .function("runCycles", &WasmMachine::runCycles)

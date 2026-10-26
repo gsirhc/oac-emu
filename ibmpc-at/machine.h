@@ -16,7 +16,7 @@ class Machine {
 public:
     // Powering on: the CPU goes to its reset vector (Cpu's default members do
     // not equal it) and the factory CMOS configuration is already set.
-    Machine() : cpu(chipset.make_bus()) {
+    explicit Machine(uint32_t ext_kb = 0) : chipset(ext_kb), cpu(chipset.make_bus()) {
         cpu.reset();
         start_refresh();
         // The system-board ROM (E0000-FFFFF) stand-in uses 386 opcodes (IBM_PCAT_REVIEW.md §7).
@@ -33,8 +33,8 @@ public:
         // CMOS is battery-backed and survives reset; chipset.reset() leaves it alone.
     }
 
-    // Seeds CMOS as a factory-configured 5170-339 would hold it: base memory,
-    // floppy types, equipment byte and boot-device sequence (IBM_PCAT_REVIEW.md §8).
+    // Seeds CMOS as a 5170-339 holds it after its Setup diskette ran: memory
+    // sizes, floppy types, equipment byte and boot-device sequence (IBM_PCAT_REVIEW.md §8).
     // Called once at construction.
     void configure_factory_cmos();
 

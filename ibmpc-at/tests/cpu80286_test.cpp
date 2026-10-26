@@ -743,11 +743,14 @@ TEST_F(Cpu80286Test, SmswReadsTheResetMsw) {
     EXPECT_EQ(cpu->ax, 0xFFF0u);
 }
 
-TEST_F(Cpu80286Test, LmswLoadsMpEmTsButCannotSetPe) {
+TEST_F(Cpu80286Test, LmswSetsPeButCannotClearIt) {
     cpu->ax = 0x000F;
     exec({0x0F, 0x01, 0xF0});  // LMSW AX
-    EXPECT_EQ(cpu->msw(), 0xFFFEu);
-    EXPECT_EQ(reported, 0x0F01u);
+    EXPECT_EQ(cpu->msw(), 0xFFFFu);
+    EXPECT_EQ(reported, 0u);
+    cpu->ax = 0;
+    exec({0x0F, 0x01, 0xF0});
+    EXPECT_EQ(cpu->msw(), 0xFFF1u);
 }
 
 TEST_F(Cpu80286Test, CltsClearsTaskSwitched) {
@@ -1442,6 +1445,24 @@ TEST_F(Cpu80286Test, FirmwareOpcodesWithNoModelAreReportedNotFaulted) {
 // 386 forms the BIOS ROM uses (0x66 and 0F, firmware only)
 // ---------------------------------------------------------------------------
 
+TEST_F(Cpu80286Test, PushadAndPopadMoveAllEightDwords) {
+    allow_firmware();
+    cpu->ax = 0x11112222u; cpu->cx = 0x33334444u; cpu->di = 0x55556666u;
+    exec({0x66, 0x60}, 1);  // PUSHAD
+    EXPECT_EQ(cpu->sp, 0x8000u - 32);
+    EXPECT_EQ(mem[0x7FFC] | (mem[0x7FFF] << 24), 0x11000022) << "EAX on top";
+    EXPECT_EQ(mem[0x7FE0], 0x66) << "EDI lowest";
+    cpu->ax = 0; cpu->cx = 0; cpu->di = 0;
+    cpu->ip = 0;
+    mem[0x1000] = 0x66; mem[0x1001] = 0x61;  // POPAD
+    cpu->cs = 0x0100;
+    cpu->step();
+    EXPECT_EQ(cpu->ax, 0x11112222u);
+    EXPECT_EQ(cpu->cx, 0x33334444u);
+    EXPECT_EQ(cpu->di, 0x55556666u);
+    EXPECT_EQ(cpu->sp, 0x8000u);
+}
+
 TEST_F(Cpu80286Test, OpSize32MovReachesEveryRegister) {
     allow_firmware();
     exec({0x66, 0xBA, 0x02, 0x00, 0x00, 0x80,   // MOV EDX
@@ -1937,7 +1958,7 @@ TEST_F(Cpu80286Test, SmswAndLmswTakeMemoryOperands) {
     mem[0x0502] = 0x09; mem[0x0503] = 0x00;  // PE|TS
     cpu->on_unimplemented = nullptr;
     exec({0x0F, 0x01, 0x36, 0x02, 0x05});  // LMSW [0502h]
-    EXPECT_EQ(cpu->msw() & 0x000F, 0x0008);
+    EXPECT_EQ(cpu->msw() & 0x000F, 0x0009);
 }
 
 // ---------------------------------------------------------------------------

@@ -31,22 +31,16 @@ diagnosed. Remaining roadmap: floppy+EGA-text boot-to-prompt (3), WD1003 HDD wit
 pre-loaded FreeDOS image (4), full EGA graphics (5), PC speaker (6), full
 front end (7), test suites + site integration (8).
 
-## 1. Scope: real-address-mode only
+## 1. Scope: real mode and 286 protected mode
 
-PC-DOS 3.30 and FreeDOS never leave real mode on this hardware, so the core
-implements real mode only. The real-mode-legal system instructions work
-(`SGDT/SIDT/LGDT/LIDT`, `SMSW/LMSW`, `CLTS`; §44.4). LMSW can't set PE,
-and the protected-mode-only ones (`LLDT/SLDT`, `LTR/STR`, `ARPL`, `LAR`,
-`LSL`, `VERR/VERW`) raise #UD, as they do on a 286 in real mode. Protected
-mode itself is open in `IBM_PCAT_PARITY.md` (C10).
+The core runs real mode and 286 protected mode (§63). PC-DOS 3.30 and
+FreeDOS stay in real mode; extended memory, XMS drivers and the BIOS block
+move enter protected mode. LOADALL is still unimplemented.
 
-**Deferred, not forgotten**: the well-documented 80286 erratum where a
-segment's cached descriptor limit is not reset to `0xFFFF` on a return to
-real mode by any path other than RESET. This is only observable if the core
-ever *enters* protected mode even transiently — which it structurally
-cannot, since there is no GDT/LDT/descriptor-cache machinery to hold a stale
-limit in the first place. Revisit only if a later phase ever adds protected-
-mode support (not currently planned).
+The 80286 keeps a segment's cached limit and rights on a real-mode load,
+so a stale limit survives a return to real mode until RESET or a reload
+from protected mode. The descriptor caches (§63.1) model that: real-mode
+loads set only the base.
 
 ## 2. Real-mode-legal 80286-over-8086 additions implemented
 
@@ -4086,3 +4080,115 @@ Reference:
 MemTest is already inside ~2%. MemEA, Opcodes, VidMem and 3DGames are not,
 and no primary source found closes them without a fitted constant. They
 stay open as T9 and E20 in `IBM_PCAT_PARITY.md`.
+
+## 63. Protected mode and extended memory
+
+Parity items C10 and P8. Sources: Intel iAPX 286 Programmer's Reference
+Manual (1987), chapters 6-9 and the instruction pages, timing appendix for
+clocks; IBM PC/AT Technical Reference for the memory map, shutdown and bus
+timing; the shipped `BIOS-bochs-legacy` ROM, disassembled, for what the
+stand-in firmware does.
+
+### 63.1 Descriptor caches
+
+Each of ES/CS/SS/DS has a hidden base (24 bits), limit and access byte.
+Every operand access checks offset+size-1 against the cached limit, so the
+real-mode FFFFh overrun faults are the same check with limit FFFFh. Real
+mode loads set the base only. RESET leaves CS's base at FF0000h, which
+replaced the old `cs_high_` special case. A host that writes a segment
+field directly between steps (the tests, `bios_test`) is picked up as a
+real-mode load at the next step.
+
+### 63.2 What protected mode covers
+
+- 286 descriptors: word 0 limit, 24-bit base, access byte, bytes 6-7
+  ignored. System types 1-7 only; 8-15 (386 types) are invalid.
+- Segment loads with #GP/#NP/#SS/#TS, null selectors in DS/ES that fault
+  on use, the accessed bit written back, expand-down data, execute-only
+  and read-only checks.
+- Far JMP/CALL/RET/IRET through code segments, call gates (with parameter
+  copy and the inner stack from the TSS), task gates and TSSs. An outward
+  RET/IRET nulls DS/ES the outer level can't use.
+- IDT delivery through interrupt, trap and task gates with error codes
+  for 8 and 10-13, EXT in error codes raised during delivery, gate DPL
+  checked for software INT only.
+- Two contributory faults (0, 10-13) make #DF; a fault delivering #DF is
+  shutdown. The AT board pulses RESET on the shutdown cycle, so `Machine`
+  resets the CPU (memory and CMOS survive). Real mode raises exception 8
+  for a vector past the IDT limit.
+- 286 TSS (44 bytes) task switches: state saved and loaded, busy bits, NT
+  and the back link, MSW.TS set. Faults after the switch commits belong to
+  the new task.
+- SLDT/STR/LLDT/LTR/VERR/VERW, LAR/LSL, ARPL. IOPL gates IN/OUT/INS/OUTS/
+  CLI/STI and LOCK. CPL 0 gates HLT, LGDT/LIDT/LMSW, CLTS, LLDT, LTR.
+  POPF/IRET load IOPL only at CPL 0 and IF only when CPL <= IOPL.
+- LMSW sets PE and can't clear it.
+
+Clocks: the published protected-mode counts, charged as the difference
+from the real-mode form the opcode already pays (MOV Sreg 17/19, POP Sreg
+20, LDS/LES 21, JMP far 23/38/175/180, CALL far 26/41/82/86+4x/177/182,
+RET far 25/55, IRET 31/55/169, INT n 40/78/167). Indirect forms reuse the
+direct-form difference, which is 1-4 clocks off in a few cases.
+
+Approximations: stack-room faults on a privilege change report #SS(0)
+from the push rather than #SS(selector); a task switch through a gate with
+a bad TSS selector reports #GP rather than #TS.
+
+### 63.3 The stand-in BIOS leaves protected mode with MOV CR0
+
+`BIOS-bochs-legacy` INT 15h AH=87h (F000:3F40) and AH=89h enter protected
+mode with `MOV EAX,CR0 / OR AL,1 / MOV CR0,EAX` and AH=87h leaves it with
+`AND AL,FEh / MOV CR0,EAX`. A 286 can't clear PE; IBM's own AT BIOS
+returns through the 8042 reset and CMOS shutdown byte. The 386 layer
+(firmware only, §6) runs `MOV r32,CR0` and `MOV CR0,r32` against the MSW,
+so the stand-in can clear PE. Code outside the ROM gets #UD as before.
+This is a stand-in departure, like the rest of the 386 layer.
+
+The same layer ran `PUSHAD`/`POPAD` (66h 60h/61h) as 16-bit PUSHA/POPA.
+The BIOS's 32-bit INT 15h handler (F000:F8A2) frames its registers with
+them, so E801h answered CF clear with garbage in BX and DX, and FreeDOS
+MEM showed ~58MB of XMS on a 2MB machine. They now push and pop dwords.
+
+### 63.4 Extended memory
+
+`Chipset(ext_kb)` decodes RAM from 100000h up, stopping below the ROM
+alias at FF0000h (15MB - 64KB at most). Adapter memory is a 16-bit I/O
+channel device, so it takes the 3-clock cycle the TR gives 16-bit
+devices. `configure_factory_cmos()` writes the size to 17h/18h and
+30h/31h, as Setup and POST would; the BIOS's INT 15h AH=88h and E801h
+read 30h/31h. A real owner ran the Setup diskette after fitting a card so
+CMOS matched it; writing CMOS directly stands in for that.
+
+Base memory stays 640KB. The stand-in's POST writes 639KB (027Fh) to BDA
+40:13 at F000:E0CC without reading CMOS 15h/16h, and INT 12h returns that
+word, so a 512KB board would leave DOS using RAM that isn't there. A
+512KB base needs a BIOS that sizes memory.
+
+The page offers none, 1MB, 1.5MB, 2MB, 3MB and 4MB, chosen while
+powered off and remembered in the browser. With extended memory fitted the
+shipped FreeDOS menu's FDXMS286 loads, DOS=HIGH puts the kernel in the
+HMA, and XMSTEST's fill/verify/shift pass completes through the BIOS block
+move.
+
+### 63.5 Checks
+
+- `cpu80286_pm_test`: 34 cases over loads, limits, gates, privilege,
+  task switches, #DF/shutdown, the system instructions and their clocks.
+- `bios_test`: the real ROM's INT 15h AH=88h, E801h and an AH=87h copy
+  into extended memory, back in real mode afterwards.
+- `chipset_test` / `machine_test`: decode, timing, the alias cap, CMOS
+  words and checksum, shutdown resetting the CPU.
+- `memory.spec.ts`: the control's lock and persistence, MEM with and
+  without extended memory, XMSTEST.
+- Mutations: firmware MOV CR0 unable to change PE, no limit check, CMOS
+  30h left zero, PUSHAD as 16-bit, app.js always fitting none. Each turned
+  its tests red.
+
+### 63.6 Unsourced
+
+- Reset access bytes: 93h (present, writable data) for ES/SS/DS and 9Bh
+  (present, readable code) for CS. They are the rights that make every
+  real-mode access legal; not yet checked against the PRM's reset state.
+- Extended-memory timing: adapter RAM is charged the TR's 16-bit device
+  cycle (3 clocks, as port 1F0h). No IBM memory option's own timing is in
+  hand.

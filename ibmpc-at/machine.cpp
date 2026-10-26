@@ -12,6 +12,13 @@ void Machine::configure_factory_cmos() {
     // Base memory 640KB, word at 0x15/0x16.
     c.poke(0x15, 0x80);
     c.poke(0x16, 0x02);
+    // Extended memory in KB: Setup's copy at 0x17/0x18, POST's at 0x30/0x31, which
+    // is the one BIOS-bochs-legacy's INT 15h AH=88h returns.
+    uint32_t ext = chipset.ext_kb();
+    c.poke(0x17, uint8_t(ext));
+    c.poke(0x18, uint8_t(ext >> 8));
+    c.poke(0x30, uint8_t(ext));
+    c.poke(0x31, uint8_t(ext >> 8));
     // Boot sequence (BX_ELTORITO_BOOT style, rombios.c): low nibble of 0x3D is
     // the 1st device, high nibble the 2nd; 1=floppy, 2=hard disk. The BIOS panics
     // "No bootable device" without a 1st device. 0x21 = A: then C:
@@ -50,6 +57,8 @@ void Machine::run_cycles(int64_t cycles) {
             chipset.kbc.clear_reset_request();
             cpu.reset();
         }
+        // The board decodes the shutdown cycle and pulses RESET (IBM AT Technical Reference, "Shutdown").
+        if (cpu.shutdown()) cpu.reset();
         uint32_t from = (uint32_t(cpu.cs) << 4) + cpu.ip;
         int spent = cpu.step();
         // IBM's POST closes A20 before booting; the stand-in BIOS never does, so

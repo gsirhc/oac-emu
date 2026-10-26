@@ -27,15 +27,27 @@ void Cpu::reset() {
     gdt_base_ = idt_base_ = 0;
     gdt_limit_ = 0xFFFF;
     idt_limit_ = 0x03FF;
-    fault_ = 0;
+    fault_ = false;
+    ext_ = 0;
     shadow_ = vectored_ = rep_resume_ = rep_resumed_ = step_each_ = false;
-    cs_high_ = true;
+    cpl_ = 0;
+    ldtr_sel_ = tr_sel_ = 0;
+    ldt_base_ = tr_base_ = 0;
+    ldt_limit_ = tr_limit_ = 0;
+    shutdown_ = false;
+    for (int i = 0; i < 4; ++i) sc_[i] = SegCache{};
+    sc_[SEG_CS].sel = 0xF000;
+    sc_[SEG_CS].access = 0x9B;
+    // CS's hidden base is FF0000h until the first far transfer, so the first
+    // fetch is FFFFF0h (Intel iAPX 286 PRM, "Reset").
+    sc_[SEG_CS].base = 0xFF0000u;
     queue_ = fetch_progress_ = 0;
     flushed_ = true;
 }
 
-void Cpu::interrupt(uint8_t vector) {
-    halted = false;
+void Cpu::real_interrupt(uint8_t vector) {
+    // Exception 8 in real mode is "interrupt table limit too small" (Intel iAPX 286 PRM).
+    if (uint32_t(vector) * 4 + 3 > idt_limit_) { raise(EXC_DF); return; }
     in_interrupt_ = true;
     push16(flags);
     push16(cs);
@@ -50,19 +62,53 @@ void Cpu::interrupt(uint8_t vector) {
     uint16_t new_ip = bus_.read(vec) | (uint16_t(bus_.read(vec + 1)) << 8);
     uint16_t new_cs = bus_.read(vec + 2) | (uint16_t(bus_.read(vec + 3)) << 8);
     ip = new_ip;
-    cs = new_cs;
-    cs_high_ = false;
+    load_seg_real(SEG_CS, new_cs);
+}
+
+int Cpu::deliver(uint8_t vector, Kind kind, uint16_t err) {
+    halted = false;
+    ext_ = kind == Kind::Soft ? 0 : 1;
+    int extra = 0;
+    if (pe()) extra = pm_interrupt(vector, kind, err);
+    else real_interrupt(vector);
+    ext_ = 0;
     vectored_ = true;
     rep_resume_ = false;
+    return extra;
+}
+
+// Two contributory faults make #DF; a fault delivering #DF is shutdown
+// (Intel iAPX 286 PRM, exception 8).
+int Cpu::raise_event(uint8_t vector, Kind kind, uint16_t err) {
+    int extra = deliver(vector, kind, err);
+    while (fault_) {
+        uint8_t next = fault_vec_;
+        uint16_t next_err = fault_err_;
+        fault_ = false;
+        restore_regs();
+        ip = instr_start_ip_;
+        bool first_exc = kind == Kind::Exception;
+        if (first_exc && vector == EXC_DF) { shutdown_ = true; halted = true; return extra; }
+        auto contributory = [](uint8_t v) { return v == EXC_DE || (v >= EXC_TS && v <= EXC_GP); };
+        if (first_exc && contributory(vector) && contributory(next)) { next = EXC_DF; next_err = 0; }
+        vector = next;
+        err = next_err;
+        kind = Kind::Exception;
+        extra += deliver(vector, kind, err);
+    }
+    return extra;
 }
 
 // INT n is 23+m (80C286 data sheet, instruction timing); INTR adds the two
 // INTA bus cycles that fetch the vector from the 8259s.
 int Cpu::hardware_interrupt(uint8_t vector) {
     bus_busy_ = bus_extra_ = 0;
-    interrupt(vector);
+    if (!pe()) refresh_real_bases();
+    instr_start_ip_ = ip;
+    save_regs();
+    int delivery = raise_event(vector, Kind::Hard);
     int ioclk = io_clk(0x20);
-    int c = 23 + kQueueRefillTax + 2 * ioclk + bus_extra_;
+    int c = 23 + delivery + kQueueRefillTax + 2 * ioclk + bus_extra_;
 #ifdef IBMPCAT_PERF
     // Each INTA cycle's 2 clocks stay with the instruction; the rest is the wait.
     perf.qtax += kQueueRefillTax;
@@ -183,18 +229,25 @@ int Cpu::prefetch(int exec_clocks) {
 }
 
 void Cpu::save_regs() {
-    snap_ = Snapshot{ax, bx, cx, dx, sp, bp, si, di, cs, ds, es, ss, flags, msw_, cs_high_,
-                     gdt_base_, idt_base_, gdt_limit_, idt_limit_, halted};
+    snap_ = Snapshot{ax, bx, cx, dx, sp, bp, si, di, cs, ds, es, ss, flags, msw_,
+                     {sc_[0], sc_[1], sc_[2], sc_[3]},
+                     gdt_base_, idt_base_, gdt_limit_, idt_limit_, halted,
+                     cpl_, ldtr_sel_, tr_sel_, ldt_base_, tr_base_, ldt_limit_, tr_limit_};
 }
 
 void Cpu::restore_regs() {
     ax = snap_.ax; bx = snap_.bx; cx = snap_.cx; dx = snap_.dx;
     sp = snap_.sp; bp = snap_.bp; si = snap_.si; di = snap_.di;
     cs = snap_.cs; ds = snap_.ds; es = snap_.es; ss = snap_.ss;
-    flags = snap_.flags; msw_ = snap_.msw; cs_high_ = snap_.cs_high;
+    flags = snap_.flags; msw_ = snap_.msw;
+    for (int i = 0; i < 4; ++i) sc_[i] = snap_.sc[i];
     gdt_base_ = snap_.gdt_base; idt_base_ = snap_.idt_base;
     gdt_limit_ = snap_.gdt_limit; idt_limit_ = snap_.idt_limit;
     halted = snap_.halted;
+    cpl_ = snap_.cpl;
+    ldtr_sel_ = snap_.ldtr_sel; tr_sel_ = snap_.tr_sel;
+    ldt_base_ = snap_.ldt_base; tr_base_ = snap_.tr_base;
+    ldt_limit_ = snap_.ldt_limit; tr_limit_ = snap_.tr_limit;
 }
 
 // --- register file ----------------------------------------------------
@@ -317,8 +370,7 @@ Cpu::RM Cpu::decode_modrm() {
     }
     int seg_idx = uses_bp ? SEG_SS : SEG_DS;
     if (seg_override_ >= 0) seg_idx = seg_override_;
-    out.seg = seg_reg(seg_idx);
-    out.stack = (seg_idx == SEG_SS);
+    out.seg = seg_idx;
     out.off = addr;
     return out;
 }
@@ -681,7 +733,7 @@ void Cpu::aas() {
 void Cpu::aam() {
     uint8_t base = fetch8();
     uint8_t al = get_reg8(0);
-    if (base == 0) { exception(0); return; }  // #DE, divide error
+    if (base == 0) { raise(EXC_DE); return; }  // #DE, divide error
     uint8_t ah = uint8_t(al / base);
     al = uint8_t(al % base);
     set_reg8(4, ah);
@@ -704,12 +756,25 @@ void Cpu::push_reg(int idx) {
     else push16(get_reg16(idx));
 }
 void Cpu::pusha() {
-    uint16_t orig_sp = sp;
+    uint32_t orig_sp = sp;
+    // PUSHAD/POPAD under 0x66 are 386 additions; BIOS-bochs-legacy's 32-bit INT 15h frame uses them.
+    if (opsize32_) {
+        push32(ax); push32(cx); push32(dx); push32(bx);
+        push32(orig_sp);
+        push32(bp); push32(si); push32(di);
+        return;
+    }
     push16(ax); push16(cx); push16(dx); push16(bx);
-    push16(orig_sp);
+    push16(uint16_t(orig_sp));
     push16(bp); push16(si); push16(di);
 }
 void Cpu::popa() {
+    if (opsize32_) {
+        di = pop32(); si = pop32(); bp = pop32();
+        pop32();
+        bx = pop32(); dx = pop32(); cx = pop32(); ax = pop32();
+        return;
+    }
     di = pop16(); si = pop16(); bp = pop16();
     pop16();  // saved-SP slot is discarded
     bx = pop16(); dx = pop16(); cx = pop16(); ax = pop16();
@@ -719,7 +784,7 @@ void Cpu::bound() {
     int16_t idx = int16_t(get_reg16(last_reg_));
     uint16_t lo, hi;
     if (!far_operand(rm, lo, hi)) return;
-    if (idx < int16_t(lo) || idx > int16_t(hi)) exception(5);  // #BR
+    if (idx < int16_t(lo) || idx > int16_t(hi)) raise(EXC_BR);
 }
 void Cpu::imul_imm16(int dst_reg, const RM &rm, uint16_t imm) {
     int32_t a = int16_t(rm_read16(rm));
@@ -749,7 +814,7 @@ int Cpu::enter() {
     if (level > 0) {
         for (int i = 1; i < level; ++i) {
             bp = uint16_t(bp - 2);
-            push16(rw(ss, bp, true));
+            push16(rw(SEG_SS, bp));
         }
         push16(frame_ptr);
     }
@@ -771,33 +836,604 @@ int Cpu::system_0f01() {
             if (!rm.is_mem) { ud(); return 3; }
             uint32_t base = last_reg_ ? idt_base_ : gdt_base_;
             uint16_t limit = last_reg_ ? idt_limit_ : gdt_limit_;
-            if (rm.off > 0xFFFA) overrun(rm.stack);
-            ww(rm.seg, rm.off, limit, rm.stack);
-            ww(rm.seg, uint16_t(rm.off + 2), uint16_t(base), rm.stack);
+            check(rm.seg, rm.off, 6, true);
+            ww(rm.seg, rm.off, limit);
+            ww(rm.seg, uint16_t(rm.off + 2), uint16_t(base));
             wb(rm.seg, uint16_t(rm.off + 4), uint8_t(base >> 16));
             wb(rm.seg, uint16_t(rm.off + 5), 0xFF);
             return last_reg_ ? 12 : 11;
         }
         case 2: case 3: {  // LGDT, LIDT
             if (!rm.is_mem) { ud(); return 3; }
-            if (rm.off > 0xFFFA) overrun(rm.stack);
-            uint16_t limit = rw(rm.seg, rm.off, rm.stack);
-            uint32_t base = rw(rm.seg, uint16_t(rm.off + 2), rm.stack) |
+            if (!cpl0()) return 11;
+            check(rm.seg, rm.off, 6, false);
+            uint16_t limit = rw(rm.seg, rm.off);
+            uint32_t base = rw(rm.seg, uint16_t(rm.off + 2)) |
                             (uint32_t(rb(rm.seg, uint16_t(rm.off + 4))) << 16);
             if (last_reg_ == 2) { gdt_base_ = base; gdt_limit_ = limit; return 11; }
             idt_base_ = base; idt_limit_ = limit;
             return 12;
         }
         case 4: rm_write16(rm, msw_); return rm.is_mem ? 3 : 2;  // SMSW
-        case 6: {  // LMSW: MP/EM/TS load; PE is reported and dropped (no protected mode)
+        case 6: {  // LMSW: PE can be set but not cleared (Intel iAPX 286 PRM, LMSW)
             uint16_t v = rm_read16(rm);
-            if ((v & MSW_PE) && on_unimplemented) on_unimplemented(cs, instr_start_ip_, 0x0F01);
+            if (!cpl0()) return 3;
             constexpr uint16_t kLoadable = MSW_MP | MSW_EM | MSW_TS;
-            msw_ = uint16_t((msw_ & ~kLoadable) | (v & kLoadable));
+            msw_ = uint16_t((msw_ & ~kLoadable) | (v & (kLoadable | MSW_PE)));
             return rm.is_mem ? 6 : 3;
         }
         default: ud(); return 3;
     }
+}
+
+// --- segments and far transfers -------------------------------------------
+// Protected-mode rules from the Intel iAPX 286 PRM, chapters 6-9 (memory
+// management, protection, multitasking, interrupts) and the instruction
+// pages; clock counts from its timing appendix.
+
+uint8_t Cpu::sys_rb(uint32_t a) {
+    a &= 0xFFFFFFu;
+    charge_byte(a);
+    return fault_ ? uint8_t(0xFF) : bus_.read(a);
+}
+uint16_t Cpu::sys_rw(uint32_t a) {
+    a &= 0xFFFFFFu;
+    charge_word(a);
+    if (fault_) return 0xFFFF;
+    return uint16_t(bus_.read(a) | (uint16_t(bus_.read((a + 1) & 0xFFFFFFu)) << 8));
+}
+void Cpu::sys_wb(uint32_t a, uint8_t v) {
+    a &= 0xFFFFFFu;
+    charge_byte(a);
+    if (!fault_) bus_.write(a, v);
+}
+void Cpu::sys_ww(uint32_t a, uint16_t v) {
+    a &= 0xFFFFFFu;
+    charge_word(a);
+    if (fault_) return;
+    bus_.write(a, uint8_t(v));
+    bus_.write((a + 1) & 0xFFFFFFu, uint8_t(v >> 8));
+}
+
+void Cpu::pm_check(int si, uint16_t off, int len, bool write) {
+    const SegCache &s = sc_[si];
+    uint8_t vec = si == SEG_SS ? EXC_SS : EXC_GP;
+    uint32_t last = uint32_t(off) + uint32_t(len - 1);
+    if (s.access == 0) { raise(EXC_GP); return; }  // null selector
+    if (write ? !acc_writable(s.access) : !acc_readable(s.access)) { raise(vec); return; }
+    // Expand-down data: valid offsets are limit+1 through FFFFh.
+    if (!acc_code(s.access) && (s.access & 0x04)) {
+        if (off <= s.limit || last > 0xFFFF) raise(vec);
+    } else if (last > s.limit) {
+        raise(vec);
+    }
+}
+
+bool Cpu::read_desc(uint16_t sel, uint8_t vec, Desc &d) {
+    bool ldt = (sel & 0x0004) != 0;
+    uint32_t idx = sel & 0xFFF8u;
+    if ((ldt && (ldtr_sel_ & 0xFFFC) == 0) || idx + 7 > (ldt ? ldt_limit_ : gdt_limit_)) {
+        raise_sel(vec, sel);
+        return false;
+    }
+    d.addr = (ldt ? ldt_base_ : gdt_base_) + idx;
+    d.w0 = sys_rw(d.addr);
+    d.w1 = sys_rw(d.addr + 2);
+    uint16_t w2 = sys_rw(d.addr + 4);
+    d.b4 = uint8_t(w2);
+    d.access = uint8_t(w2 >> 8);
+    return !fault_;
+}
+
+// LAR/LSL/VERR/VERW report through ZF instead of faulting.
+bool Cpu::probe_desc(uint16_t sel, Desc &d) {
+    if ((sel & 0xFFFC) == 0) return false;
+    bool ldt = (sel & 0x0004) != 0;
+    uint32_t idx = sel & 0xFFF8u;
+    if ((ldt && (ldtr_sel_ & 0xFFFC) == 0) || idx + 7 > (ldt ? ldt_limit_ : gdt_limit_)) return false;
+    d.addr = (ldt ? ldt_base_ : gdt_base_) + idx;
+    d.w0 = sys_rw(d.addr);
+    d.w1 = sys_rw(d.addr + 2);
+    uint16_t w2 = sys_rw(d.addr + 4);
+    d.b4 = uint8_t(w2);
+    d.access = uint8_t(w2 >> 8);
+    return !fault_;
+}
+
+void Cpu::set_accessed(const Desc &d) {
+    if (acc_seg(d.access) && !(d.access & 0x01)) sys_wb(d.addr + 5, uint8_t(d.access | 0x01));
+}
+
+void Cpu::commit_seg(int si, uint16_t sel, const Desc &d) {
+    set_accessed(d);
+    seg_reg(si) = sel;
+    sc_[si] = SegCache{d.base(), d.w0, uint8_t(d.access | 0x01), sel};
+}
+
+void Cpu::load_cs(uint16_t sel, const Desc &d, int new_cpl) {
+    uint16_t v = uint16_t((sel & 0xFFFC) | new_cpl);
+    commit_seg(SEG_CS, v, d);
+    cpl_ = uint8_t(new_cpl);
+}
+
+void Cpu::load_seg(int si, uint16_t sel) {
+    if (!pe()) { load_seg_real(si, sel); return; }
+    load_seg_pm(si, sel, EXC_GP);
+}
+
+void Cpu::load_seg_pm(int si, uint16_t sel, uint8_t vec) {
+    if ((sel & 0xFFFC) == 0) {
+        // Null is legal in DS and ES and faults on use; never in SS.
+        if (si == SEG_SS) { raise_err(vec, 0); return; }
+        seg_reg(si) = sel;
+        sc_[si] = SegCache{0, 0, 0, sel};
+        return;
+    }
+    Desc d;
+    if (!read_desc(sel, vec, d)) return;
+    uint8_t a = d.access;
+    int rpl = sel & 3;
+    if (si == SEG_SS) {
+        if (!acc_writable(a) || rpl != cpl_ || acc_dpl(a) != cpl_) { raise_sel(vec, sel); return; }
+        if (!acc_p(a)) { raise_sel(EXC_SS, sel); return; }
+    } else {
+        if (!acc_readable(a)) { raise_sel(vec, sel); return; }
+        if (!acc_conforming(a) && std::max<int>(cpl_, rpl) > acc_dpl(a)) { raise_sel(vec, sel); return; }
+        if (!acc_p(a)) { raise_sel(EXC_NP, sel); return; }
+    }
+    commit_seg(si, sel, d);
+}
+
+bool Cpu::code_target_ok(uint16_t sel, const Desc &d, bool check_rpl) {
+    uint8_t a = d.access;
+    if (!acc_code(a)) { raise_sel(EXC_GP, sel); return false; }
+    if (acc_conforming(a)) {
+        if (acc_dpl(a) > cpl_) { raise_sel(EXC_GP, sel); return false; }
+    } else if ((check_rpl && (sel & 3) > cpl_) || acc_dpl(a) != cpl_) {
+        raise_sel(EXC_GP, sel);
+        return false;
+    }
+    if (!acc_p(a)) { raise_sel(EXC_NP, sel); return false; }
+    return true;
+}
+
+// SS:SP for privilege level `dpl` from the current 286 TSS (bytes 2-13).
+bool Cpu::inner_stack(int dpl, uint16_t &new_ss, uint16_t &new_sp, Desc &sd) {
+    uint32_t off = 2 + uint32_t(dpl) * 4;
+    if (off + 3 > tr_limit_) { raise_sel(EXC_TS, tr_sel_); return false; }
+    new_sp = sys_rw(tr_base_ + off);
+    new_ss = sys_rw(tr_base_ + off + 2);
+    if (fault_) return false;
+    if ((new_ss & 0xFFFC) == 0) { raise_sel(EXC_TS, new_ss); return false; }
+    if (!read_desc(new_ss, EXC_TS, sd)) return false;
+    if ((new_ss & 3) != dpl || acc_dpl(sd.access) != dpl || !acc_writable(sd.access)) {
+        raise_sel(EXC_TS, new_ss);
+        return false;
+    }
+    if (!acc_p(sd.access)) { raise_sel(EXC_SS, new_ss); return false; }
+    return true;
+}
+
+// The outer level's SS:SP sits on the stack at `sp_at` on a return to RPL `rpl`.
+bool Cpu::outer_return(uint16_t sp_at, int rpl, uint16_t &new_ss, uint16_t &new_sp, Desc &sd) {
+    check(SEG_SS, sp_at, 4, false);
+    new_sp = rw(SEG_SS, sp_at);
+    new_ss = rw(SEG_SS, uint16_t(sp_at + 2));
+    if (fault_) return false;
+    if ((new_ss & 0xFFFC) == 0) { raise(EXC_GP); return false; }
+    if (!read_desc(new_ss, EXC_GP, sd)) return false;
+    if ((new_ss & 3) != rpl || acc_dpl(sd.access) != rpl || !acc_writable(sd.access)) {
+        raise_sel(EXC_GP, new_ss);
+        return false;
+    }
+    if (!acc_p(sd.access)) { raise_sel(EXC_SS, new_ss); return false; }
+    return true;
+}
+
+// On a return to an outer level, DS and ES go null if that level can't use them.
+void Cpu::drop_outer_segs() {
+    for (int si : {SEG_ES, SEG_DS}) {
+        uint8_t a = sc_[si].access;
+        if (a == 0 || acc_conforming(a)) continue;
+        if (acc_dpl(a) < cpl_) { seg_reg(si) = 0; sc_[si] = SegCache{0, 0, 0, 0}; }
+    }
+}
+
+// IOPL changes only at CPL 0 and IF only when CPL <= IOPL; bit 15 stays clear.
+void Cpu::set_flags_pm(uint16_t v) {
+    uint16_t mask = 0x0FD5 | FLAG_NT;
+    if (cpl_ == 0) mask |= FLAG_IOPL;
+    if (cpl_ > ((flags >> 12) & 3)) mask = uint16_t(mask & ~FLAG_IF);
+    flags = uint16_t(((flags & ~mask) | (v & mask) | FLAG_R1) & 0x7FFF);
+}
+
+// IN, OUT, INS, OUTS, CLI, STI and LOCK need CPL <= IOPL in protected mode.
+bool Cpu::io_ok() {
+    if (pe() && cpl_ > ((flags >> 12) & 3)) { raise(EXC_GP); return false; }
+    return true;
+}
+bool Cpu::cpl0() {
+    if (pe() && cpl_ != 0) { raise(EXC_GP); return false; }
+    return true;
+}
+
+// JMP far: 11 real, 23 protected, 38 through a call gate, 175 to a TSS, 180 through a task gate.
+int Cpu::far_jmp(uint16_t sel, uint16_t off) {
+    if (!pe()) {
+        load_seg_real(SEG_CS, sel);
+        ip = off;
+        return 0;
+    }
+    if ((sel & 0xFFFC) == 0) { raise(EXC_GP); return 0; }
+    Desc d;
+    if (!read_desc(sel, EXC_GP, d)) return 0;
+    if (acc_seg(d.access)) {
+        if (!code_target_ok(sel, d, true)) return 0;
+        if (off > d.w0) { raise(EXC_GP); return 0; }
+        load_cs(sel, d, cpl_);
+        ip = off;
+        return 12;
+    }
+    int t = sys_type(d.access), dpl = acc_dpl(d.access);
+    if (t != SYS_CALL_GATE && t != SYS_TASK_GATE && t != SYS_TSS) { raise_sel(EXC_GP, sel); return 0; }
+    if (dpl < cpl_ || dpl < (sel & 3)) { raise_sel(EXC_GP, sel); return 0; }
+    if (!acc_p(d.access)) { raise_sel(EXC_NP, sel); return 0; }
+    if (t == SYS_TSS) return 164 + task_switch(sel, Link::Jmp);
+    if (t == SYS_TASK_GATE) return 169 + task_switch(d.w1, Link::Jmp);
+    uint16_t tsel = d.w1;
+    if ((tsel & 0xFFFC) == 0) { raise(EXC_GP); return 0; }
+    Desc td;
+    if (!read_desc(tsel, EXC_GP, td)) return 0;
+    if (!code_target_ok(tsel, td, false)) return 0;
+    if (d.w0 > td.w0) { raise(EXC_GP); return 0; }
+    load_cs(tsel, td, cpl_);
+    ip = d.w0;
+    return 27;
+}
+
+// CALL far: 13 real, 26 protected, 41 through a call gate, 82 to an inner
+// level (86+4x with x parameter words), 177 to a TSS, 182 through a task gate.
+int Cpu::far_call(uint16_t sel, uint16_t off) {
+    if (!pe()) {
+        push16(cs); push16(ip);
+        load_seg_real(SEG_CS, sel);
+        ip = off;
+        return 0;
+    }
+    if ((sel & 0xFFFC) == 0) { raise(EXC_GP); return 0; }
+    Desc d;
+    if (!read_desc(sel, EXC_GP, d)) return 0;
+    if (acc_seg(d.access)) {
+        if (!code_target_ok(sel, d, true)) return 0;
+        if (off > d.w0) { raise(EXC_GP); return 0; }
+        check(SEG_SS, uint16_t(sp - 4), 4, true);
+        push16(cs); push16(ip);
+        if (fault_) return 0;
+        load_cs(sel, d, cpl_);
+        ip = off;
+        return 13;
+    }
+    int t = sys_type(d.access), dpl = acc_dpl(d.access);
+    if (t != SYS_CALL_GATE && t != SYS_TASK_GATE && t != SYS_TSS) { raise_sel(EXC_GP, sel); return 0; }
+    if (dpl < cpl_ || dpl < (sel & 3)) { raise_sel(EXC_GP, sel); return 0; }
+    if (!acc_p(d.access)) { raise_sel(EXC_NP, sel); return 0; }
+    if (t == SYS_TSS) return 164 + task_switch(sel, Link::Call);
+    if (t == SYS_TASK_GATE) return 169 + task_switch(d.w1, Link::Call);
+    uint16_t tsel = d.w1;
+    if ((tsel & 0xFFFC) == 0) { raise(EXC_GP); return 0; }
+    Desc td;
+    if (!read_desc(tsel, EXC_GP, td)) return 0;
+    if (!acc_code(td.access) || acc_dpl(td.access) > cpl_) { raise_sel(EXC_GP, tsel); return 0; }
+    if (!acc_p(td.access)) { raise_sel(EXC_NP, tsel); return 0; }
+    if (d.w0 > td.w0) { raise(EXC_GP); return 0; }
+    int tdpl = acc_dpl(td.access);
+    uint16_t old_cs = cs, old_ip = ip;
+    if (!acc_conforming(td.access) && tdpl < cpl_) {
+        uint16_t new_ss, new_sp;
+        Desc sd;
+        if (!inner_stack(tdpl, new_ss, new_sp, sd)) return 0;
+        int words = d.b4 & 0x1F;
+        uint16_t params[31];
+        uint16_t old_ss = ss, old_sp = uint16_t(sp);
+        check(SEG_SS, old_sp, words * 2, false);
+        for (int i = 0; i < words; ++i) params[i] = rw(SEG_SS, uint16_t(old_sp + 2 * i));
+        if (fault_) return 0;
+        commit_seg(SEG_SS, new_ss, sd);
+        sp = new_sp;
+        load_cs(tsel, td, tdpl);
+        push16(old_ss); push16(old_sp);
+        for (int i = words - 1; i >= 0; --i) push16(params[i]);
+        push16(old_cs); push16(old_ip);
+        ip = d.w0;
+        return words ? 73 + 4 * words : 69;
+    }
+    push16(old_cs); push16(old_ip);
+    if (fault_) return 0;
+    load_cs(tsel, td, cpl_);
+    ip = d.w0;
+    return 28;
+}
+
+// RET far: 15 real, 25 protected, 55 to an outer level.
+int Cpu::far_ret(uint16_t pop_bytes) {
+    if (!pe()) {
+        uint16_t new_ip = pop16();
+        uint16_t new_cs = pop16();
+        sp = uint16_t(sp + pop_bytes);
+        ip = new_ip;
+        load_seg_real(SEG_CS, new_cs);
+        return 0;
+    }
+    check(SEG_SS, uint16_t(sp), 4, false);
+    uint16_t new_ip = rw(SEG_SS, uint16_t(sp));
+    uint16_t new_cs = rw(SEG_SS, uint16_t(sp + 2));
+    if (fault_) return 0;
+    int rpl = new_cs & 3;
+    if ((new_cs & 0xFFFC) == 0) { raise(EXC_GP); return 0; }
+    if (rpl < cpl_) { raise_sel(EXC_GP, new_cs); return 0; }
+    Desc d;
+    if (!read_desc(new_cs, EXC_GP, d)) return 0;
+    uint8_t a = d.access;
+    if (!acc_code(a) || (acc_conforming(a) ? acc_dpl(a) > rpl : acc_dpl(a) != rpl)) { raise_sel(EXC_GP, new_cs); return 0; }
+    if (!acc_p(a)) { raise_sel(EXC_NP, new_cs); return 0; }
+    if (new_ip > d.w0) { raise(EXC_GP); return 0; }
+    if (rpl == cpl_) {
+        sp = uint16_t(sp + 4 + pop_bytes);
+        load_cs(new_cs, d, rpl);
+        ip = new_ip;
+        return 10;
+    }
+    uint16_t new_ss, new_sp;
+    Desc sd;
+    if (!outer_return(uint16_t(sp + 4 + pop_bytes), rpl, new_ss, new_sp, sd)) return 0;
+    load_cs(new_cs, d, rpl);
+    commit_seg(SEG_SS, new_ss, sd);
+    sp = uint16_t(new_sp + pop_bytes);
+    ip = new_ip;
+    drop_outer_segs();
+    return 40;
+}
+
+// IRET: 17 real, 31 protected, 55 to an outer level, 169 to the task named by NT's back link.
+int Cpu::iret() {
+    if (!pe()) {
+        uint16_t new_ip = pop16();
+        uint16_t new_cs = pop16();
+        // FLAGS bits 12-15 are always 0 on a 286 in real mode (Intel AP-485 CPU identification).
+        flags = uint16_t((pop16() & 0x0FD5) | FLAG_R1);
+        ip = new_ip;
+        load_seg_real(SEG_CS, new_cs);
+        return 0;
+    }
+    if (flag(FLAG_NT)) {
+        uint16_t back = sys_rw(tr_base_);
+        if (fault_) return 0;
+        return 152 + task_switch(back, Link::Iret);
+    }
+    check(SEG_SS, uint16_t(sp), 6, false);
+    uint16_t new_ip = rw(SEG_SS, uint16_t(sp));
+    uint16_t new_cs = rw(SEG_SS, uint16_t(sp + 2));
+    uint16_t new_flags = rw(SEG_SS, uint16_t(sp + 4));
+    if (fault_) return 0;
+    int rpl = new_cs & 3;
+    if ((new_cs & 0xFFFC) == 0) { raise(EXC_GP); return 0; }
+    if (rpl < cpl_) { raise_sel(EXC_GP, new_cs); return 0; }
+    Desc d;
+    if (!read_desc(new_cs, EXC_GP, d)) return 0;
+    uint8_t a = d.access;
+    if (!acc_code(a) || (acc_conforming(a) ? acc_dpl(a) > rpl : acc_dpl(a) != rpl)) { raise_sel(EXC_GP, new_cs); return 0; }
+    if (!acc_p(a)) { raise_sel(EXC_NP, new_cs); return 0; }
+    if (new_ip > d.w0) { raise(EXC_GP); return 0; }
+    if (rpl == cpl_) {
+        sp = uint16_t(sp + 6);
+        set_flags_pm(new_flags);
+        load_cs(new_cs, d, rpl);
+        ip = new_ip;
+        return 14;
+    }
+    uint16_t new_ss, new_sp;
+    Desc sd;
+    if (!outer_return(uint16_t(sp + 6), rpl, new_ss, new_sp, sd)) return 0;
+    set_flags_pm(new_flags);
+    load_cs(new_cs, d, rpl);
+    commit_seg(SEG_SS, new_ss, sd);
+    sp = new_sp;
+    ip = new_ip;
+    drop_outer_segs();
+    return 38;
+}
+
+// Through an interrupt or trap gate: 40 at the same level, 78 to an inner
+// level, 167 through a task gate (INT n's protected-mode counts).
+int Cpu::pm_interrupt(uint8_t vector, Kind kind, uint16_t err) {
+    uint16_t idx = uint16_t(vector * 8);
+    uint16_t gate_err = uint16_t(idx + 2);  // IDT bit
+    if (uint32_t(idx) + 7 > idt_limit_) { raise_err(EXC_GP, gate_err); return 0; }
+    uint32_t ga = idt_base_ + idx;
+    uint16_t g_off = sys_rw(ga), g_sel = sys_rw(ga + 2);
+    uint8_t g_acc = uint8_t(sys_rw(ga + 4) >> 8);
+    if (fault_) return 0;
+    int t = sys_type(g_acc);
+    if (acc_seg(g_acc) || (t != SYS_TASK_GATE && t != SYS_INT_GATE && t != SYS_TRAP_GATE)) { raise_err(EXC_GP, gate_err); return 0; }
+    if (kind == Kind::Soft && acc_dpl(g_acc) < cpl_) { raise_err(EXC_GP, gate_err); return 0; }
+    if (!acc_p(g_acc)) { raise_err(EXC_NP, gate_err); return 0; }
+    // #DF, #TS, #NP, #SS and #GP push an error code.
+    bool push_err = kind == Kind::Exception && (vector == EXC_DF || (vector >= EXC_TS && vector <= EXC_GP));
+    if (t == SYS_TASK_GATE) {
+        int c = 144 + task_switch(g_sel, Link::Call);
+        if (push_err && !fault_) push16(err);
+        return c;
+    }
+    if ((g_sel & 0xFFFC) == 0) { raise(EXC_GP); return 0; }
+    Desc d;
+    if (!read_desc(g_sel, EXC_GP, d)) return 0;
+    if (!acc_code(d.access) || acc_dpl(d.access) > cpl_) { raise_sel(EXC_GP, g_sel); return 0; }
+    if (!acc_p(d.access)) { raise_sel(EXC_NP, g_sel); return 0; }
+    if (g_off > d.w0) { raise(EXC_GP); return 0; }
+    uint16_t old_flags = flags, old_cs = cs, old_ip = ip;
+    int dpl = acc_dpl(d.access);
+    int extra = 17;
+    if (!acc_conforming(d.access) && dpl < cpl_) {
+        uint16_t new_ss, new_sp;
+        Desc sd;
+        if (!inner_stack(dpl, new_ss, new_sp, sd)) return 0;
+        uint16_t old_ss = ss, old_sp = uint16_t(sp);
+        commit_seg(SEG_SS, new_ss, sd);
+        sp = new_sp;
+        load_cs(g_sel, d, dpl);
+        push16(old_ss); push16(old_sp);
+        extra = 55;
+    } else {
+        load_cs(g_sel, d, cpl_);
+    }
+    push16(old_flags); push16(old_cs); push16(old_ip);
+    if (push_err) push16(err);
+    if (t == SYS_INT_GATE) set_flag(FLAG_IF, false);
+    set_flag(FLAG_TF, false);
+    set_flag(FLAG_NT, false);
+    ip = g_off;
+    return extra;
+}
+
+// 286 TSS: back link 0, SP0/SS0..SP2/SS2 2-13, IP 14, FLAGS 16, AX CX DX BX
+// SP BP SI DI 18-33, ES CS SS DS 34-41, LDT 42 (Intel iAPX 286 PRM, "Task
+// State Segment"). Returns 0; callers charge the switch.
+int Cpu::task_switch(uint16_t sel, Link link) {
+    uint8_t bad = link == Link::Iret ? EXC_TS : EXC_GP;
+    if (sel & 0x0004) { raise_sel(bad, sel); return 0; }
+    Desc d;
+    if (!read_desc(sel, bad, d)) return 0;
+    int t = sys_type(d.access);
+    if (acc_seg(d.access) || t != (link == Link::Iret ? SYS_TSS_BUSY : SYS_TSS)) { raise_sel(bad, sel); return 0; }
+    if (!acc_p(d.access)) { raise_sel(EXC_NP, sel); return 0; }
+    if (d.w0 < 43) { raise_sel(EXC_TS, sel); return 0; }
+    if (tr_limit_ < 43) { raise_sel(EXC_TS, tr_sel_); return 0; }
+
+    uint32_t old = tr_base_;
+    uint16_t saved_flags = link == Link::Iret ? uint16_t(flags & ~FLAG_NT) : flags;
+    const uint16_t state[14] = {ip, saved_flags, uint16_t(ax), uint16_t(cx), uint16_t(dx), uint16_t(bx),
+                                uint16_t(sp), uint16_t(bp), uint16_t(si), uint16_t(di), es, cs, ss, ds};
+    for (int i = 0; i < 14; ++i) sys_ww(old + 14 + 2 * i, state[i]);
+    if (link != Link::Call) {
+        uint32_t od = gdt_base_ + (tr_sel_ & 0xFFF8u) + 5;
+        sys_wb(od, uint8_t(sys_rb(od) & ~0x02));
+    }
+    if (link != Link::Iret) sys_wb(d.addr + 5, uint8_t(d.access | 0x02));
+    uint32_t nb = d.base();
+    if (link == Link::Call) sys_ww(nb, tr_sel_);
+    uint16_t n[15];
+    for (int i = 0; i < 15; ++i) n[i] = sys_rw(nb + 14 + 2 * i);
+    if (fault_) return 0;
+
+    msw_ = uint16_t(msw_ | MSW_TS);
+    tr_sel_ = sel;
+    tr_base_ = nb;
+    tr_limit_ = d.w0;
+    ip = n[0];
+    flags = uint16_t(((n[1] | (link == Link::Call ? FLAG_NT : 0)) | FLAG_R1) & 0x7FFF);
+    set_reg16(0, n[2]); set_reg16(1, n[3]); set_reg16(2, n[4]); set_reg16(3, n[5]);
+    set_reg16(4, n[6]); set_reg16(5, n[7]); set_reg16(6, n[8]); set_reg16(7, n[9]);
+    es = n[10]; cs = n[11]; ss = n[12]; ds = n[13];
+    uint16_t ldt = n[14];
+    cpl_ = uint8_t(cs & 3);
+    for (int i = 0; i < 4; ++i) sc_[i] = SegCache{0, 0, 0, seg_reg(i)};
+    ldtr_sel_ = 0;
+    // Faults from here on belong to the new task.
+    instr_start_ip_ = ip;
+    save_regs();
+
+    if ((ldt & 0xFFFC) != 0) {
+        Desc ld;
+        if (ldt & 0x0004) { raise_sel(EXC_TS, ldt); return 0; }
+        if (!read_desc(ldt, EXC_TS, ld)) return 0;
+        if (acc_seg(ld.access) || sys_type(ld.access) != SYS_LDT) { raise_sel(EXC_TS, ldt); return 0; }
+        if (!acc_p(ld.access)) { raise_sel(EXC_TS, ldt); return 0; }  // #TS, not #NP (iAPX 286 PRM, task-switch checks)
+        ldt_base_ = ld.base();
+        ldt_limit_ = ld.w0;
+    }
+    ldtr_sel_ = ldt;
+    uint16_t new_cs = cs;
+    if ((new_cs & 0xFFFC) == 0) { raise_sel(EXC_TS, new_cs); return 0; }
+    Desc cd;
+    if (!read_desc(new_cs, EXC_TS, cd)) return 0;
+    uint8_t a = cd.access;
+    int rpl = new_cs & 3;
+    if (!acc_code(a) || (acc_conforming(a) ? acc_dpl(a) > rpl : acc_dpl(a) != rpl)) { raise_sel(EXC_TS, new_cs); return 0; }
+    if (!acc_p(a)) { raise_sel(EXC_NP, new_cs); return 0; }
+    load_cs(new_cs, cd, rpl);
+    load_seg_pm(SEG_SS, n[12], EXC_TS);
+    load_seg_pm(SEG_DS, n[13], EXC_TS);
+    load_seg_pm(SEG_ES, n[10], EXC_TS);
+    return 0;
+}
+
+// 0F 00: SLDT, STR (2 reg / 3 mem), LLDT, LTR (17 / 19), VERR, VERW (14 / 16).
+int Cpu::system_0f00() {
+    RM rm = decode_modrm();
+    switch (last_reg_) {
+        case 0: rm_write16(rm, ldtr_sel_); return rm.is_mem ? 3 : 2;
+        case 1: rm_write16(rm, tr_sel_); return rm.is_mem ? 3 : 2;
+        case 2: {  // LLDT
+            uint16_t sel = rm_read16(rm);
+            if (!cpl0()) return 17;
+            if ((sel & 0xFFFC) == 0) { ldtr_sel_ = sel; ldt_base_ = 0; ldt_limit_ = 0; return rm.is_mem ? 19 : 17; }
+            if (sel & 0x0004) { raise_sel(EXC_GP, sel); return 17; }
+            Desc d;
+            if (!read_desc(sel, EXC_GP, d)) return 17;
+            if (acc_seg(d.access) || sys_type(d.access) != SYS_LDT) { raise_sel(EXC_GP, sel); return 17; }
+            if (!acc_p(d.access)) { raise_sel(EXC_NP, sel); return 17; }
+            ldtr_sel_ = sel;
+            ldt_base_ = d.base();
+            ldt_limit_ = d.w0;
+            return rm.is_mem ? 19 : 17;
+        }
+        case 3: {  // LTR
+            uint16_t sel = rm_read16(rm);
+            if (!cpl0()) return 17;
+            if ((sel & 0xFFFC) == 0 || (sel & 0x0004)) { raise_sel(EXC_GP, sel); return 17; }
+            Desc d;
+            if (!read_desc(sel, EXC_GP, d)) return 17;
+            if (acc_seg(d.access) || sys_type(d.access) != SYS_TSS) { raise_sel(EXC_GP, sel); return 17; }
+            if (!acc_p(d.access)) { raise_sel(EXC_NP, sel); return 17; }
+            sys_wb(d.addr + 5, uint8_t(d.access | 0x02));
+            tr_sel_ = sel;
+            tr_base_ = d.base();
+            tr_limit_ = d.w0;
+            return rm.is_mem ? 19 : 17;
+        }
+        case 4: case 5: {  // VERR, VERW
+            uint16_t sel = rm_read16(rm);
+            Desc d;
+            bool ok = probe_desc(sel, d) && acc_seg(d.access);
+            if (ok) {
+                uint8_t a = d.access;
+                ok = last_reg_ == 4 ? acc_readable(a) : acc_writable(a);
+                if (ok && !acc_conforming(a)) ok = std::max<int>(cpl_, sel & 3) <= acc_dpl(a);
+            }
+            set_flag(FLAG_ZF, ok);
+            return rm.is_mem ? 16 : 14;
+        }
+        default: ud(); return 3;
+    }
+}
+
+// LAR puts the access byte in the high byte; LSL loads the limit word.
+int Cpu::lar_lsl(bool lsl) {
+    RM rm = decode_modrm();
+    uint16_t sel = rm_read16(rm);
+    Desc d;
+    bool ok = probe_desc(sel, d);
+    if (ok) {
+        uint8_t a = d.access;
+        if (!acc_seg(a)) {
+            int t = sys_type(a);
+            ok = lsl ? (t >= SYS_TSS && t <= SYS_TSS_BUSY) : (t >= SYS_TSS && t <= SYS_TRAP_GATE);
+        }
+        if (ok && !acc_conforming(a)) ok = std::max<int>(cpl_, sel & 3) <= acc_dpl(a);
+    }
+    if (ok) set_reg16(last_reg_, lsl ? d.w0 : uint16_t(d.access << 8));
+    set_flag(FLAG_ZF, ok);
+    return rm.is_mem ? 16 : 14;
 }
 
 // --- condition codes, control flow ---------------------------------------
@@ -850,7 +1486,7 @@ int Cpu::loop_group(uint8_t op) {
 int Cpu::string_op(uint8_t op) {
     bool wide = (op & 1) != 0;
     bool is_rep = (rep_ != REP_NONE);
-    uint16_t src_seg = (seg_override_ >= 0) ? seg_reg(seg_override_) : ds;
+    int src_seg = (seg_override_ >= 0) ? seg_override_ : SEG_DS;
     bool is_cmp_scan = (op == 0xA6 || op == 0xA7 || op == 0xAE || op == 0xAF);
     // 0x66 widens word string ops to dword (REP MOVSD); byte forms are unaffected.
     bool dword = wide && opsize32_;
@@ -864,21 +1500,21 @@ int Cpu::string_op(uint8_t op) {
         int dir = flag(FLAG_DF) ? -step : step;
         switch (op) {
             case 0xA4: case 0xA5:  // MOVS
-                if (!wide) wb(es, di, rb(src_seg, si));
-                else if (dword) wd(es, di, rd(src_seg, si));
-                else ww(es, di, rw(src_seg, si));
+                if (!wide) wb(SEG_ES, di, rb(src_seg, si));
+                else if (dword) wd(SEG_ES, di, rd(src_seg, si));
+                else ww(SEG_ES, di, rw(src_seg, si));
                 si = uint16_t(si + dir); di = uint16_t(di + dir);
                 break;
             case 0xA6: case 0xA7:  // CMPS
-                if (!wide) sub8(rb(src_seg, si), rb(es, di), false);
-                else if (dword) sub32(rd(src_seg, si), rd(es, di), false);
-                else sub16(rw(src_seg, si), rw(es, di), false);
+                if (!wide) sub8(rb(src_seg, si), rb(SEG_ES, di), false);
+                else if (dword) sub32(rd(src_seg, si), rd(SEG_ES, di), false);
+                else sub16(rw(src_seg, si), rw(SEG_ES, di), false);
                 si = uint16_t(si + dir); di = uint16_t(di + dir);
                 break;
             case 0xAA: case 0xAB:  // STOS
-                if (!wide) wb(es, di, get_reg8(0));
-                else if (dword) wd(es, di, ax);
-                else ww(es, di, uint16_t(ax));
+                if (!wide) wb(SEG_ES, di, get_reg8(0));
+                else if (dword) wd(SEG_ES, di, ax);
+                else ww(SEG_ES, di, uint16_t(ax));
                 di = uint16_t(di + dir);
                 break;
             case 0xAC: case 0xAD:  // LODS
@@ -888,9 +1524,9 @@ int Cpu::string_op(uint8_t op) {
                 si = uint16_t(si + dir);
                 break;
             case 0xAE: case 0xAF:  // SCAS
-                if (!wide) sub8(get_reg8(0), rb(es, di), false);
-                else if (dword) sub32(ax, rd(es, di), false);
-                else sub16(uint16_t(ax), rw(es, di), false);
+                if (!wide) sub8(get_reg8(0), rb(SEG_ES, di), false);
+                else if (dword) sub32(ax, rd(SEG_ES, di), false);
+                else sub16(uint16_t(ax), rw(SEG_ES, di), false);
                 di = uint16_t(di + dir);
                 break;
         }
@@ -919,7 +1555,7 @@ int Cpu::string_op(uint8_t op) {
 int Cpu::io_string_op(uint8_t op) {
     bool wide = (op & 1) != 0;
     bool is_rep = (rep_ != REP_NONE);  // only plain REP applies
-    uint16_t src_seg = (seg_override_ >= 0) ? seg_reg(seg_override_) : ds;
+    int src_seg = (seg_override_ >= 0) ? seg_override_ : SEG_DS;
     int iterations = 0;
     do {
         if (is_rep && cx == 0) break;
@@ -927,8 +1563,8 @@ int Cpu::io_string_op(uint8_t op) {
         int step = wide ? 2 : 1;
         int dir = flag(FLAG_DF) ? -step : step;
         if (op == 0x6C || op == 0x6D) {  // INS: port DX -> ES:DI
-            if (!wide) wb(es, di, in8(uint16_t(dx)));
-            else ww(es, di, in16(uint16_t(dx)));
+            if (!wide) wb(SEG_ES, di, in8(uint16_t(dx)));
+            else ww(SEG_ES, di, in16(uint16_t(dx)));
             di = uint16_t(di + dir);
         } else {  // OUTS: DS:SI -> port DX
             if (!wide) out8(uint16_t(dx), rb(src_seg, si));
@@ -1035,18 +1671,18 @@ int Cpu::grp3_unary(uint8_t op) {  // 0xF6: r/m8  0xF7: r/m16, TEST/NOT/NEG/MUL/
                 break;
             }
             case 6: {  // DIV
-                if (v == 0) { exception(0); break; }
+                if (v == 0) { raise(EXC_DE); break; }
                 int q = ax / v, rem = ax % v;
-                if (q > 0xFF) { exception(0); break; }
+                if (q > 0xFF) { raise(EXC_DE); break; }
                 ax = uint16_t((uint16_t(uint8_t(rem)) << 8) | uint8_t(q));
                 break;
             }
             default: {  // IDIV
                 int16_t dividend = int16_t(ax);
                 int8_t divisor = int8_t(v);
-                if (divisor == 0) { exception(0); break; }
+                if (divisor == 0) { raise(EXC_DE); break; }
                 int q = dividend / divisor, rem = dividend % divisor;
-                if (q > 127 || q < -128) { exception(0); break; }
+                if (q > 127 || q < -128) { raise(EXC_DE); break; }
                 ax = uint16_t((uint16_t(uint8_t(int8_t(rem))) << 8) | uint8_t(int8_t(q)));
                 break;
             }
@@ -1073,18 +1709,18 @@ int Cpu::grp3_unary(uint8_t op) {  // 0xF6: r/m8  0xF7: r/m16, TEST/NOT/NEG/MUL/
             }
             case 6: {
                 uint64_t dividend = (uint64_t(dx) << 32) | ax;
-                if (v == 0) { exception(0); break; }
+                if (v == 0) { raise(EXC_DE); break; }
                 uint64_t q = dividend / v, rem = dividend % v;
-                if (q > 0xFFFFFFFFull) { exception(0); break; }
+                if (q > 0xFFFFFFFFull) { raise(EXC_DE); break; }
                 ax = uint32_t(q); dx = uint32_t(rem);
                 break;
             }
             default: {
                 int64_t dividend = int64_t((uint64_t(dx) << 32) | ax);
                 int32_t divisor = int32_t(v);
-                if (divisor == 0 || (divisor == -1 && dividend == INT64_MIN)) { exception(0); break; }
+                if (divisor == 0 || (divisor == -1 && dividend == INT64_MIN)) { raise(EXC_DE); break; }
                 int64_t q = dividend / divisor, rem = dividend % divisor;
-                if (q > 2147483647ll || q < -2147483648ll) { exception(0); break; }
+                if (q > 2147483647ll || q < -2147483648ll) { raise(EXC_DE); break; }
                 ax = uint32_t(int32_t(q)); dx = uint32_t(int32_t(rem));
                 break;
             }
@@ -1111,18 +1747,18 @@ int Cpu::grp3_unary(uint8_t op) {  // 0xF6: r/m8  0xF7: r/m16, TEST/NOT/NEG/MUL/
             }
             case 6: {
                 uint32_t dividend = (uint32_t(uint16_t(dx)) << 16) | uint16_t(ax);
-                if (v == 0) { exception(0); break; }
+                if (v == 0) { raise(EXC_DE); break; }
                 uint32_t q = dividend / v, rem = dividend % v;
-                if (q > 0xFFFF) { exception(0); break; }
+                if (q > 0xFFFF) { raise(EXC_DE); break; }
                 ax = (ax & 0xFFFF0000u) | uint16_t(q); dx = (dx & 0xFFFF0000u) | uint16_t(rem);
                 break;
             }
             default: {
                 int64_t dividend = int32_t((uint32_t(uint16_t(dx)) << 16) | uint16_t(ax));
                 int64_t divisor = int16_t(v);
-                if (divisor == 0) { exception(0); break; }
+                if (divisor == 0) { raise(EXC_DE); break; }
                 int64_t q = dividend / divisor, rem = dividend % divisor;
-                if (q > 32767 || q < -32768) { exception(0); break; }
+                if (q > 32767 || q < -32768) { raise(EXC_DE); break; }
                 ax = (ax & 0xFFFF0000u) | uint16_t(int16_t(q)); dx = (dx & 0xFFFF0000u) | uint16_t(int16_t(rem));
                 break;
             }
@@ -1165,16 +1801,13 @@ int Cpu::grp5(uint8_t op) {  // 0xFE: INC/DEC r/m8   0xFF: INC/DEC/CALL/JMP/PUSH
         case 3: {                                                                                    // CALL far indirect (memory only)
             uint16_t off, seg;
             if (!far_operand(rm, off, seg)) return 3;
-            push16(cs); push16(ip);
-            cs = seg; ip = off; cs_high_ = false;
-            return 16 + flush();
+            return 16 + far_call(seg, off) + flush();
         }
         case 4: ip = rm_read16(rm); return (rm.is_mem ? 11 : 7) + flush();                          // JMP near indirect
         case 5: {                                                                                    // JMP far indirect (memory only)
             uint16_t off, seg;
             if (!far_operand(rm, off, seg)) return 3;
-            cs = seg; ip = off; cs_high_ = false;
-            return 15 + flush();
+            return 15 + far_jmp(seg, off) + flush();
         }
         case 6: { if (opsize32_) push32(rm_read32(rm)); else push16(rm_read16(rm)); return rm.is_mem ? 5 : 3; }  // PUSH r/m16/32
         default: ud(); return 3;
@@ -1187,7 +1820,7 @@ int Cpu::step() {
     if (halted) {
         IBMPCAT_PERF_ADD(perf.cls[kPerfHlt], 2);
         cycles += 2;
-        return 2;  // idling for an interrupt
+        return 2;  // idling for an interrupt, or in shutdown until RESET
     }
 #ifdef IBMPCAT_PERF
     perf_tax_step_ = 0;
@@ -1205,11 +1838,12 @@ int Cpu::step() {
     bool trap = flag(FLAG_TF);
     step_each_ = trap;
     shadow_ = vectored_ = false;
-    fault_ = 0;
+    fault_ = false;
     fetched_ = 0;
     fetch_wrapped_ = false;
     bus_busy_ = bus_extra_ = 0;
     transfer_ = false;
+    if (!pe()) refresh_real_bases();
     save_regs();
     int c = 0;
 
@@ -1223,8 +1857,9 @@ int Cpu::step() {
             case 0x36: seg_override_ = SEG_SS; break;
             case 0x3E: seg_override_ = SEG_DS; break;
             case 0x66: if (!firmware()) ud(); opsize32_ = true; break;  // 386 operand-size override
-            case 0xF0: break;             // LOCK, no-op, this core has no other bus master
-            case 0xF1: break;             // LOCK alias on the 286, tested on hardware (rep lodsb, "Intel 286 secrets")
+            // LOCK is IOPL-sensitive in protected mode (Intel iAPX 286 PRM); no other bus master to lock out.
+            case 0xF0: io_ok(); break;
+            case 0xF1: io_ok(); break;    // LOCK alias on the 286, tested on hardware (rep lodsb, "Intel 286 secrets")
             case 0xF2: rep_ = REP_NZ; break;
             case 0xF3: rep_ = REP_Z; break;
             default: is_prefix = false; break;
@@ -1239,16 +1874,18 @@ int Cpu::step() {
     // Faults restart the instruction from its first prefix with the registers
     // it began with. Exceptions and the trap cost an INT n (iAPX 286 PRM).
     if (fault_) {
-        uint8_t vec = fault_;
-        fault_ = 0;
+        uint8_t vec = fault_vec_;
+        uint16_t err = fault_err_;
+        fault_ = false;
         restore_regs();
         ip = instr_start_ip_;
-        interrupt(vec);
-        c += 23 + kQueueRefillTax;
+        c += 23 + kQueueRefillTax + raise_event(vec, Kind::Exception, err);
         IBMPCAT_PERF_ADD(perf_tax_step_, kQueueRefillTax);
     } else if (trap && !vectored_ && !shadow_) {
-        interrupt(EXC_DB);
-        c += 23 + kQueueRefillTax;
+        // A fault delivering the trap rolls back to the end of this instruction.
+        instr_start_ip_ = ip;
+        save_regs();
+        c += 23 + kQueueRefillTax + raise_event(EXC_DB, Kind::Exception);
         IBMPCAT_PERF_ADD(perf_tax_step_, kQueueRefillTax);
     }
     c += bus_extra_;
@@ -1307,21 +1944,32 @@ int Cpu::execute(uint8_t op, int c) {
 
     switch (op) {
         case 0x06: push16(es); c += 3; break;
-        case 0x07: es = pop16(); c += 5; break;
+        case 0x07: load_seg(SEG_ES, pop16()); c += pe() ? 20 : 5; break;
         case 0x0E: push16(cs); c += 3; break;
         case 0x0F: {
             uint8_t op2 = fetch8();
-            if (op2 == 0x01) {
+            if (pe() && (op2 == 0x00 || op2 == 0x02 || op2 == 0x03)) {
+                if (op2 == 0x00) c += system_0f00();
+                else c += lar_lsl(op2 == 0x03);
+            } else if (op2 == 0x01) {
                 c += system_0f01();
             } else if (op2 == 0x06) {
-                msw_ = uint16_t(msw_ & ~MSW_TS);  // CLTS
+                if (cpl0()) msw_ = uint16_t(msw_ & ~MSW_TS);  // CLTS
                 c += 2;
             } else if (op2 == 0x05) {
                 // LOADALL needs the descriptor caches this core doesn't have.
                 if (on_unimplemented) on_unimplemented(cs, instr_start_ip_, 0x0F05);
                 c += 3;
             } else if (!firmware()) {
-                ud();  // includes LLDT/LTR/VERR/LAR/LSL, which are #UD in real mode
+                ud();  // includes SLDT..VERW, LAR and LSL, which are #UD in real mode
+            } else if (op2 == 0x20 || op2 == 0x22) {
+                // MOV r32,CR0 / MOV CR0,r32, 386 additions. BIOS-bochs-legacy's INT 15h
+                // AH=87h enters and leaves protected mode with them; a 286 can't clear PE.
+                uint8_t m = fetch8();
+                if ((m >> 3) & 7) { if (on_unimplemented) on_unimplemented(cs, instr_start_ip_, uint16_t(0x0F00 | op2)); }
+                else if (op2 == 0x20) set_reg32(m & 7, msw_);
+                else msw_ = uint16_t(0xFFF0 | (get_reg32(m & 7) & 0x000F));
+                c += 3;
             } else if (op2 >= 0x80 && op2 <= 0x8F) {
                 // Jcc rel16 is an 80386 addition (the 286 has only rel8). BIOS-bochs-legacy needs it.
                 int16_t rel = int16_t(fetch16());
@@ -1368,9 +2016,9 @@ int Cpu::execute(uint8_t op, int c) {
             break;
         }
         case 0x16: push16(ss); c += 3; break;
-        case 0x17: ss = pop16(); shadow_ = true; c += 5; break;
+        case 0x17: load_seg(SEG_SS, pop16()); shadow_ = true; c += pe() ? 20 : 5; break;
         case 0x1E: push16(ds); c += 3; break;
-        case 0x1F: ds = pop16(); c += 5; break;
+        case 0x1F: load_seg(SEG_DS, pop16()); c += pe() ? 20 : 5; break;
         case 0x27: daa(); c += 3; break;
         case 0x2F: das(); c += 3; break;
         case 0x37: aaa(); c += 3; break;
@@ -1397,6 +2045,14 @@ int Cpu::execute(uint8_t op, int c) {
             else if (op == 0x60) { pusha(); c += 17; }  // PUSHA
             else if (op == 0x61) { popa(); c += 19; }  // POPA
             else if (op == 0x62) { bound(); c += 13; }
+            else if (op == 0x63 && pe()) {  // ARPL, protected mode only
+                RM rm = decode_modrm();
+                uint16_t dst = rm_read16(rm), src = get_reg16(last_reg_);
+                bool adjust = (dst & 3) < (src & 3);
+                if (adjust) rm_write16(rm, uint16_t((dst & 0xFFFC) | (src & 3)));
+                set_flag(FLAG_ZF, adjust);
+                c += rm.is_mem ? 11 : 10;
+            }
             else if (op == 0x68) { if (opsize32_) push32(fetch32()); else push16(fetch16()); c += 3; }
             else if (op == 0x69) {
                 RM rm = decode_modrm(); int r = last_reg_;
@@ -1409,7 +2065,7 @@ int Cpu::execute(uint8_t op, int c) {
                 if (opsize32_) imul_imm32(r, rm, uint32_t(int32_t(imm))); else imul_imm16(r, rm, uint16_t(int16_t(imm)));
                 c += rm.is_mem ? 24 : 21;
             }
-            else if (op >= 0x6C && op <= 0x6F) { c += io_string_op(op); }
+            else if (op >= 0x6C && op <= 0x6F) { if (io_ok()) c += io_string_op(op); else c += 5; }
             else if (op >= 0x70 && op <= 0x7F) { bool taken = cond(op & 0xF); jcc(taken); c += taken ? (CYC_JMP_TAKEN + flush()) : CYC_JMP_NOT; }  // taken: floor 7 plus queue-refill tax
             else if (op == 0x80 || op == 0x81 || op == 0x82 || op == 0x83) { c += grp1_immed(op); }
             else if (op == 0x84) { RM rm = decode_modrm(); and8(rm_read8(rm), get_reg8(last_reg_)); c += rm.is_mem ? 6 : CYC_REG; }
@@ -1428,8 +2084,8 @@ int Cpu::execute(uint8_t op, int c) {
                 RM rm = decode_modrm();
                 int sr = last_reg_ & 3;
                 if (sr == SEG_CS) ud();  // MOV CS is #UD from the 286 on
-                else { seg_reg(sr) = rm_read16(rm); if (sr == SEG_SS) shadow_ = true; }
-                c += rm.is_mem ? 5 : CYC_REG;
+                else { load_seg(sr, rm_read16(rm)); if (sr == SEG_SS) shadow_ = true; }
+                c += pe() ? (rm.is_mem ? 19 : 17) : (rm.is_mem ? 5 : CYC_REG);
             }
             else if (op == 0x8F) { RM rm = decode_modrm(); if (opsize32_) rm_write32(rm, pop32()); else rm_write16(rm, pop16()); c += 5; }
             else if (op == 0x90) { c += 3; }
@@ -1441,15 +2097,15 @@ int Cpu::execute(uint8_t op, int c) {
             }
             else if (op == 0x98) { if (opsize32_) ax = uint32_t(int32_t(int16_t(ax))); else ax = (ax & 0xFFFF0000u) | uint16_t(int16_t(int8_t(ax & 0xFF))); c += CYC_REG; }  // CBW / CWDE
             else if (op == 0x99) { if (opsize32_) dx = (ax & 0x80000000u) ? 0xFFFFFFFFu : 0u; else dx = (dx & 0xFFFF0000u) | ((ax & 0x8000) ? 0xFFFFu : 0u); c += CYC_REG; }  // CWD / CDQ
-            else if (op == 0x9A) { uint16_t off = fetch16(); uint16_t seg = fetch16(); push16(cs); push16(ip); cs = seg; ip = off; cs_high_ = false; c += 13 + flush(); }  // CALL far: floor 13 plus queue-refill tax
+            else if (op == 0x9A) { uint16_t off = fetch16(); uint16_t seg = fetch16(); c += 13 + far_call(seg, off) + flush(); }  // CALL far: floor 13 plus queue-refill tax
             else if (op == 0x9B) { if ((msw_ & MSW_MP) && (msw_ & MSW_TS)) raise(EXC_NM); c += 3; }  // WAIT: no coprocessor present
             else if (op == 0x9C) { push16(flags); c += 3; }
             // FLAGS bits 12-15 are always 0 on a 286 in real mode (Intel AP-485 CPU identification).
-            else if (op == 0x9D) { flags = uint16_t((pop16() & 0x0FD5) | FLAG_R1); c += 5; }
+            else if (op == 0x9D) { uint16_t v = pop16(); if (pe()) set_flags_pm(v); else flags = uint16_t((v & 0x0FD5) | FLAG_R1); c += 5; }
             else if (op == 0x9E) { uint8_t ah = get_reg8(4); flags = uint16_t((flags & 0xFF00) | (ah & 0xD5) | FLAG_R1); c += CYC_REG; }  // SAHF
             else if (op == 0x9F) { set_reg8(4, uint8_t(flags & 0xFF)); c += CYC_REG; }  // LAHF
             else if (op >= 0xA0 && op <= 0xA3) {
-                uint16_t seg = (seg_override_ >= 0) ? seg_reg(seg_override_) : ds;
+                int seg = (seg_override_ >= 0) ? seg_override_ : SEG_DS;
                 uint16_t off = fetch16();
                 bool is_load = (op == 0xA0 || op == 0xA1);
                 if (op == 0xA0) set_reg8(0, rb(seg, off));
@@ -1467,49 +2123,49 @@ int Cpu::execute(uint8_t op, int c) {
             else if (op == 0xC0 || op == 0xC1) { c += grp2_shift(op); }
             else if (op == 0xC2) { uint16_t n = fetch16(); ip = pop16(); sp = uint16_t(sp + n); c += 11 + flush(); }  // RET imm16: floor 11 plus queue-refill tax
             else if (op == 0xC3) { ip = pop16(); c += 11 + flush(); }  // RET: floor 11 plus queue-refill tax
-            else if (op == 0xC4) { RM rm = decode_modrm(); int r = last_reg_; uint16_t off, seg; if (far_operand(rm, off, seg)) { set_reg16(r, off); es = seg; } c += CYC_MEM; }
-            else if (op == 0xC5) { RM rm = decode_modrm(); int r = last_reg_; uint16_t off, seg; if (far_operand(rm, off, seg)) { set_reg16(r, off); ds = seg; } c += CYC_MEM; }
+            else if (op == 0xC4) { RM rm = decode_modrm(); int r = last_reg_; uint16_t off, seg; if (far_operand(rm, off, seg)) { load_seg(SEG_ES, seg); if (!fault_) set_reg16(r, off); } c += pe() ? 21 : CYC_MEM; }
+            else if (op == 0xC5) { RM rm = decode_modrm(); int r = last_reg_; uint16_t off, seg; if (far_operand(rm, off, seg)) { load_seg(SEG_DS, seg); if (!fault_) set_reg16(r, off); } c += pe() ? 21 : CYC_MEM; }
             else if (op == 0xC6) { RM rm = decode_modrm(); uint8_t imm = fetch8(); rm_write8(rm, imm); c += rm.is_mem ? 3 : CYC_REG; }
             else if (op == 0xC7) { RM rm = decode_modrm(); if (opsize32_) rm_write32(rm, fetch32()); else rm_write16(rm, fetch16()); c += rm.is_mem ? 3 : CYC_REG; }
             // ENTER: 11 (level 0), 15 (level 1), 12+4*(lex-1) (level>1), iAPX 286 PRM timing appendix.
             else if (op == 0xC8) { int lex = enter(); c += (lex == 0) ? 11 : (lex == 1) ? 15 : (12 + 4 * (lex - 1)); }
             else if (op == 0xC9) { leave(); c += 5; }
-            else if (op == 0xCA) { uint16_t n = fetch16(); ip = pop16(); cs = pop16(); sp = uint16_t(sp + n); cs_high_ = false; c += 15 + flush(); }  // RETF imm16: floor 15 plus queue-refill tax
-            else if (op == 0xCB) { ip = pop16(); cs = pop16(); cs_high_ = false; c += 15 + flush(); }  // RETF: floor 15 plus queue-refill tax
+            else if (op == 0xCA) { uint16_t n = fetch16(); c += 15 + far_ret(n) + flush(); }  // RETF imm16: floor 15 plus queue-refill tax
+            else if (op == 0xCB) { c += 15 + far_ret(0) + flush(); }  // RETF: floor 15 plus queue-refill tax
             // INT n/INT3 floor 23, INTO 24, IRET 17 (iAPX 286 PRM timing appendix), plus kQueueRefillTax.
-            else if (op == 0xCC) { interrupt(3); c += 23 + flush(); }
-            else if (op == 0xCD) { uint8_t n = fetch8(); interrupt(n); c += 23 + flush(); }
-            else if (op == 0xCE) { if (flag(FLAG_OF)) { interrupt(4); c += 24 + flush(); } else c += 3; }
-            else if (op == 0xCF) { ip = pop16(); cs = pop16(); cs_high_ = false; flags = uint16_t((pop16() & 0x0FD5) | FLAG_R1); c += 17 + flush(); }  // IRET, POPF masking as above
+            else if (op == 0xCC) { c += 23 + deliver(3, Kind::Soft) + flush(); }
+            else if (op == 0xCD) { uint8_t n = fetch8(); c += 23 + deliver(n, Kind::Soft) + flush(); }
+            else if (op == 0xCE) { if (flag(FLAG_OF)) { c += 24 + deliver(4, Kind::Soft) + flush(); } else c += 3; }
+            else if (op == 0xCF) { c += 17 + iret() + flush(); }
             else if (op >= 0xD0 && op <= 0xD3) { c += grp2_shift(op); }
             else if (op == 0xD4) { aam(); c += 16; }
             else if (op == 0xD5) { aad(); c += 14; }
             else if (op == 0xD6) { set_reg8(0, flag(FLAG_CF) ? 0xFF : 0x00); c += CYC_REG; }  // SALC, undocumented (Ralf Brown's OPCODES.LST)
-            else if (op == 0xD7) { uint16_t seg = (seg_override_ >= 0) ? seg_reg(seg_override_) : ds; set_reg8(0, rb(seg, uint16_t(bx + get_reg8(0)))); c += 5; }
+            else if (op == 0xD7) { int seg = (seg_override_ >= 0) ? seg_override_ : SEG_DS; set_reg8(0, rb(seg, uint16_t(bx + get_reg8(0)))); c += 5; }
             // x87 escape, no 80287 fitted: #NM if EM or TS is set (iAPX 286 PRM, exception 7).
             else if (op >= 0xD8 && op <= 0xDF) { decode_modrm(); if (msw_ & (MSW_EM | MSW_TS)) raise(EXC_NM); c += 3; }
             else if (op == 0xE0 || op == 0xE1 || op == 0xE2 || op == 0xE3) { c += loop_group(op); }
             // IN=5, OUT=3 (iAPX 286 PRM timing appendix).
-            else if (op == 0xE4) { uint8_t p = fetch8(); set_reg8(0, in8(p)); c += 5; }
-            else if (op == 0xE5) { uint8_t p = fetch8(); ax = (ax & 0xFFFF0000u) | in16(p); c += 5; }
-            else if (op == 0xE6) { uint8_t p = fetch8(); out8(p, get_reg8(0)); c += 3; }
-            else if (op == 0xE7) { uint8_t p = fetch8(); out16(p, uint16_t(ax)); c += 3; }
+            else if (op == 0xE4) { uint8_t p = fetch8(); if (io_ok()) set_reg8(0, in8(p)); c += 5; }
+            else if (op == 0xE5) { uint8_t p = fetch8(); if (io_ok()) ax = (ax & 0xFFFF0000u) | in16(p); c += 5; }
+            else if (op == 0xE6) { uint8_t p = fetch8(); if (io_ok()) out8(p, get_reg8(0)); c += 3; }
+            else if (op == 0xE7) { uint8_t p = fetch8(); if (io_ok()) out16(p, uint16_t(ax)); c += 3; }
             // CALL/JMP near floor 7, JMP far floor 11 (iAPX 286 PRM timing appendix), plus queue-refill tax.
             else if (op == 0xE8) { int16_t rel = int16_t(fetch16()); push16(ip); ip = uint16_t(ip + rel); c += 7 + flush(); }
             else if (op == 0xE9) { int16_t rel = int16_t(fetch16()); ip = uint16_t(ip + rel); c += 7 + flush(); }
-            else if (op == 0xEA) { uint16_t off = fetch16(); uint16_t seg = fetch16(); cs = seg; ip = off; cs_high_ = false; c += 11 + flush(); }
+            else if (op == 0xEA) { uint16_t off = fetch16(); uint16_t seg = fetch16(); c += 11 + far_jmp(seg, off) + flush(); }
             else if (op == 0xEB) { int8_t rel = int8_t(fetch8()); ip = uint16_t(ip + rel); c += 7 + flush(); }
-            else if (op == 0xEC) { set_reg8(0, in8(uint16_t(dx))); c += 5; }
-            else if (op == 0xED) { ax = (ax & 0xFFFF0000u) | in16(uint16_t(dx)); c += 5; }
-            else if (op == 0xEE) { out8(uint16_t(dx), get_reg8(0)); c += 3; }
-            else if (op == 0xEF) { out16(uint16_t(dx), uint16_t(ax)); c += 3; }
-            else if (op == 0xF4) { halted = true; c += 2; }
+            else if (op == 0xEC) { if (io_ok()) set_reg8(0, in8(uint16_t(dx))); c += 5; }
+            else if (op == 0xED) { if (io_ok()) ax = (ax & 0xFFFF0000u) | in16(uint16_t(dx)); c += 5; }
+            else if (op == 0xEE) { if (io_ok()) out8(uint16_t(dx), get_reg8(0)); c += 3; }
+            else if (op == 0xEF) { if (io_ok()) out16(uint16_t(dx), uint16_t(ax)); c += 3; }
+            else if (op == 0xF4) { if (cpl0()) halted = true; c += 2; }
             else if (op == 0xF5) { set_flag(FLAG_CF, !flag(FLAG_CF)); c += CYC_REG; }
             else if (op == 0xF6 || op == 0xF7) { c += grp3_unary(op); }
             else if (op == 0xF8) { set_flag(FLAG_CF, false); c += CYC_REG; }
             else if (op == 0xF9) { set_flag(FLAG_CF, true); c += CYC_REG; }
-            else if (op == 0xFA) { set_flag(FLAG_IF, false); c += CYC_REG; }
-            else if (op == 0xFB) { if (!flag(FLAG_IF)) shadow_ = true; set_flag(FLAG_IF, true); c += CYC_REG; }
+            else if (op == 0xFA) { if (io_ok()) set_flag(FLAG_IF, false); c += CYC_REG; }
+            else if (op == 0xFB) { if (io_ok()) { if (!flag(FLAG_IF)) shadow_ = true; set_flag(FLAG_IF, true); } c += CYC_REG; }
             else if (op == 0xFC) { set_flag(FLAG_DF, false); c += CYC_REG; }
             else if (op == 0xFD) { set_flag(FLAG_DF, true); c += CYC_REG; }
             else if (op == 0xFE || op == 0xFF) { c += grp5(op); }

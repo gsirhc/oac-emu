@@ -4,9 +4,9 @@
 // a 386+ baseline (IBM_PCAT_REVIEW.md §6), so the layer runs only for code
 // fetched where firmware_at() says firmware lives; anywhere else it is #UD.
 //
-// No protected mode. The real-mode-legal system instructions (SGDT/SIDT/
-// LGDT/LIDT, SMSW/LMSW, CLTS) work, but LMSW cannot set PE. LLDT/SLDT/LTR/
-// STR/VERR/VERW/LAR/LSL/ARPL are #UD in real mode, as on the chip.
+// Protected mode: 286 descriptors, gates, privilege and limit checks, 286
+// TSS task switches. LMSW sets PE and can't clear it; only RESET, or the
+// firmware layer's MOV CR0 below, does. LOADALL is not implemented.
 //
 // The core talks only through Bus. Addresses are 24 bits and never wrapped at
 // 1MB here, because the A20 gate is motherboard logic (8042 P21) in the chipset.
@@ -108,8 +108,7 @@ public:
 #endif
 
     // Called with (CS, IP, opcode-word) on an opcode firmware runs that this
-    // core skips as a no-op: 0x00xx single-byte, 0x0Fxx two-byte. Also LOADALL
-    // and an LMSW that tries to set PE.
+    // core skips as a no-op: 0x00xx single-byte, 0x0Fxx two-byte. Also LOADALL.
     std::function<void(uint16_t cs, uint16_t ip, uint16_t opcode_word)> on_unimplemented;
 
     // True for physical addresses holding firmware that may use the 386 layer.
@@ -122,26 +121,28 @@ public:
 
     explicit Cpu(Bus bus) : bus_(std::move(bus)) {}
 
-    // Reset vector F000:FFF0 (Intel iAPX 286 PRM, "Initialization").
+    // CS:IP F000:FFF0 with CS's base at FF0000h, so the first fetch is FFFFF0h
+    // (Intel iAPX 286 PRM, "Initialization").
     void reset();
+
+    // A fault while delivering #DF puts the 286 in shutdown, which an AT board
+    // turns into RESET (IBM AT Technical Reference, "Shutdown").
+    bool shutdown() const { return shutdown_; }
 
     // Executes one instruction at CS:IP and returns its clock cycles (iAPX 286
     // PRM / 80286 data sheet). Shift, string and MUL/DIV groups compute their
-    // own cost. The 5170-339's extra memory wait state is not modeled.
+    // own cost.
     int step();
 
-    // Real-mode INT n: push FLAGS, CS, IP, clear IF and TF, jump through the
-    // vector at vector*4. Wakes HLT. Costs nothing by itself; callers charge it.
-    void interrupt(uint8_t vector);
-
     // INTR: INT n's cost plus the two INTA bus cycles. Returns its clocks. The
-    // caller checks IF and the interrupt shadow first.
+    // caller checks IF and the interrupt shadow first. Wakes HLT.
     int hardware_interrupt(uint8_t vector);
 
     // STI, MOV SS and POP SS hold off INTR for one instruction.
     bool interrupt_shadow() const { return shadow_; }
 
     uint16_t msw() const { return msw_; }
+    int cpl() const { return pe() ? cpl_ : 0; }
 
     bool flag(Flag f) const { return (flags & f) != 0; }
     void set_flag(Flag f, bool on) { flags = on ? (flags | f) : (flags & ~f); }
@@ -170,19 +171,62 @@ private:
 
     uint16_t &seg_reg(int idx);   // ES/CS/SS/DS by the indices above
 
-    // Exception vectors (Intel iAPX 286 PRM, real-address-mode exceptions).
-    enum : uint8_t { EXC_DB = 1, EXC_UD = 6, EXC_NM = 7, EXC_SS = 12, EXC_GP = 13 };
+    // Exception vectors (Intel iAPX 286 PRM, "Interrupts and Exceptions").
+    enum : uint8_t {
+        EXC_DE = 0, EXC_DB = 1, EXC_BR = 5, EXC_UD = 6, EXC_NM = 7, EXC_DF = 8,
+        EXC_TS = 10, EXC_NP = 11, EXC_SS = 12, EXC_GP = 13
+    };
 
     // A fault found mid-instruction: further bus traffic is dropped, and the
-    // end of step() restores the registers and vectors through fault_.
-    uint8_t fault_ = 0;
-    void raise(uint8_t vec) { if (!fault_) fault_ = vec; }
+    // end of step() restores the registers and vectors through fault_vec_.
+    bool     fault_ = false;
+    uint8_t  fault_vec_ = 0;
+    uint16_t fault_err_ = 0;
+    // Error-code EXT bit while delivering an interrupt or exception.
+    uint16_t ext_ = 0;
+    void raise_err(uint8_t vec, uint16_t err) {
+        if (fault_) return;
+        fault_ = true;
+        fault_vec_ = vec;
+        fault_err_ = uint16_t(err | ext_);
+    }
+    void raise(uint8_t vec) { raise_err(vec, 0); }
+    void raise_sel(uint8_t vec, uint16_t sel) { raise_err(vec, uint16_t(sel & 0xFFFC)); }
     bool in_interrupt_ = false;
-    // An operand that runs past offset FFFFh: #SS on the stack, #GP otherwise.
+    // An operand that runs past the segment limit: #SS on the stack, #GP otherwise.
     void overrun(bool stack) { if (!in_interrupt_) raise(stack ? EXC_SS : EXC_GP); }
 
-    // physical = seg*16 + off.
-    uint32_t phys(uint16_t seg, uint16_t off) const { return (uint32_t(seg) << 4) + off; }
+    // Hidden descriptor cache behind each segment register (Intel iAPX 286
+    // PRM, "Segment Descriptor Cache Registers"). Real-mode loads set only
+    // the base, so limit and rights outlast a return from protected mode.
+    struct SegCache {
+        uint32_t base = 0;
+        uint16_t limit = 0xFFFF;
+        uint8_t  access = 0x93;  // unsourced (IBM_PCAT_REVIEW.md §63.6)
+        uint16_t sel = 0;
+    };
+    SegCache sc_[4];
+    void load_seg_real(int si, uint16_t v) {
+        seg_reg(si) = v;
+        sc_[si].sel = v;
+        sc_[si].base = uint32_t(v) << 4;
+    }
+    // A host or test may assign a public segment field directly between steps.
+    void refresh_real_bases() {
+        for (int i = 0; i < 4; ++i) {
+            uint16_t v = seg_reg(i);
+            if (sc_[i].sel != v) { sc_[i].sel = v; sc_[i].base = uint32_t(v) << 4; }
+        }
+    }
+
+    // The 286 drives 24 address lines.
+    uint32_t phys(int si, uint16_t off) const { return (sc_[si].base + off) & 0xFFFFFFu; }
+    // Offsets off..off+len-1 against the cached limit (and rights in protected mode).
+    void check(int si, uint16_t off, int len, bool write) {
+        if (pe()) { pm_check(si, off, len, write); return; }
+        if (uint32_t(off) + uint32_t(len - 1) > sc_[si].limit) overrun(si == SEG_SS);
+    }
+    void pm_check(int si, uint16_t off, int len, bool write);
     // Bus time this step's data cycles took, and how much of it the published
     // counts don't already include (2 clocks per cycle).
     int bus_busy_ = 0, bus_extra_ = 0;
@@ -215,19 +259,19 @@ private:
         IBMPCAT_NOTE_MEM(a, k);
     }
 
-    uint8_t  raw_rb(uint16_t seg, uint16_t off)            { return fault_ ? uint8_t(0xFF) : bus_.read(phys(seg, off)); }
-    void     raw_wb(uint16_t seg, uint16_t off, uint8_t v) { if (!fault_) bus_.write(phys(seg, off), v); }
-    uint8_t  rb(uint16_t seg, uint16_t off)            { charge_byte(phys(seg, off)); return raw_rb(seg, off); }
-    void     wb(uint16_t seg, uint16_t off, uint8_t v) { charge_byte(phys(seg, off)); raw_wb(seg, off, v); }
-    uint16_t rw(uint16_t seg, uint16_t off, bool stack = false) {
-        if (off == 0xFFFF) overrun(stack);
-        charge_word(phys(seg, off));
-        return raw_rb(seg, off) | (uint16_t(raw_rb(seg, uint16_t(off + 1))) << 8);
+    uint8_t  raw_rb(int si, uint16_t off)            { return fault_ ? uint8_t(0xFF) : bus_.read(phys(si, off)); }
+    void     raw_wb(int si, uint16_t off, uint8_t v) { if (!fault_) bus_.write(phys(si, off), v); }
+    uint8_t  rb(int si, uint16_t off)            { check(si, off, 1, false); charge_byte(phys(si, off)); return raw_rb(si, off); }
+    void     wb(int si, uint16_t off, uint8_t v) { check(si, off, 1, true); charge_byte(phys(si, off)); raw_wb(si, off, v); }
+    uint16_t rw(int si, uint16_t off) {
+        check(si, off, 2, false);
+        charge_word(phys(si, off));
+        return raw_rb(si, off) | (uint16_t(raw_rb(si, uint16_t(off + 1))) << 8);
     }
-    void     ww(uint16_t seg, uint16_t off, uint16_t v, bool stack = false) {
-        if (off == 0xFFFF) overrun(stack);
-        charge_word(phys(seg, off));
-        raw_wb(seg, off, v & 0xFF); raw_wb(seg, uint16_t(off + 1), v >> 8);
+    void     ww(int si, uint16_t off, uint16_t v) {
+        check(si, off, 2, true);
+        charge_word(phys(si, off));
+        raw_wb(si, off, v & 0xFF); raw_wb(si, uint16_t(off + 1), v >> 8);
     }
     uint8_t  in8(uint16_t p) {
         int k = io_clk(p);
@@ -263,20 +307,20 @@ private:
     int  fetch_progress_ = 0;  // clocks already spent on the word being fetched
     bool flushed_ = true;
     int  prefetch(int exec_clocks);
-    uint32_t rd(uint16_t seg, uint16_t off, bool stack = false) {
-        if (off > 0xFFFC) overrun(stack);
-        return uint32_t(rw(seg, off)) | (uint32_t(rw(seg, uint16_t(off + 2))) << 16);
+    uint32_t rd(int si, uint16_t off) {
+        check(si, off, 4, false);
+        return uint32_t(rw(si, off)) | (uint32_t(rw(si, uint16_t(off + 2))) << 16);
     }
-    void     wd(uint16_t seg, uint16_t off, uint32_t v, bool stack = false) {
-        if (off > 0xFFFC) overrun(stack);
-        ww(seg, off, uint16_t(v & 0xFFFF)); ww(seg, uint16_t(off + 2), uint16_t(v >> 16));
+    void     wd(int si, uint16_t off, uint32_t v) {
+        check(si, off, 4, true);
+        ww(si, off, uint16_t(v & 0xFFFF)); ww(si, uint16_t(off + 2), uint16_t(v >> 16));
     }
 
     // The 286 faults an instruction over 10 bytes or one that runs past FFFFh.
     int  fetched_ = 0;
     bool fetch_wrapped_ = false;
     uint8_t fetch8() {
-        if (++fetched_ > 10 || fetch_wrapped_) raise(EXC_GP);
+        if (++fetched_ > 10 || fetch_wrapped_ || ip > sc_[SEG_CS].limit) raise(EXC_GP);
         if (ip == 0xFFFF) fetch_wrapped_ = true;
         return fault_ ? uint8_t(0xFF) : bus_.read(code_base() + ip++);
     }
@@ -284,21 +328,25 @@ private:
     uint32_t fetch32() { uint32_t lo = fetch16(); return lo | (uint32_t(fetch16()) << 16); }
 
     // Stack is always SS. 32-bit push/pop moves SP by 4.
-    void     push16(uint16_t v) { sp = uint16_t(sp - 2); ww(ss, uint16_t(sp), v, true); }
-    uint16_t pop16()            { uint16_t v = rw(ss, uint16_t(sp), true); sp = uint16_t(sp + 2); return v; }
+    void     push16(uint16_t v) { sp = uint16_t(sp - 2); ww(SEG_SS, uint16_t(sp), v); }
+    uint16_t pop16()            { uint16_t v = rw(SEG_SS, uint16_t(sp)); sp = uint16_t(sp + 2); return v; }
     // sp wraps at 64KB even for 32-bit operands (no 0x67 / big real mode).
-    void     push32(uint32_t v) { sp = (sp - 4) & 0xFFFF; wd(ss, uint16_t(sp), v, true); }
-    uint32_t pop32()            { uint32_t v = rd(ss, uint16_t(sp), true); sp = (sp + 4) & 0xFFFF; return v; }
+    void     push32(uint32_t v) { sp = (sp - 4) & 0xFFFF; wd(SEG_SS, uint16_t(sp), v); }
+    uint32_t pop32()            { uint32_t v = rd(SEG_SS, uint16_t(sp)); sp = (sp + 4) & 0xFFFF; return v; }
 
     // Register state at the start of the instruction (or REP iteration) a
     // fault rolls back to.
     struct Snapshot {
-        uint32_t ax, bx, cx, dx, sp, bp, si, di;
-        uint16_t cs, ds, es, ss, flags, msw;
-        bool cs_high;
-        uint32_t gdt_base, idt_base;
-        uint16_t gdt_limit, idt_limit;
-        bool halted;
+        uint32_t ax = 0, bx = 0, cx = 0, dx = 0, sp = 0, bp = 0, si = 0, di = 0;
+        uint16_t cs = 0, ds = 0, es = 0, ss = 0, flags = 0, msw = 0;
+        SegCache sc[4];
+        uint32_t gdt_base = 0, idt_base = 0;
+        uint16_t gdt_limit = 0, idt_limit = 0;
+        bool halted = false;
+        uint8_t cpl = 0;
+        uint16_t ldtr_sel = 0, tr_sel = 0;
+        uint32_t ldt_base = 0, tr_base = 0;
+        uint16_t ldt_limit = 0, tr_limit = 0;
     };
     Snapshot snap_{};
     void save_regs();
@@ -306,18 +354,8 @@ private:
 
     bool firmware() const { return firmware_at && firmware_at(code_base() + instr_start_ip_); }
 
-    // After RESET, CS's hidden base is FF0000h until the first far transfer
-    // loads CS, so the first fetch is FFFFF0h (Intel iAPX 286 PRM, "Reset").
-    bool cs_high_ = false;
-    uint32_t code_base() const { return (cs_high_ && cs == 0xF000) ? 0xFF0000u : uint32_t(cs) << 4; }
+    uint32_t code_base() const { return sc_[SEG_CS].base; }
     void ud() { raise(EXC_UD); }
-    // #DE and #BR, found once the operands are in: vectors now and pays INT n like a fault.
-    void exception(uint8_t vec) {
-        ip = instr_start_ip_;
-        interrupt(vec);
-        extra_cycles_ += 23 + kQueueRefillTax;
-        IBMPCAT_PERF_ADD(perf_tax_step_, kQueueRefillTax);
-    }
 
     // Machine status word and descriptor-table registers. MSW resets to FFF0h
     // and the IDT to base 0, limit 3FFh (Intel iAPX 286 PRM, "Reset").
@@ -336,29 +374,99 @@ private:
 
     int execute(uint8_t op, int c);
 
+    bool pe() const { return (msw_ & MSW_PE) != 0; }
+    // Segment-register load through the descriptor tables in protected mode.
+    void load_seg(int si, uint16_t sel);
+    // Far transfers. Each returns the clocks it adds to the real-mode form.
+    int  far_jmp(uint16_t sel, uint16_t off);
+    int  far_call(uint16_t sel, uint16_t off);
+    int  far_ret(uint16_t pop_bytes);
+    int  iret();
+
+    // --- protected mode ---
+    enum class Kind { Soft, Hard, Exception };
+    enum class Link { Jmp, Call, Iret };
+    // Word 0 limit (gate: offset), word 1 base 0-15 (gate: selector), byte 4
+    // base 16-23 (call gate: word count), byte 5 access; bytes 6-7 reserved
+    // (Intel iAPX 286 PRM, "Descriptors").
+    struct Desc {
+        uint16_t w0 = 0, w1 = 0;
+        uint8_t  b4 = 0, access = 0;
+        uint32_t addr = 0;
+        uint32_t base() const { return w1 | (uint32_t(b4) << 16); }
+    };
+    // 286 system descriptor types; 0 and 8-15 are invalid on a 286.
+    enum : int {
+        SYS_TSS = 1, SYS_LDT = 2, SYS_TSS_BUSY = 3, SYS_CALL_GATE = 4,
+        SYS_TASK_GATE = 5, SYS_INT_GATE = 6, SYS_TRAP_GATE = 7
+    };
+    static bool acc_p(uint8_t a) { return (a & 0x80) != 0; }
+    static int  acc_dpl(uint8_t a) { return (a >> 5) & 3; }
+    static bool acc_seg(uint8_t a) { return (a & 0x10) != 0; }
+    static bool acc_code(uint8_t a) { return (a & 0x18) == 0x18; }
+    static bool acc_conforming(uint8_t a) { return acc_code(a) && (a & 0x04); }
+    static bool acc_readable(uint8_t a) { return acc_seg(a) && (!acc_code(a) || (a & 0x02)); }
+    static bool acc_writable(uint8_t a) { return (a & 0x1A) == 0x12; }
+    static int  sys_type(uint8_t a) { return acc_seg(a) ? 0 : (a & 0x0F); }
+
+    uint8_t  cpl_ = 0;
+    uint16_t ldtr_sel_ = 0, tr_sel_ = 0;
+    uint32_t ldt_base_ = 0, tr_base_ = 0;
+    uint16_t ldt_limit_ = 0, tr_limit_ = 0;
+    bool     shutdown_ = false;
+
+    // Descriptor-table and TSS accesses are physical.
+    uint8_t  sys_rb(uint32_t a);
+    uint16_t sys_rw(uint32_t a);
+    void     sys_wb(uint32_t a, uint8_t v);
+    void     sys_ww(uint32_t a, uint16_t v);
+    bool read_desc(uint16_t sel, uint8_t vec, Desc &d);
+    bool probe_desc(uint16_t sel, Desc &d);
+    void set_accessed(const Desc &d);
+    void commit_seg(int si, uint16_t sel, const Desc &d);
+    void load_cs(uint16_t sel, const Desc &d, int new_cpl);
+    void load_seg_pm(int si, uint16_t sel, uint8_t vec);
+    bool code_target_ok(uint16_t sel, const Desc &d, bool check_rpl);
+    bool inner_stack(int dpl, uint16_t &new_ss, uint16_t &new_sp, Desc &sd);
+    bool outer_return(uint16_t sp_at, int rpl, uint16_t &new_ss, uint16_t &new_sp, Desc &sd);
+    void drop_outer_segs();
+    void set_flags_pm(uint16_t v);
+    bool io_ok();
+    bool cpl0();
+
+    void real_interrupt(uint8_t vector);
+    int  pm_interrupt(uint8_t vector, Kind kind, uint16_t err);
+    // One delivery attempt; returns clocks beyond the real-mode INT n's 23.
+    int  deliver(uint8_t vector, Kind kind, uint16_t err = 0);
+    // deliver(), escalating a fault on the way to #DF and then shutdown.
+    int  raise_event(uint8_t vector, Kind kind, uint16_t err = 0);
+    int  task_switch(uint16_t sel, Link link);
+    int  system_0f00();
+    int  lar_lsl(bool lsl);
+
     // --- ModR/M decode ---
     // Register (is_mem=false) or memory operand with default-segment rules
     // applied (BP-based defaults to SS, 8086 manual table 2-19).
     struct RM {
         bool     is_mem;
         int      reg;      // valid when !is_mem
-        uint16_t seg, off;  // valid when is_mem
-        bool     stack;    // seg is SS, so an overrun is #SS
+        int      seg;      // segment index, valid when is_mem
+        uint16_t off;
     };
     // Decodes ModR/M and any displacement at CS:IP, advancing IP.
     RM decode_modrm();
     uint8_t  rm_read8(const RM &rm)              { return rm.is_mem ? rb(rm.seg, rm.off) : get_reg8(rm.reg); }
     void     rm_write8(const RM &rm, uint8_t v)  { if (rm.is_mem) wb(rm.seg, rm.off, v); else set_reg8(rm.reg, v); }
-    uint16_t rm_read16(const RM &rm)             { return rm.is_mem ? rw(rm.seg, rm.off, rm.stack) : get_reg16(rm.reg); }
-    void     rm_write16(const RM &rm, uint16_t v){ if (rm.is_mem) ww(rm.seg, rm.off, v, rm.stack); else set_reg16(rm.reg, v); }
-    uint32_t rm_read32(const RM &rm)             { return rm.is_mem ? rd(rm.seg, rm.off, rm.stack) : get_reg32(rm.reg); }
-    void     rm_write32(const RM &rm, uint32_t v){ if (rm.is_mem) wd(rm.seg, rm.off, v, rm.stack); else set_reg32(rm.reg, v); }
+    uint16_t rm_read16(const RM &rm)             { return rm.is_mem ? rw(rm.seg, rm.off) : get_reg16(rm.reg); }
+    void     rm_write16(const RM &rm, uint16_t v){ if (rm.is_mem) ww(rm.seg, rm.off, v); else set_reg16(rm.reg, v); }
+    uint32_t rm_read32(const RM &rm)             { return rm.is_mem ? rd(rm.seg, rm.off) : get_reg32(rm.reg); }
+    void     rm_write32(const RM &rm, uint32_t v){ if (rm.is_mem) wd(rm.seg, rm.off, v); else set_reg32(rm.reg, v); }
     // Offset:segment pair (LES/LDS/far CALL/JMP/BOUND). Memory only; a register is #UD.
     bool     far_operand(const RM &rm, uint16_t &lo, uint16_t &hi) {
         if (!rm.is_mem) { ud(); return false; }
-        if (rm.off > 0xFFFC) overrun(rm.stack);
-        lo = rw(rm.seg, rm.off, rm.stack);
-        hi = rw(rm.seg, uint16_t(rm.off + 2), rm.stack);
+        check(rm.seg, rm.off, 4, false);
+        lo = rw(rm.seg, rm.off);
+        hi = rw(rm.seg, uint16_t(rm.off + 2));
         return !fault_;
     }
 
@@ -414,8 +522,7 @@ private:
     // grp3_unary return their own cycle cost, which varies by sub-opcode and
     // iteration count.
     //
-    // The 286 prefetch queue is not modeled. Intel publishes ranges for
-    // queue-flushing transfers (Jcc taken 7-10, LOOP 8-11, CALL/JMP near 7-10,
+    // Intel publishes ranges for queue-flushing transfers (Jcc taken 7-10, LOOP 8-11, CALL/JMP near 7-10,
     // far 11-14/13-16, RET 11-14/15-18, IRET 17-20; iAPX 286 PRM timing
     // appendix via Art of Assembly App. D), so each adds a flat tax on its
     // floor cost. 2 keeps floor+tax inside every range. Not-taken branches pay none.

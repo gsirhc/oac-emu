@@ -68,6 +68,36 @@ TEST(ChipsetTest, A20EnabledDoesNotWrapAndAboveOneMebIsOpenBus) {
     EXPECT_EQ(bus.read(0x000010), 0x77);  // low memory unaffected
 }
 
+TEST(ChipsetTest, ExtendedMemoryDecodesFromOneMegabyteToItsSize) {
+    Chipset cs(1024);
+    auto bus = cs.make_bus();
+    cs.kbc.out(0x64, 0xD1);
+    cs.kbc.out(0x60, 0x02);
+    bus.write(0x100010, 0x5A);
+    bus.write(0x1FFFFF, 0xA5);
+    bus.write(0x200000, 0x11);
+    EXPECT_EQ(bus.read(0x100010), 0x5A);
+    EXPECT_EQ(bus.read(0x1FFFFF), 0xA5);
+    EXPECT_EQ(bus.read(0x200000), 0xFF) << "past the adapter's 1MB";
+    EXPECT_EQ(bus.read(0x000010), 0x00) << "the HMA doesn't wrap onto low memory with A20 on";
+    cs.kbc.set_a20(false);
+    EXPECT_EQ(bus.read(0x100010), 0x00) << "A20 held low lands on 000010h";
+}
+
+TEST(ChipsetTest, ExtendedMemoryIsSixteenBitAdapterTiming) {
+    Chipset cs(512);
+    cs.make_bus();
+    EXPECT_EQ(cs.mem_clocks[0x100000 >> 12], Chipset::kClocks16);
+    EXPECT_EQ(cs.mem_clocks[0x17F000 >> 12], Chipset::kClocks16);
+    EXPECT_EQ(cs.mem_clocks[0x180000 >> 12], Chipset::kClocks8) << "nothing fitted past 1.5MB";
+}
+
+TEST(ChipsetTest, ExtendedMemoryStopsBelowTheRomAlias) {
+    Chipset cs(16 * 1024);
+    EXPECT_EQ(cs.ext_kb(), Chipset::kMaxExtKb);
+    EXPECT_EQ(cs.mem.size(), std::size_t(Chipset::kRomAlias));
+}
+
 TEST(ChipsetTest, Port61GatesSpeakerAndReadsBackRefreshToggle) {
     Chipset cs;
     auto bus = cs.make_bus();

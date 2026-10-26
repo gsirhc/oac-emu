@@ -1,12 +1,14 @@
 // AT glue logic: owns the chipset devices and the 1MB memory window, and
 // builds the cpu80286::Bus. The A20 gate lives here, not in the CPU.
 //
-// Memory map (640KB conventional, no extended memory):
+// Memory map:
 //   0x00000-0x9FFFF  640KB conventional RAM
 //   0xA0000-0xBFFFF  EGA video RAM window (routed to `ega`, not `mem`)
 //   0xC0000-0xC7FFF  EGA video BIOS extension ROM window
 //   0xF0000-0xFFFFF  system BIOS ROM
-// Unpopulated addresses read 0xFF and discard writes.
+//   0x100000-        extended memory on an adapter, if fitted
+//   0xFF0000-        system ROM alias
+// Unpopulated addresses above 1MB read 0xFF and discard writes.
 #ifndef IBMPCAT_CHIPSET_H
 #define IBMPCAT_CHIPSET_H
 
@@ -21,23 +23,28 @@
 #include "pit8253.h"
 #include "wd1003.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace ibmpcat {
 
 class Chipset {
 public:
-    Chipset() { reset(); }
+    // `ext_kb` of extended memory from 1MB up, below the ROM alias.
+    explicit Chipset(uint32_t ext_kb = 0)
+        : mem(0x100000 + std::size_t(std::min(ext_kb, kMaxExtKb)) * 1024, 0) { reset(); }
 
     void reset();
 
     // The returned Bus captures `this`; the Chipset must outlive any Cpu built from it.
     cpu80286::Bus make_bus();
 
-    std::array<uint8_t, 0x100000> mem{};
+    std::vector<uint8_t> mem;
+    uint32_t ext_kb() const { return uint32_t((mem.size() - 0x100000) / 1024); }
     // Marks [addr, addr+len) read-only and copies `data` in.
     void load_rom(uint32_t addr, const uint8_t *data, std::size_t len);
     bool is_rom(uint32_t addr) const {
@@ -46,6 +53,7 @@ public:
     }
     // The system ROM also decodes at FF0000 (IBM PC/AT Technical Reference, ROM subsystem).
     static constexpr uint32_t kRomAlias = 0xFF0000, kRomAliasOffset = 0xF00000;
+    static constexpr uint32_t kMaxExtKb = (kRomAlias - 0x100000) / 1024;
 
     // Clocks per byte bus cycle, by 4KB page: 3 for board RAM, ROM and port 1F0h,
     // 6 for 8-bit devices (IBM PC/AT Technical Reference, "System Performance").

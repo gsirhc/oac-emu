@@ -17,17 +17,18 @@ addressing, latches and the monochrome ports, E15-E17 (§49), the
 full 8259A and 8237A with P4, P6 and P9 (§50), and storage, S1-S4
 (§51) and S5, S6 and S8's rotation (§52), the keyboard and
 RTC, K1-K5 and R1 (§53), test parity, X1-X4 (§54), CPU test
-coverage (§55), and the last flat instruction costs, T10-T12 (§56).
+coverage (§55), the last flat instruction costs, T10-T12 (§56), and
+protected mode and extended memory, C10 and P8 (§63).
 
 Rough parity today: **~85%**.
 
 | Area | Parity | Biggest gap |
 |------|--------|-------------|
-| CPU (real mode) | 98% | the IDT limit isn't checked; no STOREALL; `FE /2`-`/7` unverified (C13) |
-| CPU (protected mode) | 0% | not implemented at all |
+| CPU (real mode) | 99% | no STOREALL; `FE /2`-`/7` unverified (C13) |
+| CPU (protected mode) | 85% | no LOADALL; two fault codes approximated (§63.2) |
 | Timing | 95% | fetch-bound code runs 5-7% fast against TOPBENCH |
 | EGA | 91% | memory-cycle length unsourced (VidMem -9% on the Enhanced Display) |
-| Chipset (PIT, PIC, DMA, memory) | 80% | no extended memory, no serial or parallel port |
+| Chipset (PIT, PIC, DMA, memory) | 85% | no serial or parallel port; base memory fixed at 640KB |
 | Storage (WD1003, floppy) | 92% | floppy data rate and SPECIFY ignored; hard disk seeks and writes are instant |
 | Keyboard, RTC | 95% | no keylock control, BAT arrives without its self-test delay |
 | Speaker | 95% | not checked against a recording of a real 5170 |
@@ -39,22 +40,11 @@ page, a Playwright test, in the same commit.
 
 ## 1. CPU
 
-- **C10. No protected mode.** §1 scoped it out because DOS never leaves
-  real mode. But the AT's own BIOS uses it (INT 15h AH=87h block move and
-  AH=89h), and so do HIMEM.SYS, VDISK, RAMDRIVE, Windows 3.0 standard
-  mode, OS/2 1.x and Xenix 286. FreeDOS's installer, now that it sees a
-  286, makes `FDXMS286.SYS` the default boot choice (§44.8). The
-  real-mode side is done: SMSW, LMSW, CLTS and the descriptor-table loads
-  and stores work (§44.4). Still needed: setting PE (LMSW reports and
-  drops it today), LLDT/LTR and the rest of the 0F 00 group, descriptor
-  caches, the 286 descriptor and gate formats, privilege and limit
-  checks, task switches, the real-mode IDT limit check, and the
-  triple-fault shutdown that the board turns into a CPU reset (port
-  §40.6). The no-way-back-to-real-mode rule and the 8042 reset trick
-  (already here) belong with it, and so does undocumented LOADALL
-  (`0F 05`, a reported no-op today), which HIMEM 2.x and RAMDRIVE used on
-  286s. Same scale as the 486's T1: its own design pass first. Lands with
-  P8. Source: Intel iAPX 286 PRM.
+- **C10. No LOADALL.** `0F 05` is a reported no-op. HIMEM 2.x and
+  RAMDRIVE used it on 286s; FDXMS286 on the shipped image uses the BIOS
+  block move instead. Needs a primary-source layout of the 286 LOADALL
+  table at 800h before it's written. Source: Intel iAPX 286 PRM (it is
+  undocumented there, so the layout source is the open question).
 
 - **C13. `FE /2` to `FE /7` do nothing.** Group 4 defines only INC and DEC
   on a byte. The core reads the operand and drops the instruction. `FF /7`
@@ -113,16 +103,11 @@ page, a Playwright test, in the same commit.
   front-end story for the other end. Confirm the 339's standard fit in
   the 5170 Guide to Operations. Source: IBM PC/AT Technical Reference,
   Serial/Parallel Adapter; NS16450 data sheet.
-- **P8. No extended memory.** `Chipset::mem` is exactly 1MB, so the A20
-  gate has nothing above it, the HMA reads FFh, and CMOS 17h/18h and
-  30h/31h say zero. The 339 had 512KB on the system board, and owners
-  routinely added extended memory on an adapter. Model 640KB base (a
-  labelled choice over the bare 512KB) plus an extended-memory size and
-  24-bit addressing. The ROM alias at the top of 16MB is already there
-  (§45.1). Source: IBM
-  PC/AT Technical Reference, system memory map. Lands with C10:
-  FreeDOS's 286 menu loads FDXMS286, which today declines for lack of
-  extended memory and would otherwise need LOADALL or INT 15h AH=87h.
+- **P8. Base memory is fixed at 640KB.** The 339 had 512KB on the system
+  board and 640KB took the 128KB option. BIOS-bochs-legacy's POST writes
+  639KB to BDA 40:13 without reading CMOS 15h/16h (§63.4), so a 512KB
+  choice needs a BIOS that sizes memory. Source: IBM PC/AT Technical
+  Reference, system memory map.
 - **P10. No game port.** The IBM Game Control Adapter at 201h was an
   option, not standard. Low priority. Port P7 from the 486 if it lands
   there first.
@@ -170,20 +155,11 @@ page, a Playwright test, in the same commit.
 
 ## 6. Test parity
 
-- **X5. Review corrections.** §1 and §3 still describe protected mode
-  as out of scope, and §1 calls it "not currently planned". Update them
-  when C10 lands. Not tied to C10: §3's cycle-count bullet still
+- **X5. Review corrections.** §3's cycle-count bullet still
   describes the flat `CYC_REG`/`CYC_MEM` model with no wait states (§40,
   §46), §5's CMOS bullet still says the clock doesn't tick (§53.6), and
   §44.3 says `firmware_at` covers the video BIOS, but `Machine` limits it
   to E0000-FFFFF.
-- **X6. Stale code comments.** `cpu80286.h` says the 5170's wait state
-  and the prefetch queue aren't modelled (§46 did both), `reset()` names
-  F000:FFF0 as the first fetch (§45.1), and `interrupt()` says it vectors
-  through vector*4 (§44.4, IDTR). `wasm_machine.cpp` says `reset()` acts
-  like "the real reset button", which the 5170 doesn't have, and its
-  speaker-edge comment sits on `speakerLevel()`. Fix with the next change
-  to each file.
 
 ## Not ported from the 486, on purpose
 

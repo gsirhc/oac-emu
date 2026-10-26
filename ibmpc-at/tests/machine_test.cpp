@@ -25,6 +25,22 @@ TEST(MachineTest, ConstructorSeedsFactoryCmosConfiguration) {
     EXPECT_EQ(m.chipset.cmos.peek(0x2F), uint8_t(sum & 0xFF));
 }
 
+TEST(MachineTest, CmosReportsTheFittedExtendedMemory) {
+    Machine none;
+    EXPECT_EQ(none.chipset.cmos.peek(0x30), 0x00);
+    EXPECT_EQ(none.chipset.cmos.peek(0x31), 0x00);
+    Machine m(1600);
+    EXPECT_EQ(m.chipset.cmos.peek(0x17), 0x40);
+    EXPECT_EQ(m.chipset.cmos.peek(0x18), 0x06);
+    EXPECT_EQ(m.chipset.cmos.peek(0x30), 0x40);
+    EXPECT_EQ(m.chipset.cmos.peek(0x31), 0x06);
+    EXPECT_EQ(m.chipset.cmos.peek(0x15), 0x80) << "base memory stays 640KB";
+    uint16_t sum = 0;
+    for (uint16_t reg = 0x10; reg <= 0x2D; ++reg) sum = uint16_t(sum + m.chipset.cmos.peek(uint8_t(reg)));
+    EXPECT_EQ(m.chipset.cmos.peek(0x2E), uint8_t(sum >> 8));
+    EXPECT_EQ(m.chipset.cmos.peek(0x2F), uint8_t(sum & 0xFF));
+}
+
 TEST(MachineTest, FactoryCmosSurvivesAnExplicitResetCall) {
     // CMOS is battery-backed and must survive reset (IBM_PCAT_REVIEW.md §8).
     Machine m;
@@ -109,6 +125,25 @@ TEST(MachineTest, KeyboardControllerResetTrickResetsCpuWithoutLosingPacing) {
     EXPECT_EQ(m.cpu.cs, 0xF000);
     EXPECT_GE(m.cpu.ip, 0xFFF0);
     EXPECT_GE(m.total_cycles(), before);  // pacing counter kept advancing, not zeroed by the reset
+}
+
+TEST(MachineTest, ShutdownResetsTheCpu) {
+    Machine m;
+    m.reset();
+    std::vector<uint8_t> rom(16, 0x90);
+    m.chipset.load_rom(0xFFFF0, rom.data(), rom.size());
+    const uint8_t code[] = {0x0F, 0x01, 0x1E, 0x10, 0x00,  // LIDT [0010h]: limit 0
+                            0xCC};                         // INT 3: #DF, then shutdown
+    for (unsigned i = 0; i < sizeof code; ++i) m.chipset.mem[0x0500 + i] = code[i];
+    m.cpu.cs = 0x0050;
+    m.cpu.ip = 0;
+    m.cpu.ds = 0;
+    for (int i = 0; i < 200 && !m.cpu.shutdown(); ++i) m.run_cycles(1);
+    ASSERT_TRUE(m.cpu.shutdown());
+    m.run_cycles(1);
+    EXPECT_FALSE(m.cpu.shutdown());
+    EXPECT_EQ(m.cpu.cs, 0xF000);
+    EXPECT_GE(m.cpu.ip, 0xFFF0);
 }
 
 TEST(MachineTest, FirstFetchIsFromTheTopOf16MBUntilAFarJump) {

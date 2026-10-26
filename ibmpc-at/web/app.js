@@ -821,6 +821,19 @@
     });
   });
 
+  // ---- memory ----
+  // An extended-memory adapter is fitted at power-on, so the choice is locked while running.
+  const EXT_MEM_KEY = "retro8080.ibmpcatExtMemKb";
+  const extMemSelect = document.getElementById("extMemSelect");
+  try {
+    const v = localStorage.getItem(EXT_MEM_KEY);
+    if (v !== null && [...extMemSelect.options].some((o) => o.value === v)) extMemSelect.value = v;
+  } catch {}
+  function refreshMemoryControls() { extMemSelect.disabled = poweredOn; }
+  extMemSelect.addEventListener("change", () => {
+    try { localStorage.setItem(EXT_MEM_KEY, extMemSelect.value); } catch {}
+  });
+
   function remountPendingFloppies() {
     for (let d = 0; d < 2; d++) {
       const p = pendingFloppy[d];
@@ -846,7 +859,7 @@
     if (poweredOn || !firmware) return;
     const factoryC = !savedHdd;
     if (!machine) {
-      machine = new firmware.Module.Machine();
+      machine = new firmware.Module.Machine(Number(extMemSelect.value));
       if (perfRequested) startPerfPanel();
       machine.loadRom(0x100000 - firmware.bios.byteLength, new Uint8Array(firmware.bios));
       machine.loadRom(0xC0000, new Uint8Array(firmware.videoBios));
@@ -862,6 +875,7 @@
     lastT = null;
     requestAnimationFrame(frame);
     refreshHddControls();
+    refreshMemoryControls();
     refreshFkeyControls();
     updateFocusHint();
     let noticeDismissed = false;
@@ -931,6 +945,7 @@
     clearScreenToBlack();
     if (audioCtx) { audioCtx.suspend().catch(() => {}); }
     refreshHddControls();
+    refreshMemoryControls();
     refreshFkeyControls();
     updateFocusHint();
     hideBootNotice();

@@ -68,7 +68,26 @@
     text-transform: none;
     color: var(--text);
   }
-  .entry h3 { margin-bottom: 0; }
+  :root { --entry-title: #000080; }
+  :root[data-theme="win"][data-mode="dark"] { --entry-title: #80c0ff; }
+  :root[data-theme="winxp"] { --entry-title: #0054e3; }
+  :root[data-theme="winxp"][data-mode="dark"] { --entry-title: #6eb6ff; }
+  :root[data-theme="web94"] { --entry-title: #990000; }
+  :root[data-theme="web94"][data-mode="dark"] { --entry-title: #ff8080; }
+  :root[data-theme="subtle"] { --entry-title: #4f46e5; }
+  :root[data-theme="subtle"][data-mode="dark"] { --entry-title: #a9a3ff; }
+  .entry h3 { margin-bottom: 0; color: var(--entry-title); }
+  :root[data-theme="aurora"] .entry h3 {
+    background: linear-gradient(90deg, #7c4fd6, #1f97b8);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  :root[data-theme="aurora"][data-mode="dark"] .entry h3 {
+    background: linear-gradient(90deg, #c4a8ff, #6fd6ee);
+    -webkit-background-clip: text;
+    background-clip: text;
+  }
   .entry-date {
     display: block;
     margin: 0 0 10px;
@@ -103,6 +122,17 @@
     <h1>News &amp; Info</h1>
 
     <h2 id="news">News</h2>
+    <article class="entry">
+      <h3>IBM PC/AT now has protected mode with extended memory options</h3>
+      <time class="entry-date" datetime="2026-10-26">10/26/2026</time>
+      <p>
+        The IBM PC/AT can now have up to 4 MB of extended memory. 
+        To make that memory usable, the 80286's protected mode has been implemented. 
+        This allows DOS to load into high memory, freeing up conventional memory for 
+        games and other software that need most of the 640 KB.  Power off the machine, 
+        pick a size in the new Memory panel, then power it back on.
+      </p>
+    </article>
     <article class="entry">
       <h3>The site is live!</h3>
       <time class="entry-date" datetime="2026-10-23">10/23/2026</time>

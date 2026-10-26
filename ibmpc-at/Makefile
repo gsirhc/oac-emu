@@ -21,7 +21,7 @@ CXX      ?= c++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
 
 CHIPSET_SRCS = machine.cpp chipset.cpp cpu80286.cpp ../shared/pc/pic8259.cpp ../shared/pc/pit8253.cpp i8042.cpp ../shared/pc/cmos_rtc.cpp ../shared/pc/dma8237.cpp ../shared/pc/fdc765.cpp ega.cpp wd1003.cpp ../shared/pc/pcspeaker.cpp
-UNIT_TESTS = cpu80286_test cpu80286_timing_test pic8259_test pit8253_test i8042_test cmos_rtc_test dma8237_test chipset_test machine_test fdc765_test ega_test ega_render_test wd1003_test pcspeaker_test egabios_test
+UNIT_TESTS = cpu80286_test cpu80286_timing_test cpu80286_pm_test pic8259_test pit8253_test i8042_test cmos_rtc_test dma8237_test chipset_test machine_test fdc765_test ega_test ega_render_test wd1003_test pcspeaker_test egabios_test bios_test
 
 .PHONY: help test test-smoke bios egabios bios-check library hdd-image wasm serve coverage check clean
 
@@ -32,7 +32,7 @@ help:
 	@sed -n 's/^#   //p' $(MAKEFILE_LIST)
 
 # --- unit tests ---------------------------------------------------------
-test: egabios
+test: bios egabios
 	cmake -S tests -B tests/build
 	cmake --build tests/build -j
 	ctest --test-dir tests/build --output-on-failure

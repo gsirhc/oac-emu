@@ -95,7 +95,7 @@
   :root[data-theme="subtle"] button:hover { background: #f4f5f7; }
   :root[data-theme="subtle"][data-mode="dark"] button:hover { background: #2f333d; }
   :root[data-theme="subtle"] button:active:not(:disabled) { border-style: solid; transform: translateY(1px); }
-  button:disabled { opacity: .5; cursor: default; }
+  button:disabled, select:disabled { opacity: .5; cursor: default; }
   label { user-select: none; }
   .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .row + .row { margin-top: 8px; }
@@ -615,6 +615,24 @@
       </div>
     </div>
 
+    <div class="panel" id="memoryCard">
+      <h2>Memory</h2>
+      <div class="row">
+        <label for="extMemSelect">Extended memory</label>
+        <select id="extMemSelect">
+          <option value="0" selected>None</option>
+          <option value="1024">1 MB</option>
+          <option value="1536">1.5 MB</option>
+          <option value="2048">2 MB</option>
+          <option value="3072">3 MB</option>
+          <option value="4096">4 MB</option>
+        </select>
+      </div>
+      <div class="row">
+        <span class="muted">You must power off to change the memory.</span>
+      </div>
+    </div>
+
     <div class="panel" id="hddCard">
       <h2>Hard disk</h2>
       <div class="row">
@@ -651,16 +669,16 @@
     <div class="panel" id="softwareCompatCard">
       <h2>System specs</h2>
       <table class="media-table">
-        <tr><td>CPU</td><td>80286 (8 MHz), real mode</td></tr>
-        <tr><td>RAM</td><td>640 KB conventional</td></tr>
-        <tr><td>Modes</td><td>Real mode only (no protected mode)</td></tr>
+        <tr><td>CPU</td><td>80286 (8 MHz)</td></tr>
+        <tr><td>RAM</td><td>640 KB conventional, plus up to 4 MB extended (see Memory)</td></tr>
+        <tr><td>Modes</td><td>Real and protected mode (80286)</td></tr>
         <tr><td>Graphics</td><td>EGA</td></tr>
         <tr><td>Sound</td><td>PC speaker</td></tr>
         <tr><td>Storage</td><td>30 MB HDD (WD1003), 5.25&Prime; floppy A: 1.2MB / B: 360KB (NEC 765)</td></tr>
         <tr><td>Input</td><td>Keyboard only</td></tr>
         <tr><td>BIOS</td><td>Bochs legacy BIOS and an open EGA BIOS. IBM's original ROMs are still under copyright.</td></tr>
         <tr><td>OS</td><td>Ships with FreeDOS 1.3, compatible with PC-DOS / MS-DOS 3.x</td></tr>
-        <tr><td>Not included</td><td>Mouse, sound card, protected-mode software (DOS 5+ memory managers, Windows)</td></tr>
+        <tr><td>Not included</td><td>Mouse, sound card, 386 software (EMM386, Windows enhanced mode)</td></tr>
       </table>
     </div>
 
