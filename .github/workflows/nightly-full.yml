@@ -251,6 +251,15 @@ jobs:
       - working-directory: ibmpc-at/web
         run: make test-install
 
+      # A server left by an earlier run on the self-hosted Mini makes Playwright abort.
+      - name: Free the test server ports
+        if: runner.environment == 'self-hosted'
+        run: |
+          for port in 8300 8310; do
+            pids=$(lsof -nP -t -iTCP:$port -sTCP:LISTEN || true)
+            if [ -n "$pids" ]; then echo "killing $pids on $port"; kill $pids; fi
+          done
+
       - working-directory: ibmpc-at/web
         run: make test
 
@@ -390,6 +399,15 @@ jobs:
 
       - working-directory: pc486/web
         run: make test-install
+
+      # A server left by an earlier run on the self-hosted Mini makes Playwright abort.
+      - name: Free the test server ports
+        if: runner.environment == 'self-hosted'
+        run: |
+          for port in 8400 8410; do
+            pids=$(lsof -nP -t -iTCP:$port -sTCP:LISTEN || true)
+            if [ -n "$pids" ]; then echo "killing $pids on $port"; kill $pids; fi
+          done
 
       - working-directory: pc486/web
         run: make test

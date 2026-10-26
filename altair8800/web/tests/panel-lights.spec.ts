@@ -66,7 +66,8 @@ test.describe("front-panel lamps", () => {
 
   test("WAIT is lit while the CPU is stopped and clears on RUN", async ({ page }) => {
     await boot(page);
-    expect((await status(page)).WAIT).toBe(false); // running
+    // lamps repaint per frame; boot() can return before the first frame after RUN
+    await expect.poll(async () => (await status(page)).WAIT).toBe(false);
     await panelStop(page);
     await expect.poll(async () => (await status(page)).WAIT).toBe(true);
     await panelRun(page);
