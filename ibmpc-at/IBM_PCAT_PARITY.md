@@ -1,37 +1,38 @@
 # IBM PC/AT 5170-339 -- parity backlog
 
 The open gaps between this machine and a real 1986 8 MHz 5170-339 with an
-IBM EGA, plus the test gaps against the repo rules in `CLAUDE.md`. Most of
-the chip files started as the same code `pc486` grew from, so a lot of
-this list is `PC486_PARITY.md` work that never came back. Where a 486 fix
-ports, the item cites its `PC486_REVIEW.md` section. Checked against the
-code as of §55 (CPU test coverage), and re-audited against every source
-file on 2026-10-08 (E21-E22, P12, S9-S10, X6). When an item is fixed, write it up in
-`IBM_PCAT_REVIEW.md` as usual (fact, why it matters, what it fixed,
-source) and delete it here. Done so far: the real-mode CPU, C1-C9
-(`IBM_PCAT_REVIEW.md` §44), the reset vector and `F1h`, C11-C12
-(§45), bus timing, T1-T5 and T8 with P5 and E11 (§46), and EGA
-contention plus the TOPBENCH calibration, T6-T7 with P1-P3 (§47), and
-the EGA BIOS stand-in plus E1-E10 and E12-E14 (§48), and EGA
-addressing, latches and the monochrome ports, E15-E17 (§49), the
-full 8259A and 8237A with P4, P6 and P9 (§50), and storage, S1-S4
-(§51) and S5, S6 and S8's rotation (§52), the keyboard and
-RTC, K1-K5 and R1 (§53), test parity, X1-X4 (§54), CPU test
-coverage (§55), the last flat instruction costs, T10-T12 (§56), and
-protected mode and extended memory, C10 and P8 (§63).
+IBM EGA, plus the test gaps against the repo rules in `CLAUDE.md`. Shared
+chips live in `shared/pc/` and also drive `pc486`; their tests are under
+`shared/pc/tests/` and build into this machine's `make check`. Where a 486
+fix ports, the item cites its `PC486_REVIEW.md` section. Checked against
+the code through `IBM_PCAT_REVIEW.md` §66 (2026-10-27). When an item is
+fixed, write it up in `IBM_PCAT_REVIEW.md` as usual (fact, why it matters,
+what it fixed, source) and delete it here.
 
-Rough parity today: **~85%**.
+Done so far: the real-mode CPU, C1-C9 (`IBM_PCAT_REVIEW.md` §44), the
+reset vector and `F1h`, C11-C12 (§45), bus timing, T1-T5 and T8 with P5
+and E11 (§46), EGA contention plus the TOPBENCH calibration, T6-T7 with
+P1-P3 (§47), the EGA BIOS stand-in plus E1-E10 and E12-E14 (§48), EGA
+addressing, latches and the monochrome ports, E15-E17 (§49), the full
+8259A and 8237A with P4, P6 and P9 (§50), storage S1-S4 (§51) and S5, S6
+and S8's rotation (§52), the keyboard and RTC, K1-K5 and R1 (§53), test
+parity X1-X4 and X5 (§54, §0 / §66), CPU test coverage (§55), the last
+flat instruction costs, T10-T12 (§56), and protected mode and extended
+memory (§63; original C10 and P8). Front-end shared modules and the
+Performance panel are in §64-§65; they are not tracked as hardware parity.
+
+Rough parity today: **~93%** (mean of the table rows).
 
 | Area | Parity | Biggest gap |
 |------|--------|-------------|
 | CPU (real mode) | 99% | no STOREALL; `FE /2`-`/7` unverified (C13) |
-| CPU (protected mode) | 85% | no LOADALL; two fault codes approximated (§63.2) |
+| CPU (protected mode) | 85% | no LOADALL (C14); two fault codes approximated (§63.2) |
 | Timing | 95% | fetch-bound code runs 5-7% fast against TOPBENCH |
 | EGA | 91% | memory-cycle length unsourced (VidMem -9% on the Enhanced Display) |
 | Chipset (PIT, PIC, DMA, memory) | 85% | no serial or parallel port; base memory fixed at 640KB |
 | Storage (WD1003, floppy) | 92% | floppy data rate and SPECIFY ignored; hard disk seeks and writes are instant |
 | Keyboard, RTC | 95% | no keylock control, BAT arrives without its self-test delay |
-| Speaker | 95% | not checked against a recording of a real 5170 |
+| Speaker | 100% | — |
 
 Every fix lands with its native test and, where it's visible from the
 page, a Playwright test, in the same commit.
@@ -40,18 +41,19 @@ page, a Playwright test, in the same commit.
 
 ## 1. CPU
 
-- **C10. No LOADALL.** `0F 05` is a reported no-op. HIMEM 2.x and
-  RAMDRIVE used it on 286s; FDXMS286 on the shipped image uses the BIOS
-  block move instead. Needs a primary-source layout of the 286 LOADALL
-  table at 800h before it's written. Source: Intel iAPX 286 PRM (it is
-  undocumented there, so the layout source is the open question).
-
 - **C13. `FE /2` to `FE /7` do nothing.** Group 4 defines only INC and DEC
-  on a byte. The core reads the operand and drops the instruction. `FF /7`
-  raises #UD here, and the 286 raises #UD for undefined encodings in
-  general, but no source found says what a 286 does with these six. Needs
-  the iAPX 286 PRM opcode map or a test on a real 286. No test pins the
-  current behaviour (§55.4).
+  on a byte. The core decodes the ModRM byte and returns without reading
+  the operand. `FF /7` raises #UD here, and the 286 raises #UD for
+  undefined encodings in general, but no source found says what a 286 does
+  with these six. Needs the iAPX 286 PRM opcode map or a test on a real
+  286. No test pins the current behaviour (§55.4).
+
+- **C14. No LOADALL / STOREALL.** `0F 05` is a reported no-op. HIMEM 2.x
+  and RAMDRIVE used LOADALL on 286s; FDXMS286 on the shipped image uses
+  the BIOS block move instead. `F1 0F 04` (STOREALL) isn't modelled.
+  Descriptor caches exist (§63.1); what is still needed is a primary-source
+  layout of the 286 LOADALL table at 800h. Source: Intel iAPX 286 PRM (it
+  is undocumented there, so the layout source is the open question).
 
 ## 2. Timing
 
@@ -103,11 +105,6 @@ page, a Playwright test, in the same commit.
   front-end story for the other end. Confirm the 339's standard fit in
   the 5170 Guide to Operations. Source: IBM PC/AT Technical Reference,
   Serial/Parallel Adapter; NS16450 data sheet.
-- **P8. Base memory is fixed at 640KB.** The 339 had 512KB on the system
-  board and 640KB took the 128KB option. BIOS-bochs-legacy's POST writes
-  639KB to BDA 40:13 without reading CMOS 15h/16h (§63.4), so a 512KB
-  choice needs a BIOS that sizes memory. Source: IBM PC/AT Technical
-  Reference, system memory map.
 - **P10. No game port.** The IBM Game Control Adapter at 201h was an
   option, not standard. Low priority. Port P7 from the 486 if it lands
   there first.
@@ -116,15 +113,22 @@ page, a Playwright test, in the same commit.
   memory-to-memory on channels 0 and 1 through the temporary register.
   Command bits 3, 5, 6 and 7 (compressed timing, extended write, DREQ and
   DACK polarity) and rotating priority are stored and ignored. Low
-  priority: no AT device or BIOS path uses them. Source: Intel 8237A-5
-  data sheet (`IBM_PCAT_REVIEW.md` §50.3).
+  priority: no AT device or BIOS path uses them. A change here also
+  affects `pc486` via `shared/pc/`. Source: Intel 8237A-5 data sheet
+  (`IBM_PCAT_REVIEW.md` §50.3).
 - **P12. Port 61h bits 2-3 read back 0, and there's no NMI.** On the AT,
   bits 0-3 of 61h read back as written: bit 2 enables RAM parity check,
   bit 3 enables I/O channel check. `Chipset::set_port61` keeps only bits
-  0-1. Bits 6-7 (parity error, channel check) and the NMI behind them,
-  gated by port 70h bit 7 (`CmosRtc::nmi_masked`), aren't wired. Nothing
-  here raises them, so the readback is the visible part. Source: IBM
-  PC/AT Technical Reference, port 061h.
+  0-1. Bits 4-5 already read refresh and OUT2. Bits 6-7 (parity error,
+  channel check) and the NMI behind them, gated by port 70h bit 7
+  (`CmosRtc::nmi_masked`), aren't wired. Nothing here raises them, so the
+  readback of bits 2-3 is the visible part. Source: IBM PC/AT Technical
+  Reference, port 061h.
+- **P13. Base memory is fixed at 640KB.** The 339 had 512KB on the system
+  board and 640KB took the 128KB option. BIOS-bochs-legacy's POST writes
+  639KB to BDA 40:13 without reading CMOS 15h/16h (§63.4), so a 512KB
+  choice needs a BIOS that sizes memory. Source: IBM PC/AT Technical
+  Reference, system memory map.
 
 ## 5. Storage
 
@@ -144,8 +148,8 @@ page, a Playwright test, in the same commit.
   and drops it. Seeks use a fixed 3 ms a track on A: and 6 ms on B:,
   chosen by drive, where the chip steps at the SRT the BIOS programmed,
   scaled by the data rate. Head load time is ignored too. Lands with S7,
-  since the step time depends on the rate. Source: NEC uPD765A data
-  sheet, SPECIFY.
+  since the step time depends on the rate. A change here also affects
+  `pc486` via `shared/pc/`. Source: NEC uPD765A data sheet, SPECIFY.
 - **S10. Hard disk writes don't wait for the platter.** WRITE SECTORS takes
   every sector's data, then commits and interrupts at once. A real
   WD1003 holds BSY while each sector reaches its slot. The Bochs BIOS
@@ -153,13 +157,21 @@ page, a Playwright test, in the same commit.
   waits on the same BIOS work as S7. Source: WD1003-WA2 OEM manual,
   Write Sector.
 
-## 6. Test parity
+## 6. Stand-in departures (labelled, not silent)
 
-- **X5. Review corrections.** §3's cycle-count bullet still
-  describes the flat `CYC_REG`/`CYC_MEM` model with no wait states (§40,
-  §46), §5's CMOS bullet still says the clock doesn't tick (§53.6), and
-  §44.3 says `firmware_at` covers the video BIOS, but `Machine` limits it
-  to E0000-FFFFF.
+These are intentional substitutions, not missing silicon. Tracked so they
+don't look like forgotten gaps:
+
+- **D1. Stand-in BIOS leaves protected mode with MOV CR0.** IBM's AT BIOS
+  uses the 8042 reset and CMOS shutdown byte. §63.3.
+- **D2. WD1003 answers ATA IDENTIFY (0xEC).** A concession for
+  BIOS-bochs-legacy's ATA path. §11.
+- **D3. INT 16h AH=03h unsupported.** `MODE CON RATE=` does nothing.
+  §53.2.
+- **D4. F12 prompt suppressed via CMOS 3Fh.** Boot-speed labelled
+  departure. §61.
+- **D5. Shipped FreeDOS image edits.** CTMOUSE REMmed on the AT path;
+  `MEM /C /N` removed. §61.
 
 ## Not ported from the 486, on purpose
 
@@ -170,6 +182,7 @@ DX signature, #AC and debug registers (386 and later), the 15-byte limit
 aux port; a serial mouse via P7 is the period way).
 
 Already in line with the rules, for reference: the `?test=1&fast=1`
-multiplier is gated in `app.js`, the smoke file boots to `C:\>`, runs a
-typed command and keeps a real-speed check, deploy CI runs `ibmpcat-test`
-/ `ibmpcat-web-test` smoke only, and the full suites run nightly.
+multiplier is gated in `app.js`, stripped from staged builds, the smoke
+file boots to `C:\>`, runs a typed command and keeps a real-speed check,
+deploy CI runs `ibmpcat-test` / `ibmpcat-web-test` smoke only, and the
+full suites run nightly.

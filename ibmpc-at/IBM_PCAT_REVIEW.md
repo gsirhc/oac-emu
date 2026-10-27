@@ -6,36 +6,29 @@ decisions behind the emulator's behavior, and an honest list of what isn't
 built yet, so a future contributor sees the reasoning instead of an
 unexplained gap.
 
-## 0. Status: Phase 2 well underway (chipset + real BIOS booting partway)
+Sections §1 onward are a chronological build journal. Early "current
+state" bullets are often superseded later; where that matters, a
+"(§N replaces this)" marker points forward. Open gaps live in
+[`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md).
 
-Phase 1 (`cpu80286.h`/`.cpp` + tests) is done. Phase 2's chipset devices are
-built and tested: `pic8259` (×2, cascaded), `pit8253`, `i8042` (keyboard
-controller, A20 gate, CPU-reset trick, the keyboard's own unsolicited
-post-reset BAT byte), `cmos_rtc` (MC146818), `dma8237` (×2, register file
-only — no live transfer yet), `chipset` (the glue/memory-decode layer), and
-`machine` (wires the CPU + chipset and drives both from `run_cycles()`).
-87/87 GoogleTest cases pass, including an end-to-end PIT→PIC→CPU interrupt
-round trip that wakes a HLTed CPU and a regression test for the
-CPU-reset-must-not-corrupt-pacing bug class `assembler6502`'s review doc §10
-documents.
+## 0. Status
 
-The real, freely-licensed system BIOS (`BIOS-bochs-legacy`, see §6) is
-fetched, checksummed, and boots against this chipset via a native
-diagnostic harness (`bios_host.cpp`, built ahead of schedule) far enough to
-write a genuine POST diagnostic code before reaching a stable wait loop —
-see §6 for the exact state and what's still unexplained there.
-
-**Not yet done**: nothing boots to a usable state yet (no floppy/HDD/EGA),
-there's no WASM/browser build, and the `F000:0C49` wait loop in §6 isn't
-diagnosed. Remaining roadmap: floppy+EGA-text boot-to-prompt (3), WD1003 HDD with a
-pre-loaded FreeDOS image (4), full EGA graphics (5), PC speaker (6), full
-front end (7), test suites + site integration (8).
+Boots FreeDOS 1.3 to a live `C:\>` in the browser at real 8 MHz
+(`machine.h` `kCpuHz`). The labelled test-only CPU multiplier is
+`?test=1&fast=1` (§36, §66); a bare page load stays real speed. 80286
+real mode and protected mode with extended memory (§63). System firmware
+is pinned `BIOS-bochs-legacy`; the video BIOS is the from-scratch EGA
+stand-in `egabios` (§48.1), not VGABIOS-lgpl (that stays on the 486).
+About 631 native GoogleTest cases and about 120 Playwright cases across
+21 specs. Rough parity and the open backlog are in
+`IBM_PCAT_PARITY.md`.
 
 ## 1. Scope: real mode and 286 protected mode
 
 The core runs real mode and 286 protected mode (§63). PC-DOS 3.30 and
 FreeDOS stay in real mode; extended memory, XMS drivers and the BIOS block
-move enter protected mode. LOADALL is still unimplemented.
+move enter protected mode. LOADALL / STOREALL are still unimplemented
+(C14).
 
 The 80286 keeps a segment's cached limit and rights on a real-mode load,
 so a stale limit survives a return to real mode until RESET or a reload
@@ -76,34 +69,30 @@ not bugs):
 - **`POPF`/`IRET` flag mask** (`0x0FD5`) restores CF/PF/AF/ZF/SF/TF/IF/DF/OF
   from the popped word and always zeroes bits 12-15. That's the real 286 in
   real mode, not a simplification (§44.2).
-- **Cycle counts are categorical, not the full effective-address-dependent
-  table.** Real 80286 timing charges a different EA-calculation cost per
-  addressing mode (e.g. base+index+displacement costs more than a bare
-  register indirect) on top of the 1-wait-state memory penalty. This core
-  uses two flat constants (`CYC_REG=2`, `CYC_MEM=7`) folding in a
-  representative EA cost + the wait state, plus per-instruction-class
-  constants for jumps/calls/INT/string ops, all drawn from the iAPX 286
-  timing appendix's typical values. This gets the right order of magnitude
-  and throughput characteristics (no instruction is free, memory access
-  costs more than register access, taken branches cost more than
-  not-taken) without claiming cycle-exact precision. Revisit if a later
-  phase's BIOS timing loop (e.g. the PIT-driven delay POST uses) turns out
-  to be sensitive to the difference.
+- **Cycle counts** (§40, §41, §46 and §56 replace this): early phases used
+  two flat constants (`CYC_REG=2`, `CYC_MEM=7`) plus per-class jump/call/
+  INT/string costs. The core now charges per-opcode appendix timings, a
+  prefetch-queue refill tax, AT bus wait states, refresh, and EGA memory
+  contention. Remaining TOPBENCH gaps are T9 and E20 in
+  `IBM_PCAT_PARITY.md`.
 
 ## 4. Opcode coverage gaps
 
 Undefined opcodes raise #UD (INT 6) outside the firmware, and are a
 reported no-op inside it (§44.3). Beyond that:
 - The 386 layer (`0x66`, `0x0F 0x80-0x8F` Jcc rel16, SETcc, MOVZX/MOVSX,
-  two-operand IMUL) runs only from ROM, where the prebuilt BIOS and video
-  BIOS substitutes need it; see §6 and §7. Anywhere else it's #UD.
-- `0x0F 0x05` (LOADALL) is a reported no-op. It needs descriptor caches.
+  two-operand IMUL) runs only from the system BIOS ROM window
+  (`addr >= 0xE0000`, §44.3 / §63.3), where `BIOS-bochs-legacy` needs it.
+  Anywhere else it's #UD. The EGA stand-in at C0000 does not get the layer.
+- `0x0F 0x05` (LOADALL) is a reported no-op (C14). Descriptor caches exist
+  (§63.1); the open question is a primary-source layout of the 286 LOADALL
+  table at 800h.
 - `0xD8`-`0xDF` (x87 coprocessor ESC) decode the ModR/M byte (so instruction
   length stays correct for whatever follows) but perform no FPU operation —
   correct behavior for this system's spec, which has no 80287 installed.
   MSW.EM or TS set makes them #NM (INT 7).
 - `0xF1` is a LOCK-alias prefix, as tested on a real 286 (§45.4).
-  `F1 0F 04` (STOREALL) isn't modelled.
+  `F1 0F 04` (STOREALL) isn't modelled (C14).
 - `AAM`/`AAD` are implemented for the standard base-10 encoding but not
   exhaustively tested against non-standard bases.
 
@@ -131,9 +120,8 @@ a silent one, per this repo's fidelity conventions (`CLAUDE.md`).
   for the embedding `Machine` to act on, matching this codebase's
   host-agnostic device convention (a device never reaches into the CPU
   object directly).
-- **CMOS/RTC**: no live ticking clock (nothing in these phases reads the
-  time-of-day repeatedly); register A's update-in-progress bit is hard tied
-  to 0 so a BIOS's "wait for UIP to clear" POST loop can never hang.
+- **CMOS/RTC**: (§53.6 replaces this.) early phases had no live ticking
+  clock and tied UIP to 0. The RTC now advances and drives IRQ8.
 - **DMA (8237 ×2)**: (§50.3 replaces this with the full channel model.) register file (address/count/mode/mask/command) only —
   no live memory↔device transfer yet. That lands in Phase 3 alongside
   `fdc765.h`, the first device that actually needs to move bytes over
@@ -145,6 +133,13 @@ a silent one, per this repo's fidelity conventions (`CLAUDE.md`).
   never actually got serviced.
 
 ## 6. BIOS integration: resolved on prebuilt pinned binaries
+
+(§48.1 replaces the VGABIOS-lgpl plan below.) The system BIOS is still
+pinned `BIOS-bochs-legacy` from this section's fetch script. The video
+BIOS shipped today is the from-scratch EGA stand-in `roms/egabios/`
+(nasm), not `VGABIOS-lgpl-latest.bin`. The 486 keeps VGABIOS-lgpl.
+`roms/fetch-bios.sh` fetches only `BIOS-bochs-legacy` and the
+`fntcol16.zip` fonts egabios needs.
 
 Phase 2's plan called for building **SeaBIOS** from a pinned source commit.
 Verified this session: network access works in this sandbox, but building
@@ -233,7 +228,11 @@ comment's promise; `bios_host.cpp` (the lasting diagnostic harness) stays.
   or can be steered onto an old-style CMOS type-table path is unresolved
   until Phase 4, once the actual BIOS source is read.
 
-## 7. Phase 3: FDC + EGA text mode + real-boot debugging (in progress)
+## 7. Phase 3: FDC + EGA text mode + real-boot debugging
+
+(Complete; later phases take the machine past text mode to a live DOS
+prompt and the full front end. The VGABIOS load narrative below is
+historical — §48.1 replaced it with egabios.)
 
 Built and fully tested this round: `fdc765` (NEC uPD765 floppy controller,
 both drives, a real command/parameter/execution/result state machine),
@@ -350,22 +349,24 @@ BIOS's own printed options line), the boot device sequence comes from
 **CMOS register 0x3D** (low nibble = 1st boot device; `0x01` = floppy,
 `0x02` = hard disk), not from probing drives directly. We'd never seeded
 it, so `bootdev == 0` unconditionally → instant panic regardless of what's
-mounted. Seeding `cmos.poke(0x3D, 0x01)` (plus `0x10=0x20` for "drive A: is
-1.2MB" and `0x14=0x01` for "a floppy drive is installed", the equipment
-byte) immediately changed the banner's last line from `FATAL: No bootable
-device.` to **`Booting from Floppy...`** — the BIOS reads our FDC, accepts
-the media, and proceeds into the actual boot attempt. Execution continues
-correctly afterward (no crash, no unimplemented-opcode hits) but hadn't yet
-reached the boot sector's own code (still inside system-BIOS segment F000
-when this investigation had to stop for time) — worth a few more minutes
-of the same tracing approach to confirm the INT 13h read + far jump to
-`0000:7C00` next session, but the hard part (a real bootable disk, real
-BIOS, and the exact CMOS bytes it needs) is now done and verified.
+mounted. Seeding CMOS 0x3D for floppy-first boot (plus floppy type and
+equipment bytes) immediately changed the banner's last line from `FATAL:
+No bootable device.` to **`Booting from Floppy...`** — the BIOS reads our
+FDC, accepts the media, and proceeds into the actual boot attempt.
+Execution continues correctly afterward (no crash, no unimplemented-opcode
+hits) but hadn't yet reached the boot sector's own code (still inside
+system-BIOS segment F000 when this investigation had to stop for time) —
+worth a few more minutes of the same tracing approach to confirm the INT
+13h read + far jump to `0000:7C00` next session, but the hard part (a real
+bootable disk, real BIOS, and the exact CMOS bytes it needs) is now done
+and verified.
 
 **Wired into the permanent build**: `Machine::configure_factory_cmos()`
-(called once, automatically, by `Machine`'s constructor) now seeds exactly
-these bytes -- base memory size, floppy types, equipment byte, boot
-sequence, and a correctly-computed checksum -- matching how a real AT's
+(called once, automatically, by `Machine`'s constructor) seeds the factory
+CMOS — base memory size, floppy types (`0x10=0x21`: A: 1.2MB, B: 360KB),
+equipment byte (`0x14=0x41`), boot sequence (`0x3D=0x21`), F12-prompt
+suppress (`0x3F=0x01`, §61), extended-memory size at 17h/18h and 30h/31h
+(§63.4), and a correctly-computed checksum — matching how a real AT's
 Setup diskette would have written them once, at the factory, before the
 machine ever shipped. Covered by
 `MachineTest.ConstructorSeedsFactoryCmosConfiguration`.
@@ -850,11 +851,9 @@ since Phase 3 (never updated when `fdc765.cpp`/`ega.cpp`/`wd1003.cpp` were
 added, so `make bios-check` and `make coverage` had been failing to link
 this whole time), were fixed as part of this same pass.
 
-**Still open, for a later phase:** CI integration for `make hdd-image`
-(Phase 8's "site integration" scope) -- the real-installer approach that
-makes this image genuinely reproducible also makes it too slow to run on
-every push; some form of caching keyed on the pinned floppy/tool inputs
-will be needed there, not attempted here.
+**CI caching (resolved):** `deploy-emulator.yml` and `nightly-full.yml`
+cache `ibmpc-at/disks/freedos-hdd.img` and run `make -C ibmpc-at hdd-image`
+only on a miss. See §66.
 
 ## 12. Phase 5: real planar EGA memory (write modes, read modes, latch)
 
@@ -1017,12 +1016,12 @@ phase). This phase's scope is the real circuit semantics only.
 ## 14. Phase 7: the front end -- `web/`
 
 `ibmpc-at/web/` follows the established per-machine shape
-(`wasm_machine.cpp` Embind wrapper, `app.js`/`index.html`, own `Makefile`/
-`devserve.py`, independent theme-system copy -- see the approved plan's
-"front-end code... keep independent per-machine copies" decision). The
-top-level `Makefile` gained `wasm`/`serve` targets delegating to `web/`,
-matching `altair8800`'s and `assembler6502`'s own top-level Makefiles
-exactly.
+(`wasm_machine.cpp` Embind wrapper, `app.js`/`index.html`, own `Makefile`).
+Serving uses `../../serve_nocache.py` (same as every other machine and
+`make preview`). Themes and other identical chrome later moved into
+`shared/` (§17, §65). The top-level `Makefile` gained `wasm`/`serve`
+targets delegating to `web/`, matching `altair8800`'s and
+`assembler6502`'s own top-level Makefiles exactly.
 
 **Scope decision, stated up front**: this pass ships real, complete
 **text-mode** rendering (what the machine actually boots to and what a
@@ -1136,16 +1135,11 @@ screenEl }`, active under `?test=1`) was added for this, matching
 `altair8800`/`assembler6502`'s own established `window.__test` convention --
 ready for Phase 8's real suite to build on rather than reinvent.
 
-**Deferred to Phase 8**, per the approved plan: the formal Playwright
-suite (one spec per control/feature, shared `helpers.ts`/`fixtures.ts`),
-top-level `Makefile`/`README.md`/`index.html` integration, and
-the CI job pair. `?test=1` forcing floppy/HDD load speed to an internal
-max (CLAUDE.md's sanctioned automated-test override) is not yet wired up
--- today's ~45-50 second real-time boot (genuine, unaccelerated 8 MHz --
-never sped up, per CLAUDE.md) is exactly as slow in the browser as in the
-native regression harness, and a test suite will want that override the
-way `fdc765`/`wd1003`'s existing credit-based transfer pacing already
-supports internally.
+**Deferred to Phase 8** at the time (all landed later): the formal
+Playwright suite (§34, §66), site integration, and the CI job pair. This
+machine never got a visitor-facing floppy/HDD load-speed picker; the only
+sanctioned test override is the CPU multiplier `?test=1&fast=1` (§36).
+Real-time boots stay ~45 s at 8 MHz.
 
 ## 15. CGA-compatible 4-color graphics mode rendering
 
@@ -1293,13 +1287,12 @@ resize logic was already generic (proven by §15's CGA-mode resize)
 rather than hardcoded to particular dimensions.
 
 **Also fixed while investigating**: the local LAN preview server
-(`python3 -m http.server`, used by `make preview`/
-`preview-bg`) sent no cache headers at all, unlike every machine's own
-`web/devserve.py` -- a real, separate bug that made a stale wasm module/
-app.js indistinguishable from an actual regression after re-staging.
-Replaced with `serve_nocache.py` (same `Cache-Control: no-store`
-handler devserve.py already used), wired into all three `preview`/
-`preview-bg`/`preview-install` code paths.
+(`python3 -m http.server`, used by `make preview` / `preview-bg`) sent no
+cache headers at all -- a real, separate bug that made a stale wasm
+module/app.js indistinguishable from an actual regression after
+re-staging. Replaced with `serve_nocache.py` (`Cache-Control: no-store`),
+wired into all three `preview` / `preview-bg` / `preview-install` code
+paths and each machine's own `make serve`.
 
 ## 17. Site-wide theme sync, a bigger screen, the realistic front panel, and power/reset
 
@@ -1310,18 +1303,20 @@ front panel -- plus, explicitly, delegate well-scoped mechanical work to
 a cheaper model where it fits.
 
 **Delegation**: a Haiku subagent synced every shared theme token (colors,
-fonts, shadows for all four themes) to altair8800/web/index.html's exact
-values, scoped strictly to the four `:root`/`:root[data-theme=...]`
-custom-property blocks with an explicit "touch nothing else" instruction
--- a genuinely mechanical, fully-specified, low-integration-risk task
-(CSS variable *values* can't rename an element ID or break a JS
-selector). The front panel's HTML/CSS and the power/reset behavior were
-done directly instead: real hardware semantics (what powering off/on and
-resetting actually do to running state) and deep integration with
-existing JS hooks (`.at-bay[data-drive]`, `[data-role=...]`, `#hddLed`)
-are exactly the kind of work this project's own CLAUDE.md guidance says
-to keep rather than delegate -- getting it wrong is expensive to catch
-later, and a fresh agent would have to re-derive context already in hand.
+fonts, shadows) to altair8800/web/index.html's exact values, scoped
+strictly to the `:root`/`:root[data-theme=...]` custom-property blocks
+with an explicit "touch nothing else" instruction -- a genuinely
+mechanical, fully-specified, low-integration-risk task (CSS variable
+*values* can't rename an element ID or break a JS selector). At the time
+the site had four themes; it now has five (`win`, `winxp`, `web94`,
+`subtle`, `aurora` / Atmosphere) via shared `theme-picker.js` (§65). The
+front panel's HTML/CSS and the power/reset behavior were done directly
+instead: real hardware semantics (what powering off/on and resetting
+actually do to running state) and deep integration with existing JS hooks
+(`.at-bay[data-drive]`, `[data-role=...]`, `#hddLed`) are exactly the
+kind of work this project's own CLAUDE.md guidance says to keep rather
+than delegate -- getting it wrong is expensive to catch later, and a
+fresh agent would have to re-derive context already in hand.
 
 **A real bug, initially misdiagnosed**: `.page`'s `max-width: var(--page-max)`
 computed as `none`, confirmed three ways (`getComputedStyle().maxWidth`,
@@ -1771,10 +1766,13 @@ unchanged -- it never cared what the source of its bytes was, only that
 the front end decides that now (factory image, a blank buffer, or a
 saved one), documented in the file's own top-of-file JS-surface comment.
 
-**Persistence (`app.js`)**: a single-record IndexedDB object store
+**Persistence (`app.js`)**: (§61 and §65 replace the store shape.) Early
+form was a single-record IndexedDB object store
 (`ibmpcat-hdd`/`hdd`/key `"c-drive"`) with plain-promise
 open/get/put/delete helpers -- no library, IndexedDB natively stores a
-`Uint8Array` via structured clone. Loaded once, in parallel with the
+`Uint8Array` via structured clone. Persistence now goes through shared
+`hdd-worker.js?model=WD1003&db=ibmpcat-hdd` (chunked sectors, factory
+fingerprint, legacy `c-drive` conversion). Loaded once, in parallel with the
 firmware/HDD fetch, at page load (`Promise.all` alongside the existing
 three `fetch()` calls). `powerOn()`'s `mountHdd()` call now prefers this
 saved image over the pristine fetched one when present. `powerOff()`
@@ -2054,7 +2052,7 @@ To support both patterns, `SET1` now accepts a third entry shape: `{ make: [...]
 
 **UI integration**: Buttons are disabled while the machine is off (no keyboard input to a powered-down device); enabled once `poweredOn && machine` is true. The Ctrl+Alt+Del button is styled with `var(--warn)` border and text for visual distinctness. With a 50ms delay between make and break, a single click mimics a real, if fast, key press — quick enough for interactive use, slow enough that the break code lands as a separate event in the guest's single-threaded frame loop.
 
-**Verified**: 168/168 native tests (no C++ changes); live Playwright test confirmed: buttons disable before boot, enable post-boot, F-key clicks succeed without errors, Ctrl+Alt+Del triggers a real warm reboot (BIOS POST re-runs within seconds), buttons disable again on power-off. Panel buttons wrap naturally via the existing `.row { flex-wrap: wrap }` CSS rule, readable in all four themes (Windows 95, Mid-1990s Web, Modern, Dark Subtle).
+**Verified**: 168/168 native tests (no C++ changes); live Playwright test confirmed: buttons disable before boot, enable post-boot, F-key clicks succeed without errors, Ctrl+Alt+Del triggers a real warm reboot (BIOS POST re-runs within seconds), buttons disable again on power-off. Panel buttons wrap naturally via the existing `.row { flex-wrap: wrap }` CSS rule, readable across the themes then in use (today five; §65).
 
 ## 31. A real bug: Ctrl+Alt+Del silently did nothing once actually tried live
 
@@ -2094,7 +2092,7 @@ Closes the gap §32/§33 both noted ("no committed Playwright suite exists yet")
 
 - **`Machine::textScreen()`** (`web/wasm_machine.cpp`, test-only convenience, gated by nothing beyond the existing `?test=1`-only JS exposure of `window.__test`): this machine has no serial-terminal text buffer the way altair8800/assembler6502 do -- its output is an EGA-rendered canvas -- so there was no way for a test to assert "the screen shows X" without either OCR or a scrape. Added a method that reads the live text-mode VRAM back into a plain string (25 rows, one line each), using the exact same character-cell addressing `ega_render.cpp`'s `RenderTextScreen` already uses (live CRTC Horizontal Displayed register for column count, live start offset, plane-0 byte per cell). Returns `""` outside text mode. No real-hardware counterpart -- a person just looks at the CRT -- purely a test seam, like `window.__test` itself.
 
-- **A real, if narrow, keyboard-timing gap found while writing `keyboard.spec.ts`**: typing `page.keyboard.type("DIR")` followed by `page.keyboard.press("Enter")` reproducibly left the typed command sitting on the prompt line forever -- Enter never submitted it, even after 2 real minutes. Root cause is the same single-byte 8042 output register §31 documents for Ctrl+Alt+Del, but reached a different way: `page.keyboard.press()` fires a key's `keydown` and `keyup` DOM events with **no delay at all** between them by default, and screenEl's own keydown/keyup listeners call `sendKey()`/`injectScancode()` synchronously on each -- so Enter's own break code can silently clobber its own still-unread make code before the guest's IRQ1 handler ever sees it. Separately, typing an uppercase letter via `page.keyboard.type("DIR")` fires Shift's `keydown` and the letter's `keydown` essentially back to back too, so Shift's make code loses the same race and every "uppercase" letter arrives lowercase (harmless for DOS, which is case-insensitive, but a real, reproducible drop). The test suite works around both (typing lowercase; splitting Enter into `keyboard.down()`/`waitForTimeout()`/`keyboard.up()`), matching the same real-gap discipline `app.js`'s own `injectScancodeSequence()` and the F-key button handlers already use. Whether this is reachable from an *actual* physical keyboard is a real hardware question, not a test-only one: a genuine AT keyboard is a slow serial device (one bit at a time) that physically cannot deliver two bytes closer together than real hardware allows, so the CPU is always scheduled in time on real silicon -- this emulator's `inject_scancode()` binding has no equivalent rate limit, and a fast enough chorded keypress (or any programmatic key dispatch, which is exactly what tripped this) could in principle drop a byte the same way. Not fixed here -- doing so properly means giving the emulated 8042 a real serial receive rate (queue + drain, not an instant single-call latch) rather than adding JS-side delays to genuine keydown/keyup handling, which is a real design change, not a test-writing one. Left as a known gap for a future session.
+- **A real, if narrow, keyboard-timing gap found while writing `keyboard.spec.ts`**: (§53.1 closes this.) typing `page.keyboard.type("DIR")` followed by `page.keyboard.press("Enter")` reproducibly left the typed command sitting on the prompt line forever -- Enter never submitted it, even after 2 real minutes. Root cause was the same single-byte 8042 output register §31 documents for Ctrl+Alt+Del: `page.keyboard.press()` fires `keydown`/`keyup` with no delay, so Enter's break could clobber its still-unread make before IRQ1 ran. §53.1 added the keyboard FIFO and 11-bit link timing; `injectScancodeSequence` is now a plain loop that trusts the queue.
 
 ## 35. A real bug: the shipped FreeDOS HDD image build hung indefinitely -- the installer-automation harness was reading video memory that was never the real video memory
 
@@ -2116,19 +2114,53 @@ This is a real, explicit policy change, not a bug fix -- authorized directly by 
 
 **The one thing this could have silently broken**: `pumpAudio()` computed its Web Audio buffer duration as `cyclesThisFrame / 8000000` -- exactly right when cycles map 1:1 to real seconds at 8 MHz, wrong by a factor of `TEST_CPU_MULTIPLIER` otherwise. Left as-is, a fast-mode frame feeding ~20x the real cycle count would have scheduled audio buffers claiming ~20x the frame's real duration, running `nextPlayTime` far ahead of `audioCtx.currentTime` with nothing to bring it back (the existing resync only catches falling *behind*, not getting too far *ahead*) -- a growing backlog of scheduled buffers, not a crash, and not something any current test asserts on (`speaker.spec.ts`'s tests don't inspect audio timing), but a latent bug waiting for the next person to write one. Fixed by deriving both the buffer duration and the edge-to-sample conversion from the frame's *real* elapsed `dtSeconds` (now passed into `pumpAudio()`) instead of the fixed 8 MHz constant -- correct at any multiplier, and identical to the old behavior when the multiplier is 1.
 
-**Smoke test** (`tests/smoke.spec.ts`, new): the one spec that passes `realtime: true` to `boot()` (skipping the default `fast=1`), then samples `machine.totalCycles()` across a real 2-second `waitForTimeout`, asserting the measured cycles/real-second lands near 8,000,000 (bounded `4M`-`12M`, generous for CI scheduling jitter). This is the concrete "verify the clock itself" check the override rules require -- mirrors altair8800's existing disk/tape "a few tests select `Realistic` on purpose" convention, extended to the CPU.
+**Smoke test** (`tests/smoke.spec.ts`): the one spec that passes
+`realtime: true` to `boot()` (skipping the default `fast=1`), then samples
+`machine.totalCycles()` across a real 2-second `wallWait`, asserting the
+measured cycles/real-second lands near 8,000,000 (bounded `4M`-`8.8M`).
+This is the concrete "verify the clock itself" check the override rules
+require -- mirrors altair8800's existing disk/tape "a few tests select
+`Realistic` on purpose" convention, extended to the CPU.
 
-**`helpers.ts`'s `boot()`** now defaults every call to `fast=1` (an added `realtime?: boolean` option opts back out) -- every existing spec picked this up for free, no per-file changes needed beyond the new smoke test.
+**`helpers.ts`'s `boot()`** defaults every call to `fast=1` (an added
+`realtime?: boolean` option opts back out).
 
-Not touched: `disks/build_freedos_hdd.cpp`, the native build-time tool that produces the shipped `freedos-hdd.img` (§35). It already runs unthrottled (no wall-clock pacing to begin with -- its ~15 real minutes is genuine interpreter throughput, not a removable delay), and the `actions/cache@v4` step already wired into CI (keyed on the native source/build-script files) means it only actually runs when one of those files changes, not on every push -- confirmed via a live CI run showing the build step `skipped` (cache hit) on a push that didn't touch ibmpc-at.
+**Deploy strip**: `web/Makefile`'s `STAGE_POST` runs
+`strip_fast_flag.py` so the staged `app.js` hard-codes the multiplier to
+`1`. The root `make site` also `--check`s it, and `check_site.py` fails
+any remaining fast path. Visitors never reach the override (§66).
 
-altair8800 and assembler6502 don't get this flag: neither suite's cost is genuinely CPU-bound (altair8800's was already solved via the existing disk/tape `Max`-speed override; assembler6502's turned out to be per-test browser/wasm startup and 2-worker CI contention, not clock speed -- see `CGOAC6502_REVIEW.md` §14). Add it there, following this same pattern, only if a real CPU-bound bottleneck shows up.
+Not touched: `disks/build_freedos_hdd.cpp`, the native build-time tool that
+produces the shipped `freedos-hdd.img` (§35). It already runs unthrottled
+(no wall-clock pacing to begin with -- its ~15 real minutes is genuine
+interpreter throughput, not a removable delay), and the `actions/cache@v4`
+step already wired into CI (keyed on the native source/build-script files)
+means it only actually runs when one of those files changes, not on every
+push -- confirmed via a live CI run showing the build step `skipped`
+(cache hit) on a push that didn't touch ibmpc-at.
+
+altair8800 and assembler6502 don't get this flag: neither suite's cost is
+genuinely CPU-bound (altair8800's was already solved via the existing
+disk/tape `Max`-speed override; assembler6502's turned out to be per-test
+browser/wasm startup and 2-worker CI contention, not clock speed -- see
+`CGOAC6502_REVIEW.md` §14). Add it there, following this same pattern,
+only if a real CPU-bound bottleneck shows up.
 
 ## 37. Two real bugs found live: a tall EGA canvas and a crackly PC speaker
 
 Both reported live by the user while actually playing Prince of Persia (EGA mode, sound on) rather than caught by the existing suite -- neither had a test before this section.
 
-**Tall canvas**: `RenderEgaNative16Screen()` trusted Vertical Display End (`ega.h`'s `crtc_vertical_display_end()`) literally. This machine's substitute BIOS is VGA-heritage (see the Chain-4/overflow-bit notes elsewhere in this file), and its 320x200x16 mode-set programs the CRTC for a full ~400-line doubled raster, then sets CRTC R09 bit 7 ("Scan Doubling") to fold it back down to a 200-line picture -- a real VGA hardware feature genuine 1984 EGA silicon never had (same story as the R07 overflow bits and Chain-4). Confirmed live: Prince of Persia's EGA mode left Vertical Display End at 399 (carried over verbatim from the prior 640x400 text mode) with the doubling bit set; without honoring it, the renderer drew the real 200-line playfield in the top half of a 400-line canvas and left the rest black. Fixed by adding `crtc_scan_doubling()` and halving the computed height in `RenderEgaNative16Screen()` when it's set -- VRAM only ever holds one copy of each row, so rendering at the logical (halved) height directly reproduces the doubled picture exactly.
+**Tall canvas**: `RenderEgaNative16Screen()` trusted Vertical Display End
+(`ega.h`'s `crtc_vertical_display_end()`) literally. The then-shipped
+VGABIOS-heritage mode-set programmed a ~400-line doubled raster with CRTC
+R09 bit 7 ("Scan Doubling") -- a VGA feature genuine 1984 EGA silicon
+never had. Confirmed live: Prince of Persia's EGA mode left Vertical
+Display End at 399 with the doubling bit set; without honoring it, the
+renderer drew the 200-line playfield in the top half of a 400-line canvas.
+The first fix added `crtc_scan_doubling()` and halved the height. §48.1
+replaced VGABIOS with egabios, and §48.2 dropped scan doubling entirely
+(nothing on an EGA sets R09 bit 7), so that helper is gone; the height
+comes from the EGA CRTC alone.
 
 **Crackly speaker**: the first fix attempt (making the per-frame `AudioBufferSourceNode` scheduling in `app.js`'s `pumpAudio()` sample-accurate -- advancing `nextPlayTime` by the buffer's actual realized duration instead of the raw, unquantized `dtSeconds`) turned out to be necessary but not sufficient; the user still heard it. The real problem was the architecture itself: chaining many one-shot buffer-source nodes together, one per animation frame, is fragile regardless of how precise the scheduling math is -- any main-thread stall (a GC pause, the periodic HDD autosave's array copy) leaves the previously-scheduled node's audio running out with nothing queued behind it, silence, then an abrupt jump back to a nonzero level on the next frame. Replaced with a single persistent `AudioWorkletNode` fed by a ring buffer (`kSpeakerWorkletSrc`, registered from a Blob URL): the worklet's `process()` callback runs continuously on the real-time audio thread regardless of the main thread, holding the last sample on underrun instead of clicking. Also removed the `nextPlayTime`/resync bookkeeping the old approach needed entirely, since there's no scheduling clock left to keep in sync.
 
@@ -2417,10 +2449,11 @@ The `0x66` prefix with 32-bit registers, Jcc rel16, SETcc, MOVZX/MOVSX and
 two-operand IMUL ran everywhere because `BIOS-bochs-legacy` needs them
 (§7). A 286 raises #UD (INT 6) on all of them, and programs probe for a
 386 by trying one. `Cpu::firmware_at` now decides per instruction from
-its physical address, and `Machine` points it at the chipset's ROM map
-(`Chipset::is_rom`), which covers the system BIOS and the video BIOS. Code
-from ROM keeps the 386 layer. Anything else gets #UD. Unknown opcodes
-fetched from ROM stay a reported no-op through `on_unimplemented`.
+its physical address. `Machine` limits it to the system BIOS window
+(`addr >= 0xE0000 && chipset.is_rom(addr)`), not the EGA stand-in at
+C0000. Code from that window keeps the 386 layer. Anything else gets #UD.
+Unknown opcodes fetched from that ROM stay a reported no-op through
+`on_unimplemented`.
 
 Undefined opcodes that used to fall through as 2-cycle no-ops now raise
 #UD, with IP on the instruction: `63h` (ARPL is protected mode only),
@@ -2435,9 +2468,9 @@ source settles what a 286 does with it.
 Once unknown `0F` opcodes raise #UD, the ones a 286 accepts in real mode
 can't stay silent no-ops, so they're implemented:
 
-- **SMSW / LMSW.** MSW resets to FFF0h. LMSW loads MP, EM and TS. It can't
-  set PE, because there's no protected mode to enter (C10). It reports
-  the attempt through `on_unimplemented` and leaves PE clear.
+- **SMSW / LMSW.** (§63.2 replaces the PE rule.) MSW resets to FFF0h.
+  LMSW loads MP, EM and TS, and sets PE (it can't clear it). Early phases
+  left PE clear and reported the attempt; protected mode lands in §63.
 - **CLTS** clears TS.
 - **LGDT / LIDT / SGDT / SIDT** load and store a 24-bit base and a limit.
   SGDT and SIDT write FFh in the sixth byte where a 386 writes 00h, another
@@ -2449,8 +2482,8 @@ can't stay silent no-ops, so they're implemented:
   and TS set. With MSW as the BIOS leaves it, an ESC still does nothing,
   as on an AT with no 80287 fitted.
 
-`0F 05` (LOADALL) is a reported no-op. It needs the descriptor caches that
-come with C10.
+`0F 05` (LOADALL) is a reported no-op. Descriptor caches landed in §63.1;
+the open item is now C14 (primary-source table layout).
 
 ### 44.5 Faults restart the instruction
 
@@ -3681,8 +3714,10 @@ harnesses start at 1986-01-01 00:00:00, a Wednesday.
 
 ## 54. Test parity: a smoke boot, the thin native suites, every control, and coverage
 
-Items X1-X4 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md). X5 waits on
-C10.
+Items X1-X4 from [`IBM_PCAT_PARITY.md`](IBM_PCAT_PARITY.md). X5 (review
+corrections for §3, §5, and §44.3) is closed by the markers in those
+sections and by §0 / §66. Counts below are from this section's date;
+§66 has the current totals.
 
 ### 54.1 Smoke boots and types (X1)
 
@@ -4083,11 +4118,13 @@ stay open as T9 and E20 in `IBM_PCAT_PARITY.md`.
 
 ## 63. Protected mode and extended memory
 
-Parity items C10 and P8. Sources: Intel iAPX 286 Programmer's Reference
-Manual (1987), chapters 6-9 and the instruction pages, timing appendix for
-clocks; IBM PC/AT Technical Reference for the memory map, shutdown and bus
-timing; the shipped `BIOS-bochs-legacy` ROM, disassembled, for what the
-stand-in firmware does.
+Closes the original parity items C10 (protected mode) and P8 (extended
+memory). LOADALL / STOREALL stay open as C14; a 512KB base-memory choice
+stays open as P13 (`IBM_PCAT_PARITY.md`). Sources: Intel iAPX 286
+Programmer's Reference Manual (1987), chapters 6-9 and the instruction
+pages, timing appendix for clocks; IBM PC/AT Technical Reference for the
+memory map, shutdown and bus timing; the shipped `BIOS-bochs-legacy` ROM,
+disassembled, for what the stand-in firmware does.
 
 ### 63.1 Descriptor caches
 
@@ -4172,7 +4209,7 @@ move.
 
 ### 63.5 Checks
 
-- `cpu80286_pm_test`: 34 cases over loads, limits, gates, privilege,
+- `cpu80286_pm_test`: 35 cases over loads, limits, gates, privilege,
   task switches, #DF/shutdown, the system instructions and their clocks.
 - `bios_test`: the real ROM's INT 15h AH=88h, E801h and an AH=87h copy
   into extended memory, back in real mode afterwards.
@@ -4192,3 +4229,63 @@ move.
 - Extended-memory timing: adapter RAM is charged the TR's 16-bit device
   cycle (3 clocks, as port 1F0h). No IBM memory option's own timing is in
   hand.
+
+## 64. Performance panel (`?perf`, `IBMPCAT_PERF`)
+
+Same shape as the 486: a second wasm binary built with `IBMPCAT_PERF`
+(`make -C ibmpc-at/web ibmpcat-perf.js`) carries the emulator's own
+counters on the hot paths. `?perf` probes for `ibmpcat-perf.js` and loads
+it when present (Tier 2 / "Instrumented build"); otherwise it keeps the
+shipped binary and shows Tier 1 host metrics only ("Shipped build"). The
+shipped page never links the perf binary. Deploy CI builds both;
+`nightly-full.yml` also re-runs `performance.spec.ts` with the perf
+binary hidden so the fallback stays covered. Four Playwright cases in
+`performance.spec.ts`.
+
+## 65. Shared front-end modules
+
+Work that moved out of this machine's private `web/` into `shared/`, or
+landed there first:
+
+- **Themes**: five themes via `shared/theme.css`, `theme-init.js`,
+  `theme-picker.js` (`win`, `winxp`, `web94`, `subtle`, `aurora`).
+- **HDD persistence**: `shared/hdd-worker.js?model=WD1003&db=ibmpcat-hdd`
+  (chunked sectors, factory fingerprint, legacy `c-drive` conversion;
+  §61). `hdd-convert.js` covers old-format uploads.
+- **Disk library / floppies**: `shared/disk-library.*`, `floppy-store.js`,
+  `blank-floppy.js`, `disk-drop.*`. `library-images` builds the library
+  floppies from `disks/library.json` via `shared/dos-library/` (needs
+  mtools; nightly). Specs: `library.spec.ts`, `floppy.spec.ts`,
+  `hddstorage.spec.ts`.
+- **Keyboard / paste**: shared `pc-keyboard.js` (keymap key
+  `retro8080.ibmpcat.keymap`, §57) plus paste into the guest
+  (`paste.spec.ts`).
+- **Boot notice / notices / analytics**: Barebones FreeDOS boot notice
+  (`bootnotice.spec.ts`), footer third-party notices
+  (`notices.spec.ts`, `footer.spec.ts`), GoatCounter via
+  `shared/analytics.js` with `data-machine="ibmpc-at"`.
+
+## 66. Tests and CI
+
+Current totals (2026-10-27): about 631 native GoogleTest cases (`ctest`
+over `ibmpc-at/tests/build`, including `shared/pc/tests` this machine
+links) and about 120 Playwright cases across 21 specs. Per-suite samples:
+`machine_test` 15, `fdc765_test` 26, `cpu80286_pm_test` 35, `i8042_test`
+34. Prefer `ctest -N` and the spec files over hard counts in older
+sections.
+
+- **Playwright ports**: serve `8300`, suite `8310`. Workers: 1 with
+  coverage, 2 on CI, 3 locally.
+- **Smoke vs full**: `make -C ibmpc-at test-smoke` and
+  `make -C ibmpc-at/web test-smoke` (the latter is `smoke.spec.ts` only).
+  Deploy CI (`deploy-emulator.yml`) runs smoke; `nightly-full.yml` runs
+  `make check` / `make test`. Nightly `ibmpcat-web-test` goes through
+  `pick-runner` (self-hosted `retro-mini`, ubuntu fallback with
+  `SLOW_HOST=1`); wall-clock-sensitive specs skip on `SLOW_HOST`.
+- **`fast=1` contract**: gated in `app.js`, defaulted by `boot()` for
+  non-realtime specs, stripped from staged `app.js` (`STAGE_POST` +
+  root `--check` + `check_site.py`). Real-speed smoke bounds: 4M–8.8M
+  cycles/s via `wallWait` (§36).
+- **Build deps**: `nasm` for egabios; `mtools` for `tune-freedos-hdd.py`,
+  library floppies, and related disk tools. HDD image cached in CI
+  (§11).

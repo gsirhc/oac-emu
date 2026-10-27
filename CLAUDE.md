@@ -84,9 +84,10 @@ must always be written fresh from datasheets and schematics.
 
 Exceptions. These do not waive the rest of this section.
 
-- **Bochs BIOS and the LGPL VGA BIOS.** Both PCs ship these as guest
-  firmware standing in for IBM's, fetched at build time
-  (`BIOS-bochs-legacy`, `VGABIOS-lgpl-latest.bin`). Redistributing the
+- **Bochs BIOS and the LGPL VGA BIOS.** Both PCs ship `BIOS-bochs-legacy`
+  as the system BIOS stand-in, fetched at build time. The 486 also ships
+  `VGABIOS-lgpl-latest.bin`; the PC/AT ships the from-scratch EGA BIOS
+  stand-in `egabios` instead (`ibmpc-at/roms/egabios/`). Redistributing the
   Bochs BIOS binary is allowed when its license permits it. Comments,
   reviews, and tests may name that ROM and describe what it requires of
   the hardware (port `0xE9`, INT 15h, `rombios.c`). Do not read the rest
@@ -205,6 +206,10 @@ spec sheet or reference document. Every addition must:
   stays turnkey like every other machine here, and label the substitution
   clearly (README, boot banner) as a compatible stand-in, not the literal
   factory firmware — the same labelled-departure rule as any override above.
+- **`*_REVIEW.md` and `*_PARITY.md`** in the machine's folder (citation
+  trail and open backlog). Shared cores that have their own
+  (`shared/cpu/Z80_REVIEW.md`, `Z80_ARCADE_PARITY.md`) count the same.
+  See "Review and parity docs" below.
 
 Arcade cabinets (Pac-Man, Frogger, Scramble, Galaxian, Galaga, Asteroids,
 Centipede, Missile Command, Space Invaders, Lunar Rescue, Battlezone, and any new one) also follow [`.claude/arcade.md`](.claude/arcade.md).
@@ -448,6 +453,29 @@ nightly's. Treat tests as part of every change, not a step at the end.
 - **When the nightly is red, read it.** `gh run list --workflow
   nightly-full.yml` and `gh run view --job <id> --log-failed`. Fix the
   cause, including flakes marked "flaky", not just the hard failures.
+
+## Review and parity docs
+
+Every machine keeps a `*_REVIEW.md` (citation trail and design notes) and
+a `*_PARITY.md` (open gaps vs real hardware, with a status table). Shared
+cores that have their own (`shared/cpu/Z80_REVIEW.md`,
+`Z80_ARCADE_PARITY.md`) follow the same rule. **Both stay current with
+the code for every emulator** — not a follow-up, and not only when
+someone asks for a doc pass.
+
+- A change that adds, removes, or reshapes behaviour updates the matching
+  REVIEW section (or adds one) and the PARITY backlog in the same change:
+  close items that landed, open items that are still missing, fix stale
+  "current state" claims and IDs, refresh counts only where the section
+  is meant to be current (prefer pointing at `ctest -N` / the spec files
+  over hard-coding totals that rot).
+- The REVIEW may keep a chronological journal; mark superseded early
+  bullets with a "(§N replaces this)" pointer rather than leaving a
+  reader on an obsolete "not yet done".
+- Do not leave a PARITY item marked done and still open under the same
+  ID. Rename leftovers when a close-out reuses a number.
+- New machines ship both files from the start (see "Adding a new
+  machine"). Cabinets also list them in [`.claude/arcade.md`](.claude/arcade.md).
 
 ## Always delegate to a cheaper model when the task allows it
 

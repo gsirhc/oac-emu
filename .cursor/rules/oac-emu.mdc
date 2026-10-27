@@ -10,6 +10,7 @@ Follow the project rules in [`CLAUDE.md`](../../CLAUDE.md) at the repo root. Tha
 In particular:
 
 - **Fidelity first.** Match real hardware behavior, timing, port maps, and status polarity. Cite period sources for quirks. Do not copy another emulator’s shortcuts.
+- **Review and parity docs.** Every machine’s `*_REVIEW.md` and `*_PARITY.md` stay current with the code in the same change (CLAUDE.md “Review and parity docs”).
 - **Real clocks.** The live page runs at the machine’s actual speed. No visitor-facing turbo. Test-only speed overrides follow the three rules in CLAUDE.md (default off, labelled, opt-in).
 - **New machines** are full browser WASM emulators (real CPU, real graphics, real storage), plus GoogleTest and Playwright, wired through `Makefile` and `.github/workflows/deploy-emulator.yml`.
 - **Copyright.** Do not bundle or fetch ROMs still under active copyright. Ship a labelled free stand-in (test ROM, open BIOS, FreeDOS) and let the user supply originals locally.

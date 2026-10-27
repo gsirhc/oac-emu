@@ -1957,7 +1957,7 @@ int Cpu::execute(uint8_t op, int c) {
                 if (cpl0()) msw_ = uint16_t(msw_ & ~MSW_TS);  // CLTS
                 c += 2;
             } else if (op2 == 0x05) {
-                // LOADALL needs the descriptor caches this core doesn't have.
+                // LOADALL: reported no-op until a primary-source table layout (C14).
                 if (on_unimplemented) on_unimplemented(cs, instr_start_ip_, 0x0F05);
                 c += 3;
             } else if (!firmware()) {

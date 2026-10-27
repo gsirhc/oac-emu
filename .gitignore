@@ -59,7 +59,6 @@ ibmpc-at/tests/build/
 ibmpc-at/tests/build-cov/
 ibmpc-at/tests/coverage-cpp/
 ibmpc-at/roms/BIOS-bochs-legacy
-ibmpc-at/roms/VGABIOS-lgpl-latest.bin
 ibmpc-at/roms/fntcol16.zip
 ibmpc-at/roms/egabios/egabios.bin
 ibmpc-at/roms/egabios/egabios.tmp
