@@ -115,6 +115,9 @@ public:
     void injectScancode(int code) { m_.chipset.kbc.inject_scancode(uint8_t(code)); }
     int keyboardLeds() const { return m_.chipset.kbc.leds(); }
     bool keysPending() const { return m_.chipset.kbc.keys_pending(); }
+    int ramByte(int addr) const {
+        return addr >= 0 && std::size_t(addr) < m_.chipset.mem.size() ? m_.chipset.mem[std::size_t(addr)] : 0;
+    }
 
     void setRtc(int year, int month, int day, int hour, int minute, int second, int weekday) {
         m_.chipset.cmos.set_time(year, month, day, hour, minute, second, weekday);
@@ -252,6 +255,7 @@ EMSCRIPTEN_BINDINGS(ibmpcat_machine) {
         .function("injectScancode", &WasmMachine::injectScancode)
         .function("keyboardLeds", &WasmMachine::keyboardLeds)
         .function("keysPending", &WasmMachine::keysPending)
+        .function("ramByte", &WasmMachine::ramByte)
         .function("setRtc", &WasmMachine::setRtc)
         .function("mountFloppy", &WasmMachine::mountFloppy)
         .function("unmountFloppy", &WasmMachine::unmountFloppy)

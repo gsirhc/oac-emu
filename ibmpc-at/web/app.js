@@ -94,12 +94,15 @@
     sendKey,
     isEnabled: () => poweredOn && !!machine,
     readLeds: () => (machine ? machine.keyboardLeds() : 0),
+    keysIdle: () => !!machine && !machine.keysPending(),
+    readRam: (addr) => (machine ? machine.ramByte(addr) : 0),
     keymapStorageKey: "retro8080.ibmpcat.keymap",
     openStateKey: "retro8080.ibmpcat.keyboardOpen",
     bezelKeysBtn: document.getElementById("keymapAllBtn"),
   });
   screenEl.addEventListener("keydown", keyboard.keyDown);
   screenEl.addEventListener("keyup", keyboard.keyUp);
+  screenEl.addEventListener("paste", keyboard.paste);
   screenEl.addEventListener("blur", keyboard.releaseAll);
   document.addEventListener("visibilitychange", () => { if (document.hidden) keyboard.releaseAll(); });
   screenEl.addEventListener("click", () => screenEl.focus());
@@ -166,9 +169,9 @@
     label.classList.add("empty");
     bay.querySelector('[data-role="eject"]').disabled = true;
   }
-  // Writes live only in memory, so a written disk is handed back as a download.
-  function saveFloppy(drive) {
-    if (!machine || !machine.floppyDirty(drive)) return;
+  const floppyStore = initFloppyStore({ db: "ibmpcat-floppy" });
+  // Bay Save, eject, drop/file insert-over, and library insert-over all use the same prompt.
+  function downloadFloppyImage(drive) {
     const bay = bays[drive];
     const label = bay.querySelector('[data-role="label"]');
     const blob = new Blob([machine.floppyImage(drive)], { type: "application/octet-stream" });
@@ -182,8 +185,50 @@
     machine.clearFloppyDirty(drive);
     bay.querySelector('[data-role="save"]').hidden = true;
   }
-  async function insertFloppy(drive, name, data) {
-    saveFloppy(drive);
+  async function saveFloppyToBrowser(drive) {
+    const bay = bays[drive];
+    const bytes = machine.floppyImage(drive);
+    const bayLabel = (bay.querySelector('[data-role="label"]').textContent || "").trim();
+    const idbName = pendingFloppy[drive] && pendingFloppy[drive].idbName;
+    const name = await promptFloppySaveName({
+      suggested: idbName || floppyVolumeLabel(bytes) || bayLabel,
+    });
+    if (!name) return false;
+    try {
+      if (await floppyStore.findByName(name)) {
+        if (!(await promptFloppyOverwrite(name))) return false;
+      }
+      await floppyStore.put(name, floppyFormatK(bytes.length), bytes);
+    } catch (err) {
+      console.error("floppy store:", err);
+      await promptFloppySaveFailed();
+      return false;
+    }
+    machine.clearFloppyDirty(drive);
+    bay.querySelector('[data-role="save"]').hidden = true;
+    return true;
+  }
+  // true = proceed (saved, downloaded, or discarded); false = cancel / failed save.
+  async function resolveDirtyFloppy(drive) {
+    if (!machine || !machine.floppyDirty(drive)) return true;
+    let canBrowser = !floppyStore.blocked;
+    if (canBrowser) canBrowser = await floppyStore.probe();
+    const choice = await promptFloppyDirty({ canSaveBrowser: canBrowser });
+    if (choice === "cancel") return false;
+    if (choice === "download") {
+      downloadFloppyImage(drive);
+      return true;
+    }
+    if (choice === "browser") return saveFloppyToBrowser(drive);
+    machine.clearFloppyDirty(drive);
+    bays[drive].querySelector('[data-role="save"]').hidden = true;
+    return true;
+  }
+  function saveFloppy(drive) {
+    return resolveDirtyFloppy(drive);
+  }
+  async function insertFloppy(drive, name, data, meta) {
+    if (!(await resolveDirtyFloppy(drive))) return;
     const bay = bays[drive];
     const label = bay.querySelector('[data-role="label"]');
     const before = { text: label.textContent, empty: label.classList.contains("empty") };
@@ -194,7 +239,11 @@
     try {
       await withLoad("Loading floppy\u2026", async () => {
         const bytes = await data;
-        pendingFloppy[drive] = { name, bytes };
+        pendingFloppy[drive] = {
+          name,
+          bytes,
+          idbName: meta && meta.idbName ? String(meta.idbName) : "",
+        };
         if (machine) machine.mountFloppy(drive, bytes);
         setBayLoaded(bay, name);
       });
@@ -216,8 +265,8 @@
       await insertFloppy(drive, f.name, f.arrayBuffer().then((b) => new Uint8Array(b)));
     });
     bay.querySelector('[data-role="save"]').addEventListener("click", () => saveFloppy(drive));
-    bay.querySelector('[data-role="eject"]').addEventListener("click", () => {
-      saveFloppy(drive);
+    bay.querySelector('[data-role="eject"]').addEventListener("click", async () => {
+      if (!(await resolveDirtyFloppy(drive))) return;
       if (machine) machine.unmountFloppy(drive);
       pendingFloppy[drive] = null;
       setBayEmpty(bay, drive);
@@ -229,7 +278,9 @@
   initDiskLibrary({
     button: document.getElementById("libraryBtn"),
     drives: [{ id: 0, name: "A:", accepts: driveTakes[0] }, { id: 1, name: "B:", accepts: driveTakes[1] }],
-    insert: (drive, label, bytes) => insertFloppy(drive, label, bytes),
+    insert: (drive, label, bytes, meta) => insertFloppy(drive, label, bytes, meta),
+    blank: true,
+    floppyStore,
   });
 
   const FLOPPY_K = { 1228800: 1200, 368640: 360 };

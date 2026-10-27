@@ -23,7 +23,7 @@
       '<a class="about-sign" href="' + helpHref() +
       '" title="Help" aria-label="Help">Help</a></p>';
     footer.innerHTML = help +
-      "<p>&copy; 2026 oac-emu.dev - Featuring Old-Ass Computer " +
+      "<p>&copy; 2026 oac-emu.dev - featuring Old-Ass Computer " +
       "Emulation you can use for free.</p>" +
       '<p>Source code available on <a class="source-link" href="' +
       SOURCE_HREF + '" target="_blank" rel="noopener noreferrer">GitHub</a></p>';

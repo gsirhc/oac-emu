@@ -85,6 +85,29 @@ const PC_KEYBOARD_MODIFIERS = new Set([
   "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "AltLeft", "AltRight",
 ]);
 
+// Pasted character -> [code, shifted] on the US layout.
+const PC_PASTE_KEYS = (() => {
+  const m = new Map();
+  const add = (plain, shifted, code) => {
+    m.set(plain, [code, false]);
+    m.set(shifted, [code, true]);
+  };
+  "1234567890".split("").forEach((d, i) => add(d, "!@#$%^&*()"[i], "Digit" + d));
+  for (let c = 0; c < 26; c++) {
+    const upper = String.fromCharCode(65 + c);
+    add(upper.toLowerCase(), upper, "Key" + upper);
+  }
+  for (const [plain, shifted, code] of [["`", "~", "Backquote"], ["-", "_", "Minus"], ["=", "+", "Equal"],
+    ["[", "{", "BracketLeft"], ["]", "}", "BracketRight"], ["\\", "|", "Backslash"], [";", ":", "Semicolon"],
+    ["'", "\"", "Quote"], [",", "<", "Comma"], [".", ">", "Period"], ["/", "?", "Slash"]]) {
+    add(plain, shifted, code);
+  }
+  m.set(" ", ["Space", false]);
+  m.set("\t", ["Tab", false]);
+  m.set("\n", ["Enter", false]);
+  return m;
+})();
+
 function pcKeyboardIsTouchOnly() {
   try {
     return matchMedia("(pointer: coarse)").matches && !matchMedia("(any-pointer: fine)").matches;
@@ -98,6 +121,8 @@ function initPcKeyboard(opts) {
   const { root, sendKey, keymapStorageKey, openStateKey, bezelKeysBtn } = opts;
   const isEnabled = opts.isEnabled || (() => true);
   const readLeds = opts.readLeds || (() => 0);
+  const keysIdle = opts.keysIdle || (() => true);
+  const readRam = opts.readRam || null;
 
   // ---- guest key routing ----
   // Guest keys are refcounted so a shared chord modifier (WASD's Alt strafe) stays down while any
@@ -612,6 +637,9 @@ function initPcKeyboard(opts) {
   // ---- physical keys (wired to the screen by the page) ----
   function keyDown(e) {
     if (capturePhase) return;
+    // Cmd+V / Ctrl+Shift+V keep their default so the browser fires paste; plain Ctrl+V is the guest's.
+    if (e.code === "KeyV" && (e.metaKey || (e.ctrlKey && e.shiftKey))) return;
+    cancelPaste();
     e.preventDefault();
     if (e.repeat || physicalHeld.has(e.code)) return;
     const codes = mapKey(e.code);
@@ -624,6 +652,55 @@ function initPcKeyboard(opts) {
     const codes = physicalHeld.get(e.code) || mapKey(e.code);
     physicalHeld.delete(e.code);
     for (let i = codes.length - 1; i >= 0; i--) releaseGuestKey(codes[i]);
+  }
+
+  // ---- paste ----
+  // Types one character at a time, each once the guest has read the last and the BIOS type-ahead
+  // is empty, so a busy program never overflows it.
+  let pasteChars = [];
+  let pasteTimer = 0;
+  function typeAheadQueued() {
+    if (!readRam) return false;
+    // BUFFER_HEAD 40:1A, BUFFER_TAIL 40:1C (IBM AT Technical Reference, BIOS listing)
+    const head = readRam(0x41A) | (readRam(0x41B) << 8);
+    const tail = readRam(0x41C) | (readRam(0x41D) << 8);
+    return head !== tail;
+  }
+  function cancelPaste() {
+    clearTimeout(pasteTimer);
+    pasteTimer = 0;
+    pasteChars = [];
+  }
+  function pumpPaste() {
+    pasteTimer = 0;
+    if (!isEnabled()) {
+      cancelPaste();
+      return;
+    }
+    if (keysIdle() && !typeAheadQueued()) {
+      const [code, shifted] = pasteChars.shift();
+      // Caps Lock flips letters only (LED bit 2)
+      const shift = shifted !== (code.startsWith("Key") && (readLeds() & 4) !== 0);
+      if (shift) sendKey("ShiftLeft", false);
+      sendKey(code, false);
+      sendKey(code, true);
+      if (shift) sendKey("ShiftLeft", true);
+    }
+    if (pasteChars.length > 0) pasteTimer = setTimeout(pumpPaste, 10);
+  }
+  function pasteText(text) {
+    cancelPaste();
+    releaseAll();
+    for (const ch of String(text).replace(/\r\n?/g, "\n")) {
+      const key = PC_PASTE_KEYS.get(ch);
+      if (key) pasteChars.push(key);
+    }
+    if (pasteChars.length > 0) pumpPaste();
+  }
+  function paste(e) {
+    if (capturePhase || !isEnabled()) return;
+    e.preventDefault();
+    pasteText(e.clipboardData ? e.clipboardData.getData("text/plain") : "");
   }
 
   // ---- power and lock lights ----
@@ -675,7 +752,8 @@ function initPcKeyboard(opts) {
   paintDisabled();
 
   return {
-    keyDown, keyUp, releaseAll, refresh, mapKey,
+    keyDown, keyUp, releaseAll, refresh, mapKey, paste, pasteText, cancelPaste,
+    get pasteActive() { return pasteChars.length > 0; },
     get heldKeysSize() { return heldKeys.size; },
     get latched() { return [...latched.keys()]; },
     get keymapRows() { return keymapRows.map((r) => ({ ...r, to: r.to.slice() })); },

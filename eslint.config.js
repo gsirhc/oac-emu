@@ -86,6 +86,17 @@ export default [
         trackEvent: "readonly",
         initDiskDrop: "readonly",
         initDiskLibrary: "readonly",
+        initFloppyStore: "readonly",
+        promptFloppyDirty: "readonly",
+        promptFloppySaveName: "readonly",
+        promptFloppyOverwrite: "readonly",
+        promptFloppySaveFailed: "readonly",
+        makeBlankFloppy: "readonly",
+        blankFloppyLabel: "readonly",
+        blankFloppySizes: "readonly",
+        floppyFormatK: "readonly",
+        floppyVolumeLabel: "readonly",
+        floppyRootListing: "readonly",
         initPcKeyboard: "readonly",
         initArcadeTouch: "readonly",
         arcadeCrc32: "readonly",
@@ -106,7 +117,7 @@ export default [
     },
   },
   {
-    files: ["shared/theme-picker.js", "shared/fullscreen.js", "shared/focus-hint.js", "shared/winbtns.js", "shared/pc-keyboard.js", "shared/arcade-touch.js", "shared/arcade-core.js", "shared/disk-drop.js", "shared/disk-library.js", "shared/footer.js", "shared/terminal.js", "shared/thumb-art.js", "shared/analytics.js"],
+    files: ["shared/theme-picker.js", "shared/fullscreen.js", "shared/focus-hint.js", "shared/winbtns.js", "shared/pc-keyboard.js", "shared/arcade-touch.js", "shared/arcade-core.js", "shared/disk-drop.js", "shared/blank-floppy.js", "shared/floppy-store.js", "shared/disk-library.js", "shared/footer.js", "shared/terminal.js", "shared/thumb-art.js", "shared/analytics.js"],
     languageOptions: {
       globals: {
         ...globals.browser,
@@ -116,8 +127,19 @@ export default [
       "no-unused-vars": ["error", {
         argsIgnorePattern: "^_",
         caughtErrors: "none",
-        varsIgnorePattern: "^(_|initThemePicker|initFullscreen|initFocusHint|initDiskDrop|initDiskLibrary|initPcKeyboard|initArcadeTouch|arcadeTouchOnly|arcadeCrc32|arcadeHexCrc|arcadeUnzip|arcadeReadRomFiles|arcadeStore|arcadePrefs|arcadeAudio|arcadeHiscore|arcadeHiscoreReset|arcadeRomLoader|arcadeLoop|initThumbArt|termDumbFilter|termVt52Filter|termAdm3aFilter|trackEvent)$",
+        varsIgnorePattern: "^(_|initThemePicker|initFullscreen|initFocusHint|initDiskDrop|initDiskLibrary|initFloppyStore|promptFloppyDirty|promptFloppySaveName|promptFloppyOverwrite|promptFloppySaveFailed|makeBlankFloppy|blankFloppyLabel|blankFloppySizes|floppyFormatK|floppyVolumeLabel|floppyRootListing|BLANK_FLOPPY|initPcKeyboard|initArcadeTouch|arcadeTouchOnly|arcadeCrc32|arcadeHexCrc|arcadeUnzip|arcadeReadRomFiles|arcadeStore|arcadePrefs|arcadeAudio|arcadeHiscore|arcadeHiscoreReset|arcadeRomLoader|arcadeLoop|initThumbArt|termDumbFilter|termVt52Filter|termAdm3aFilter|trackEvent)$",
       }],
+    },
+  },
+  {
+    files: ["shared/disk-library.js"],
+    languageOptions: {
+      globals: {
+        makeBlankFloppy: "readonly",
+        blankFloppyLabel: "readonly",
+        blankFloppySizes: "readonly",
+        floppyRootListing: "readonly",
+      },
     },
   },
   {

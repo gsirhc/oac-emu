@@ -256,22 +256,22 @@ jobs:
         if: runner.environment == 'self-hosted'
         run: |
           for port in 8300 8310; do
-            pids=$(lsof -nP -t -iTCP:$port -sTCP:LISTEN || true)
-            if [ -n "$pids" ]; then echo "killing $pids on $port"; kill $pids; fi
+            pids=$(lsof -nP -t -iTCP:"$port" -sTCP:LISTEN || true)
+            if [ -n "$pids" ]; then echo "killing $pids on $port"; echo "$pids" | xargs kill; fi
           done
 
       - working-directory: ibmpc-at/web
         run: make test
 
       # The suite above runs against whichever binary ?perf picks, which is
-      # the instrumented one. Run the Performance panel again with that
-      # binary hidden, so the shipped-build path is exercised too.
+      # the instrumented one. Re-run only the shipped-fallback case with that
+      # binary hidden (the Tier 2 instrumented test needs ibmpcat-perf.js).
       - name: IBM PC/AT Performance panel against the shipped binary
         working-directory: ibmpc-at/web
         run: |
+          trap 'mv -f ibmpcat-perf.js.hidden ibmpcat-perf.js 2>/dev/null || true' EXIT
           mv ibmpcat-perf.js ibmpcat-perf.js.hidden
-          npx playwright test tests/performance.spec.ts
-          mv ibmpcat-perf.js.hidden ibmpcat-perf.js
+          npx playwright test tests/performance.spec.ts -g "shipped binary"
 
       - if: failure()
         uses: actions/upload-artifact@v4
@@ -405,23 +405,22 @@ jobs:
         if: runner.environment == 'self-hosted'
         run: |
           for port in 8400 8410; do
-            pids=$(lsof -nP -t -iTCP:$port -sTCP:LISTEN || true)
-            if [ -n "$pids" ]; then echo "killing $pids on $port"; kill $pids; fi
+            pids=$(lsof -nP -t -iTCP:"$port" -sTCP:LISTEN || true)
+            if [ -n "$pids" ]; then echo "killing $pids on $port"; echo "$pids" | xargs kill; fi
           done
 
       - working-directory: pc486/web
         run: make test
 
       # The suite above runs against whichever binary ?perf picks, which is
-      # the instrumented one. Run the Performance panel's own spec again with
-      # that binary hidden, so the shipped-build path -- Tier 1 only, no
-      # counters -- is exercised too rather than merely assumed.
+      # the instrumented one. Re-run only the shipped-fallback case with that
+      # binary hidden (same idea as ibmpcat-web-test above).
       - name: pc486 Performance panel against the shipped binary
         working-directory: pc486/web
         run: |
+          trap 'mv -f pc486-perf.js.hidden pc486-perf.js 2>/dev/null || true' EXIT
           mv pc486-perf.js pc486-perf.js.hidden
-          npx playwright test tests/performance.spec.ts
-          mv pc486-perf.js.hidden pc486-perf.js
+          npx playwright test tests/performance.spec.ts -g "shipped binary|falls back to the shipped"
 
       - if: failure()
         uses: actions/upload-artifact@v4

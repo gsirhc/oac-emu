@@ -78,6 +78,8 @@ public:
     }
     uint8_t typematic_byte() const { return typematic_; }
     bool typematic_active() const { return tm_active_; }
+    // Bytes queued or unread at port 0x60, mouse bytes included.
+    bool keys_pending() const { return queue_count_ > 0 || output_full_; }
 
     // Button bits in PS/2 movement packet order (Chapweske)
     enum MouseButton : uint8_t {

@@ -33,6 +33,13 @@
   border: var(--field-border);
   background: var(--field-bg);
 }
+#libraryDialog .lib-heading {
+  padding: 8px 8px 2px;
+  font: bold 11px Arial, Helvetica, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--dim);
+}
 #libraryDialog .lib-item {
   display: flex;
   justify-content: space-between;
@@ -75,4 +82,47 @@
 @media (max-width: 560px) {
   #libraryDialog .lib-body { grid-template-columns: 1fr; }
   #libraryDialog .lib-list { max-height: 30vh; }
+}
+
+/* Floppy save prompts (floppy-store.js). Panel chrome comes from .site-dialog. */
+#floppyDirtyDialog,
+#floppySaveNameDialog,
+#floppyOverwriteDialog,
+#floppySaveFailedDialog {
+  max-width: min(420px, calc(100vw - 32px));
+}
+.floppy-dirty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.floppy-dirty-actions button {
+  font: 12px Arial, Helvetica, sans-serif;
+  color: var(--btn-fg);
+  background: var(--btn-bg);
+  border: var(--btn-border);
+  border-radius: var(--btn-radius);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+#floppySaveNameDialog .floppy-save-name-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 12px;
+  font: 12px Arial, Helvetica, sans-serif;
+  color: var(--dim);
+}
+#floppySaveNameDialog .floppy-save-name {
+  font: 13px Arial, Helvetica, sans-serif;
+  color: var(--text);
+  background: var(--field-bg);
+  border: var(--field-border);
+  border-radius: var(--btn-radius, 2px);
+  padding: 5px 8px;
+}
+#floppySaveNameDialog button:disabled {
+  opacity: .5;
+  cursor: default;
 }

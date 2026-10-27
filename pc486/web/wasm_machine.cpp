@@ -100,6 +100,10 @@ public:
     void injectScancode(int code) { m_.chipset.kbc.inject_scancode(uint8_t(code)); }
     int keyboardLeds() const { return m_.chipset.kbc.leds(); }
     bool keyboardRepeating() const { return m_.chipset.kbc.typematic_active(); }
+    bool keysPending() const { return m_.chipset.kbc.keys_pending(); }
+    int ramByte(int addr) const {
+        return addr >= 0 && std::size_t(addr) < m_.chipset.mem.size() ? m_.chipset.mem[std::size_t(addr)] : 0;
+    }
 
     // ---- PS/2 mouse (8042 AUX port) ----
     // `dy` is +Y away from the user (chipset.h inject_mouse_event); negate a browser movementY.
@@ -432,6 +436,8 @@ EMSCRIPTEN_BINDINGS(pc486_machine) {
         .function("injectScancode", &WasmMachine::injectScancode)
         .function("keyboardLeds", &WasmMachine::keyboardLeds)
         .function("keyboardRepeating", &WasmMachine::keyboardRepeating)
+        .function("keysPending", &WasmMachine::keysPending)
+        .function("ramByte", &WasmMachine::ramByte)
         .function("injectMouseEvent", &WasmMachine::injectMouseEvent)
         .function("mountFloppy", &WasmMachine::mountFloppy)
         .function("unmountFloppy", &WasmMachine::unmountFloppy)
