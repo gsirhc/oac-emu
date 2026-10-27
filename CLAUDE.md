@@ -358,7 +358,7 @@ enough to gate Pages deploys. The full fidelity suites are slower
 | When | Workflow | What runs |
 |------|----------|-----------|
 | Push / PR | `deploy-emulator.yml` | **Smoke** (`make test-smoke`) + lint + site build/deploy |
-| Nightly 08:00 UTC + manual | `nightly-full.yml` | **Full** (`make check` / `make test`) — no deploy |
+| Nightly 08:17 UTC + manual | `nightly-full.yml` | **Full** (`make check` / `make test`) — no deploy |
 
 **What belongs in smoke** (keep this set small):
 
