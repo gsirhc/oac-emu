@@ -5,7 +5,7 @@ IBM EGA, plus the test gaps against the repo rules in `CLAUDE.md`. Shared
 chips live in `shared/pc/` and also drive `pc486`; their tests are under
 `shared/pc/tests/` and build into this machine's `make check`. Where a 486
 fix ports, the item cites its `PC486_REVIEW.md` section. Checked against
-the code through `IBM_PCAT_REVIEW.md` §66 (2026-10-27). When an item is
+the code through `IBM_PCAT_REVIEW.md` §67 (2026-10-27). When an item is
 fixed, write it up in `IBM_PCAT_REVIEW.md` as usual (fact, why it matters,
 what it fixed, source) and delete it here.
 
@@ -18,10 +18,11 @@ addressing, latches and the monochrome ports, E15-E17 (§49), the full
 and S8's rotation (§52), the keyboard and RTC, K1-K5 and R1 (§53), test
 parity X1-X4 and X5 (§54, §0 / §66), CPU test coverage (§55), the last
 flat instruction costs, T10-T12 (§56), and protected mode and extended
-memory (§63; original C10 and P8). Front-end shared modules and the
-Performance panel are in §64-§65; they are not tracked as hardware parity.
+memory (§63; original C10 and P8), and COM1 serial mouse plus LPT1 print
+capture (§67; original P7). Front-end shared modules and the Performance
+panel are in §64-§65; they are not tracked as hardware parity.
 
-Rough parity today: **~93%** (mean of the table rows).
+Rough parity today: **~94%** (mean of the table rows).
 
 | Area | Parity | Biggest gap |
 |------|--------|-------------|
@@ -29,7 +30,7 @@ Rough parity today: **~93%** (mean of the table rows).
 | CPU (protected mode) | 85% | no LOADALL (C14); two fault codes approximated (§63.2) |
 | Timing | 95% | fetch-bound code runs 5-7% fast against TOPBENCH |
 | EGA | 91% | memory-cycle length unsourced (VidMem -9% on the Enhanced Display) |
-| Chipset (PIT, PIC, DMA, memory) | 85% | no serial or parallel port; base memory fixed at 640KB |
+| Chipset (PIT, PIC, DMA, memory) | 92% | no game port; base memory fixed at 640KB |
 | Storage (WD1003, floppy) | 92% | floppy data rate and SPECIFY ignored; hard disk seeks and writes are instant |
 | Keyboard, RTC | 95% | no keylock control, BAT arrives without its self-test delay |
 | Speaker | 100% | — |
@@ -99,14 +100,8 @@ page, a Playwright test, in the same commit.
 
 ## 4. Chipset
 
-- **P7. No serial or parallel port.** The 5170-339 came with IBM's
-  Serial/Parallel Adapter: COM1 at 3F8h (IRQ4, an NS16450) and LPT1 at
-  378h (IRQ7). Opens a serial mouse, which is how an AT got one. Needs a
-  front-end story for the other end. Confirm the 339's standard fit in
-  the 5170 Guide to Operations. Source: IBM PC/AT Technical Reference,
-  Serial/Parallel Adapter; NS16450 data sheet.
 - **P10. No game port.** The IBM Game Control Adapter at 201h was an
-  option, not standard. Low priority. Port P7 from the 486 if it lands
+  option, not standard. Low priority. Port from the 486 if it lands
   there first.
 - **P11. 8237 features nothing here starts.** A software request (request
   register) on a block-mode channel should run the transfer, including
@@ -170,8 +165,12 @@ don't look like forgotten gaps:
   §53.2.
 - **D4. F12 prompt suppressed via CMOS 3Fh.** Boot-speed labelled
   departure. §61.
-- **D5. Shipped FreeDOS image edits.** CTMOUSE REMmed on the AT path;
-  `MEM /C /N` removed. §61.
+- **D5. Shipped FreeDOS image edits.** `MEM /C /N` and the CD-ROM probe
+  removed; CTMOUSE left on for COM1. §61.
+- **D6. egabios hooks INT 15h AH=4Fh + INT 1Ch for Print Screen.**
+  BIOS-bochs-legacy never issues INT 5 on PrtSc (E0 37 becomes keypad `*`).
+  egabios swallows the sequence on AH=4Fh and runs INT 5 from INT 1Ch.
+  §48.1 / §67.
 
 ## Not ported from the 486, on purpose
 
@@ -179,7 +178,7 @@ VBE, the DAC and VGA's 400-line text, the cache model, FPU tags and
 SoftFloat (no 80287 fitted; the ESC opcodes doing nothing is right), the
 DX signature, #AC and debug registers (386 and later), the 15-byte limit
 (the 286's is 10, §44.5), SB16/OPL3/CD-DA, and the PS/2 mouse (the AT has no
-aux port; a serial mouse via P7 is the period way).
+aux port; COM1 serial mouse is the period way, §67).
 
 Already in line with the rules, for reference: the `?test=1&fast=1`
 multiplier is gated in `app.js`, stripped from staged builds, the smoke

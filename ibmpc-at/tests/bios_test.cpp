@@ -48,6 +48,17 @@ protected:
     }
 };
 
+TEST_F(BiosTest, PostFillsCom1AndLpt1InTheBda) {
+    boot(0);
+    // BIOS-bochs-legacy probe: COM1 at 40:00, LPT1 at 40:08 (IBM BDA).
+    EXPECT_EQ(word(0x400), 0x3F8);
+    EXPECT_EQ(word(0x408), 0x378);
+    // Equipment word 40:10: bits 11-9 = serial count, 15-14 = printer count.
+    uint16_t eq = word(0x410);
+    EXPECT_GE((eq >> 9) & 7, 1u) << "at least one serial port";
+    EXPECT_GE((eq >> 14) & 3, 1u) << "at least one parallel port";
+}
+
 TEST_F(BiosTest, Int15h88hReportsTheExtendedMemoryInCmos) {
     boot(1600);
     run_stub({0xB4, 0x88, 0xCD, 0x15,          // MOV AH,88h ; INT 15h
@@ -91,3 +102,17 @@ TEST_F(BiosTest, Int15hE801ReportsTheSameExtendedMemory) {
 
 }  // namespace
 
+TEST_F(BiosTest, BiosPrintCharToLpt1) {
+    boot(0);
+    run_stub({0xB4, 0x00,                // MOV AH,00h print
+              0xB0, 0x41,                // MOV AL,'A'
+              0xBA, 0x00, 0x00,          // MOV DX,0 LPT1
+              0xCD, 0x17,                // INT 17h
+              0x88, 0x26, 0x00, 0x06,    // MOV [0600h],AH
+              0xFA, 0xF4});              // CLI ; HLT
+    uint8_t ah = m->chipset.mem[kOut];
+    EXPECT_EQ(ah & 0x01, 0) << "timeout, AH=" << std::hex << int(ah);
+    EXPECT_EQ(ah & 0x08, 0) << "I/O error, AH=" << std::hex << int(ah);
+    ASSERT_EQ(m->chipset.lpt1.capture_size(), 1u);
+    EXPECT_EQ(m->chipset.lpt1.capture()[0], 'A');
+}

@@ -1,6 +1,18 @@
 {
   "disks": [
     {
+      "id": "ctmouse",
+      "title": "CuteMouse 2.1 driver",
+      "publisher": "FreeDOS Project",
+      "type": "driver",
+      "needs": "1.2MB drive A:",
+      "description": "A freeware DOS mouse driver for this machine's serial mouse on COM1. FDAUTO already loads it from C:; this floppy is for MOUSETST and a fresh copy.",
+      "license": "GPL. Taken from the FreeDOS distribution this machine already ships.",
+      "help": "FDAUTO already runs CTMOUSE at boot. Tick Mouse on the page and\nclick the screen for pointer lock.\n\n  A:\\MOUSETST        check it sees movement\n  A:\\CTMOUSE         load again if you unloaded it\n\nDo not use /P (that is for PS/2).",
+      "format": 1200,
+      "images": [{ "file": "ctmouse.img", "label": "1.2MB" }]
+    },
+    {
       "id": "fdgames",
       "title": "FreeDOS Games",
       "year": 2022,

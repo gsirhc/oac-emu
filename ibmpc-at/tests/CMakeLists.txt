@@ -30,27 +30,27 @@ add_unit_test(pit8253_test  ${PC}/tests/pit8253_test.cpp  ${PC}/pit8253.cpp)
 add_unit_test(i8042_test    i8042_test.cpp    ${CORE}/i8042.cpp)
 add_unit_test(cmos_rtc_test ${PC}/tests/cmos_rtc_test.cpp ${PC}/cmos_rtc.cpp)
 add_unit_test(dma8237_test  ${PC}/tests/dma8237_test.cpp  ${PC}/dma8237.cpp)
-add_unit_test(chipset_test  chipset_test.cpp
+set(CHIPSET_COMMON
   ${CORE}/chipset.cpp ${PC}/pic8259.cpp ${PC}/pit8253.cpp
-  ${CORE}/i8042.cpp ${PC}/cmos_rtc.cpp ${PC}/dma8237.cpp ${PC}/fdc765.cpp ${CORE}/ega.cpp ${CORE}/wd1003.cpp ${PC}/pcspeaker.cpp)
+  ${CORE}/i8042.cpp ${PC}/cmos_rtc.cpp ${PC}/dma8237.cpp ${PC}/fdc765.cpp ${CORE}/ega.cpp
+  ${CORE}/wd1003.cpp ${PC}/pcspeaker.cpp ${PC}/ns16450.cpp ${CORE}/serial_mouse.cpp ${PC}/lpt.cpp)
+add_unit_test(chipset_test  chipset_test.cpp ${CHIPSET_COMMON})
 add_unit_test(machine_test  machine_test.cpp
-  ${CORE}/machine.cpp ${CORE}/chipset.cpp ${CORE}/cpu80286.cpp
-  ${PC}/pic8259.cpp ${PC}/pit8253.cpp ${CORE}/i8042.cpp
-  ${PC}/cmos_rtc.cpp ${PC}/dma8237.cpp ${PC}/fdc765.cpp ${CORE}/ega.cpp ${CORE}/wd1003.cpp ${PC}/pcspeaker.cpp)
+  ${CORE}/machine.cpp ${CORE}/cpu80286.cpp ${CHIPSET_COMMON})
 add_unit_test(fdc765_test   ${PC}/tests/fdc765_test.cpp  ${PC}/fdc765.cpp)
 add_unit_test(ega_test      ega_test.cpp     ${CORE}/ega.cpp)
 add_unit_test(ega_render_test ega_render_test.cpp ${CORE}/ega.cpp ${CORE}/ega_render.cpp)
 add_unit_test(wd1003_test   wd1003_test.cpp  ${CORE}/wd1003.cpp)
 add_unit_test(pcspeaker_test ${PC}/tests/pcspeaker_test.cpp ${PC}/pcspeaker.cpp)
+add_unit_test(ns16450_test ${PC}/tests/ns16450_test.cpp ${PC}/ns16450.cpp)
+add_unit_test(lpt_test ${PC}/tests/lpt_test.cpp ${PC}/lpt.cpp)
+add_unit_test(serial_mouse_test serial_mouse_test.cpp ${CORE}/serial_mouse.cpp ${PC}/ns16450.cpp)
+add_unit_test(serial_mouse_live_test serial_mouse_live_test.cpp ${CHIPSET_COMMON})
 add_unit_test(egabios_test  egabios_test.cpp
-  ${CORE}/machine.cpp ${CORE}/chipset.cpp ${CORE}/cpu80286.cpp
-  ${PC}/pic8259.cpp ${PC}/pit8253.cpp ${CORE}/i8042.cpp
-  ${PC}/cmos_rtc.cpp ${PC}/dma8237.cpp ${PC}/fdc765.cpp ${CORE}/ega.cpp ${CORE}/ega_render.cpp ${CORE}/wd1003.cpp ${PC}/pcspeaker.cpp)
+  ${CORE}/machine.cpp ${CORE}/cpu80286.cpp ${CORE}/ega_render.cpp ${CHIPSET_COMMON})
 target_compile_definitions(egabios_test PRIVATE EGABIOS_PATH="${CORE}/roms/egabios/egabios.bin")
 add_unit_test(bios_test  bios_test.cpp
-  ${CORE}/machine.cpp ${CORE}/chipset.cpp ${CORE}/cpu80286.cpp
-  ${PC}/pic8259.cpp ${PC}/pit8253.cpp ${CORE}/i8042.cpp
-  ${PC}/cmos_rtc.cpp ${PC}/dma8237.cpp ${PC}/fdc765.cpp ${CORE}/ega.cpp ${CORE}/wd1003.cpp ${PC}/pcspeaker.cpp)
+  ${CORE}/machine.cpp ${CORE}/cpu80286.cpp ${CHIPSET_COMMON})
 target_compile_definitions(bios_test PRIVATE BIOS_PATH="${CORE}/roms/BIOS-bochs-legacy")
 
 include(GoogleTest)
@@ -71,3 +71,7 @@ gtest_discover_tests(ega_test)
 gtest_discover_tests(ega_render_test)
 gtest_discover_tests(wd1003_test)
 gtest_discover_tests(pcspeaker_test)
+gtest_discover_tests(ns16450_test)
+gtest_discover_tests(lpt_test)
+gtest_discover_tests(serial_mouse_test)
+gtest_discover_tests(serial_mouse_live_test)

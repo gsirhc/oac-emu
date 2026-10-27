@@ -19,9 +19,9 @@ Boots FreeDOS 1.3 to a live `C:\>` in the browser at real 8 MHz
 real mode and protected mode with extended memory (§63). System firmware
 is pinned `BIOS-bochs-legacy`; the video BIOS is the from-scratch EGA
 stand-in `egabios` (§48.1), not VGABIOS-lgpl (that stays on the 486).
-About 631 native GoogleTest cases and about 120 Playwright cases across
-21 specs. Rough parity and the open backlog are in
-`IBM_PCAT_PARITY.md`.
+About 650 native GoogleTest cases and about 130 Playwright cases. COM1
+serial mouse (opt-in) and LPT1 print capture (§67). Rough parity and the
+open backlog are in `IBM_PCAT_PARITY.md`.
 
 ## 1. Scope: real mode and 286 protected mode
 
@@ -2969,6 +2969,18 @@ code is copied.
   BL=10h reports a colour EGA with 256KB and the switch setting, and
   BL=20h installs a print-screen routine that prints every row. Graphics
   characters, dots and scrolling cover modes 4-6 and D-10h.
+- **Print Screen.** BIOS-bochs-legacy's INT 9 calls INT 15h AH=4Fh but never
+  INT 5 (no `CD 05` in the ROM), so the Enhanced Keyboard's E0 2A E0 37
+  make lands as keypad `*`. egabios installs INT 5 at power-on and hooks
+  INT 15h AH=4Fh: on E0-prefixed 37h it sets a pending flag and returns CF
+  clear so INT 9 drops the key; fake-shift 2A/AA and break B7 are swallowed
+  the same way. INT 1Ch then issues INT 5 after IRQ1 has EOI'd — calling
+  INT 5 nested inside INT 9/15 left IRQ1 in service and INT 17h could fail
+  so a keypress dumped nothing while `ECHO>PRN` still worked. Old INT 15h
+  and INT 1Ch vectors are kept in unused IVT slots 60h/61h; the pending
+  flag is 40:F0. D6.
+  The INT 5 routine must save AH=0Fh's column count across AH=03h; that
+  call returns the cursor shape in CX and was truncating dumps to 7×6.
 - **Fonts.** The 8x8 and 8x14 sets are `VGA-ROM.F08` and `VGA-ROM.F14`
   from Yossi Gil's `fntcol16.zip` font collection (Simtel, msdos/screen;
   its file list describes them as the VGA built-in font). `fetch-bios.sh`
@@ -4059,11 +4071,11 @@ It now takes about 29 s, and the CPU, disk and floppy timing are untouched.
 - **Startup files.** `disks/tune-freedos-hdd.py` edits `FDCONFIG.SYS` and
   `FDAUTO.BAT` with mtools when `web/Makefile` copies the installer's image
   into `web/disks/`, so the slow installer image and its CI cache are
-  unchanged. It also REMs out `CTMOUSE` on the 286 path, since the AT has no
-  mouse. Each file gets a dated "Changed by oac-emu" line at the top, per
-  GPL v2 section 2(a). No FreeDOS program changes, and the menu stays in
-  `FDCONFIG.SYS` for anyone who wants it back. The script fails if any line
-  it expects is missing.
+  unchanged. It keeps `CTMOUSE` on the 286 path (serial mouse on COM1, §67)
+  and REMs `MEM /C /N` plus the CD-ROM probe. Each file gets a dated
+  "Changed by oac-emu" line at the top, per GPL v2 section 2(a). No FreeDOS
+  program changes, and the menu stays in `FDCONFIG.SYS` for anyone who wants
+  it back. The script fails if any line it expects is missing.
 - A saved C: that a visitor has changed keeps its own startup files. An
   unchanged one picks up the new factory image (shared/hdd-worker.js
   fingerprints it).
@@ -4289,3 +4301,49 @@ sections.
 - **Build deps**: `nasm` for egabios; `mtools` for `tune-freedos-hdd.py`,
   library floppies, and related disk tools. HDD image cached in CI
   (§11).
+
+## 67. COM1 serial mouse and LPT1 print capture
+
+Parity item P7. Sources: IBM PC/AT Technical Reference (Serial/Parallel
+Adapter), NS16450 data sheet, Centronics handshake as described for the
+printer adapter, Microsoft serial mouse 3-byte packet (and CuteMouse as a
+guest driver, not as a silicon reference).
+
+### 67.1 NS16450 on COM1
+
+`shared/pc/ns16450` at 3F8h. DLAB, loopback, IIR priority, MCR OUT2 gates
+IRQ4. RX bytes are paced at the programmed baud × frame length; idle time
+does not bank bit credit for a later `push_rx` burst (that overrun
+CuteMouse's one-byte RBR and left the cursor stuck). Reading the LSR
+clears OE/PE/FE/BI (NS16450 data sheet); leaving OE sticky made CuteMouse
+skip its Microsoft packet parser after any overrun. The stand-in BIOS
+probes the port and writes 3F8h into BDA 40:00.
+
+### 67.2 Serial mouse
+
+`SerialMouse` watches DTR/RTS, sends `'M'` on power-up, then Microsoft
+3-byte packets from `injectSerialMouse`. Motion accumulates while a report
+is still in the UART queue (~40 reports/s at 1200 7N1), so a fast browser
+pointer does not backlog old packets behind the wire. The UART is always
+fitted; the page's Mouse checkbox (default off, `retro8080.ibmpcatMouse`)
+only gates pointer-lock capture, matching the 486 UX. `FDAUTO` runs
+`CTMOUSE` on the 286 path (no `/P`). A 1.2MB library floppy
+(`disks/build-ctmouse-floppy.sh`) still ships the driver plus `MOUSETST`.
+
+### 67.3 LPT1 capture
+
+`shared/pc/lpt` at 378h. Always fitted. A STROBE rising edge appends the
+data latch and pulses /ACK immediately (BIOS-bochs-legacy INT 17h samples
+status bit 6 once after the pulse). BUSY still holds for ~150 cps on the
+status port but does not block the next strobe. After the capture stops
+growing for a short idle, a dialog offers Download (`ibmpcat-lpt1.prn`) or
+Discard. Capture is in-memory only and clears on reset. IRQ7 is wired and
+gated by control bit 4. POST writes 378h into BDA 40:08.
+
+### 67.4 Checks
+
+- `ns16450_test` (including idle credit), `lpt_test`, `serial_mouse_test`,
+  chipset COM/LPT IRQ.
+- `bios_test` PostFillsCom1AndLpt1InTheBda.
+- `mouse.spec.ts` (UI plus CuteMouse INT 33h mickeys after inject),
+  `lpt.spec.ts` (including `ECHO …>PRN` and Print Screen → LPT1).

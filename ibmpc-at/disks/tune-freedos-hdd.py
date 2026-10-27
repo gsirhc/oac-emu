@@ -6,13 +6,14 @@ import sys
 import tempfile
 
 OFFSET = 17 * 512  # partition 1 starts at sector 17 (ST-4038 geometry)
-NOTE = "Changed by oac-emu 2026-10-23: no menu countdown, no MEM, no CD-ROM or mouse driver"
+NOTE = "Changed by oac-emu 2026-10-27: no menu countdown, no MEM, no CD-ROM; CTMOUSE on COM1"
 
 CONFIG_EDITS = [
     ("MENUDEFAULT=1,5", "MENUDEFAULT=1,0"),
 ]
 AUTO_EDITS = [
-    (":Support286\nFDAPM APMDOS\nCTMOUSE\nMEM /C /N\n", ":Support286\nFDAPM APMDOS\nREM CTMOUSE\nREM MEM /C /N\n"),
+    # Keep CTMOUSE: the AT has a serial mouse on COM1 (IBM_PCAT_REVIEW.md §67).
+    (":Support286\nFDAPM APMDOS\nCTMOUSE\nMEM /C /N\n", ":Support286\nFDAPM APMDOS\nCTMOUSE\nREM MEM /C /N\n"),
     (":Only8086\nMEM /C /N\n", ":Only8086\nREM MEM /C /N\n"),
     (":FINAL\nMEM /C /N\n", ":FINAL\nREM MEM /C /N\n"),
     ("if exist %dosdir%\\bin\\cdrom.bat call %dosdir%\\bin\\cdrom.bat display\n",

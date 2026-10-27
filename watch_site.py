@@ -143,6 +143,9 @@ def classify(rel):
     # hwtest generators feed wasm (hwtest_roms.h); other roms/media stay ignored.
     if rest.startswith("roms/hwtest/") and ext == ".py":
         return ("machine_cpp", machine)
+    # egabios.asm is rebuilt by `make … roms` during site stage.
+    if rest.startswith("roms/egabios/") and ext in (".asm", ".inc"):
+        return ("machine_static", machine)
     if rest.startswith("roms/") or rest.startswith("disks/") or rest.startswith("media/") or rest.startswith("tapes/"):
         return None
 

@@ -115,6 +115,41 @@ public:
     void injectScancode(int code) { m_.chipset.kbc.inject_scancode(uint8_t(code)); }
     int keyboardLeds() const { return m_.chipset.kbc.leds(); }
     bool keysPending() const { return m_.chipset.kbc.keys_pending(); }
+
+    // ---- serial mouse (COM1) ----
+    // Relative move; buttons bit0=left, bit1=right. Y+ is down (Microsoft serial).
+    void injectSerialMouse(int dx, int dy, int buttons) {
+        m_.chipset.serial_mouse.inject(dx, dy, uint8_t(buttons));
+    }
+    // Packed COM1/mouse snapshot for tests: powered, ier, mcr, lsr, rbr_full, irq, qsize.
+    val serialMouseDebug() {
+        auto &u = m_.chipset.com1;
+        val o = val::object();
+        o.set("powered", m_.chipset.serial_mouse.powered());
+        o.set("ier", u.ier());
+        o.set("mcr", u.mcr());
+        o.set("lcr", u.lcr());
+        o.set("lsr", u.lsr_peek());
+        o.set("divisor", u.divisor());
+        o.set("rbrFull", u.rbr_full());
+        o.set("irq", u.irq_pending());
+        o.set("queued", int(u.rx_queued()));
+        o.set("picImr", m_.chipset.pic_master.imr());
+        o.set("picIrr", m_.chipset.pic_master.irr());
+        o.set("cpuIf", m_.cpu.flag(cpu80286::FLAG_IF));
+        return o;
+    }
+
+    // ---- LPT1 capture ----
+    int lptSize() const { return int(m_.chipset.lpt1.capture_size()); }
+    void lptClear() { m_.chipset.lpt1.clear_capture(); }
+    val lptBytes() {
+        const auto &cap = m_.chipset.lpt1.capture();
+        val out = val::global("Uint8Array").new_(cap.size());
+        if (!cap.empty())
+            out.call<void>("set", val(emscripten::typed_memory_view(cap.size(), cap.data())));
+        return out;
+    }
     int ramByte(int addr) const {
         return addr >= 0 && std::size_t(addr) < m_.chipset.mem.size() ? m_.chipset.mem[std::size_t(addr)] : 0;
     }
@@ -255,6 +290,11 @@ EMSCRIPTEN_BINDINGS(ibmpcat_machine) {
         .function("injectScancode", &WasmMachine::injectScancode)
         .function("keyboardLeds", &WasmMachine::keyboardLeds)
         .function("keysPending", &WasmMachine::keysPending)
+        .function("injectSerialMouse", &WasmMachine::injectSerialMouse)
+        .function("serialMouseDebug", &WasmMachine::serialMouseDebug)
+        .function("lptSize", &WasmMachine::lptSize)
+        .function("lptClear", &WasmMachine::lptClear)
+        .function("lptBytes", &WasmMachine::lptBytes)
         .function("ramByte", &WasmMachine::ramByte)
         .function("setRtc", &WasmMachine::setRtc)
         .function("mountFloppy", &WasmMachine::mountFloppy)

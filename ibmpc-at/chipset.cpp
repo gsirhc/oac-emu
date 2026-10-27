@@ -39,6 +39,9 @@ void Chipset::reset() {
     ega.reset();
     hdd.reset();
     speaker.reset();
+    com1.reset();
+    serial_mouse.reset();
+    lpt1.reset();
     update_irq_lines();
     // mem, rom_ and cmos survive reset: RAM and CMOS are not cleared by a warm reset.
 }
@@ -91,6 +94,8 @@ uint8_t Chipset::io_in(uint16_t port) {
     if (fdc.owns(port)) return fdc.in(port);
     if (ega.owns_port(port)) return ega.in(port);
     if (hdd.owns(port)) return hdd.in(port);
+    if (com1.owns(port)) return com1.in(port);
+    if (lpt1.owns(port)) return lpt1.in(port);
     if (port == 0x61) return port61();
     int controller, channel;
     if (page_port_map(port, controller, channel)) return (controller == 1 ? dma1 : dma2).page(channel);
@@ -107,6 +112,8 @@ void Chipset::io_out(uint16_t port, uint8_t v) {
     if (fdc.owns(port)) { fdc.out(port, v); return; }
     if (ega.owns_port(port)) { ega.out(port, v); return; }
     if (hdd.owns(port)) { hdd.out(port, v); return; }
+    if (com1.owns(port)) { com1.out(port, v); return; }
+    if (lpt1.owns(port)) { lpt1.out(port, v); return; }
     if (port == 0x61) { set_port61(v); return; }
     if (port == 0x80) { last_post_code_ = v; return; }
     if (port == 0xE9) { debug_console_.push_back(char(v)); return; }
@@ -170,13 +177,18 @@ void Chipset::tick(uint64_t cpu_cycles, double cpu_hz) {
     hdd.tick(cpu_cycles);
     kbc.tick(cpu_cycles, cpu_hz);
     cmos.tick(cpu_cycles, cpu_hz);
+    com1.tick(cpu_cycles, cpu_hz);
+    serial_mouse.tick();
+    lpt1.tick(cpu_cycles, cpu_hz);
     update_irq_lines();
 }
 
 void Chipset::update_irq_lines() {
     pic_master.set_line(0, pit.channel0_output());
     pic_master.set_line(1, kbc.irq1_pending());
+    pic_master.set_line(4, com1.irq_pending());
     pic_master.set_line(6, fdc.irq_pending());
+    pic_master.set_line(7, lpt1.irq_pending());
     // The EGA drives bus IRQ2, which the AT routes to IRQ9.
     // The MC146818A's active-low IRQ is inverted onto IRQ8.
     pic_slave.set_line(0, cmos.irq_pending());

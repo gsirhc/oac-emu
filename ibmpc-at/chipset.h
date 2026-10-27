@@ -18,9 +18,12 @@
 #include "ega.h"
 #include "fdc765.h"
 #include "i8042.h"
+#include "lpt.h"
+#include "ns16450.h"
 #include "pcspeaker.h"
 #include "pic8259.h"
 #include "pit8253.h"
+#include "serial_mouse.h"
 #include "wd1003.h"
 
 #include <algorithm>
@@ -94,6 +97,9 @@ public:
     Ega ega;
     Wd1003 hdd;
     PcSpeaker speaker;
+    Ns16450 com1{0x3F8};
+    SerialMouse serial_mouse{com1};
+    Lpt lpt1{0x378};
 
     // Port 0x61: bit0 gates PIT ch2, bit1 enables the speaker, bit4 is the
     // refresh toggle, bit5 reads back ch2 output.

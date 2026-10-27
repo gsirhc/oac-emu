@@ -25,6 +25,12 @@ INFO            equ     0x87
 INFO_3          equ     0x88
 SAVE_PTR        equ     0xA8
 PRTSC_STATUS    equ     0x100
+KB_FLAG_1       equ     0x96            ; bit 1 = E0 prefix (IBM AT BDA)
+; Pending flag and old vectors: ROM is read-only, and 40:100 sits at
+; absolute 0500h, so keep these in unused IVT slots / the ICA instead.
+PRTSC_PENDING   equ     0xF0            ; 40:F0, one byte
+IVT_OLD15       equ     (0x60 * 4)      ; unused user interrupt slot
+IVT_OLD1C       equ     (0x61 * 4)
 
 ; VIDEO_PARMS entry
 P_COLS          equ     0
@@ -119,6 +125,25 @@ init:
         mov     [es:0x1F * 4 + 2], cs
         mov     word [es:0x43 * 4], font8
         mov     [es:0x43 * 4 + 2], cs
+        ; INT 5 + INT 15h AH=4Fh + INT 1Ch: BIOS-bochs-legacy never issues
+        ; INT 5 on Print Screen (no CD 05 in the ROM), so E0 37 becomes *.
+        ; INT 5 is deferred to INT 1Ch so it runs after IRQ1 EOI, not nested
+        ; inside INT 9/15 (INT 17h can time out while IRQ1 is still in service).
+        mov     word [es:0x05 * 4], print_screen
+        mov     [es:0x05 * 4 + 2], cs
+        mov     bx, [es:0x15 * 4]
+        mov     [es:IVT_OLD15], bx
+        mov     bx, [es:0x15 * 4 + 2]
+        mov     [es:IVT_OLD15 + 2], bx
+        mov     word [es:0x15 * 4], int15
+        mov     [es:0x15 * 4 + 2], cs
+        mov     bx, [es:0x1C * 4]
+        mov     [es:IVT_OLD1C], bx
+        mov     bx, [es:0x1C * 4 + 2]
+        mov     [es:IVT_OLD1C + 2], bx
+        mov     word [es:0x1C * 4], int1c
+        mov     [es:0x1C * 4 + 2], cs
+        mov     byte [PRTSC_PENDING], 0
         sti
         mov     ah, [INFO_3]
         and     ah, 0x0F
@@ -1996,6 +2021,94 @@ alt_select:
 .ret:
         ret
 
+; INT 15h: pass through, except AH=4Fh Print Screen (see init).
+int15:
+        cmp     ah, 0x4F
+        jne     .chain
+        cmp     al, 0xE0
+        je      .chain
+        cmp     al, 0xE1
+        je      .chain
+        push    ds
+        push    ax
+        mov     ax, BDA
+        mov     ds, ax
+        pop     ax
+        test    byte [KB_FLAG_1], 0x02
+        jz      .pass
+        cmp     al, 0x2A
+        je      .swallow
+        cmp     al, 0xAA
+        je      .swallow
+        cmp     al, 0xB7
+        je      .swallow
+        cmp     al, 0x37
+        jne     .pass
+        and     byte [KB_FLAG_1], 0xFD
+        mov     byte [PRTSC_PENDING], 1
+        pop     ds
+        jmp     .clc_iret
+.swallow:
+        and     byte [KB_FLAG_1], 0xFD
+        pop     ds
+.clc_iret:
+        push    bp
+        mov     bp, sp
+        and     byte [bp + 6], 0xFE
+        pop     bp
+        iret
+.pass:
+        pop     ds
+.chain:
+        sub     sp, 4
+        push    bp
+        mov     bp, sp
+        push    ds
+        push    ax
+        xor     ax, ax
+        mov     ds, ax
+        mov     ax, [IVT_OLD15]
+        mov     [bp + 2], ax
+        mov     ax, [IVT_OLD15 + 2]
+        mov     [bp + 4], ax
+        pop     ax
+        pop     ds
+        pop     bp
+        retf
+
+; INT 1Ch: run a deferred Print Screen, then chain.
+int1c:
+        push    ds
+        push    ax
+        mov     ax, BDA
+        mov     ds, ax
+        cmp     byte [PRTSC_PENDING], 0
+        je      .chain
+        mov     byte [PRTSC_PENDING], 0
+        pop     ax
+        pop     ds
+        int     0x05
+        jmp     .chain_only
+.chain:
+        pop     ax
+        pop     ds
+.chain_only:
+        sub     sp, 4
+        push    bp
+        mov     bp, sp
+        push    ds
+        push    ax
+        xor     ax, ax
+        mov     ds, ax
+        mov     ax, [IVT_OLD1C]
+        mov     [bp + 2], ax
+        mov     ax, [IVT_OLD1C + 2]
+        mov     [bp + 4], ax
+        pop     ax
+        pop     ds
+        pop     bp
+        retf
+
 ; INT 5 for any row count: prints ROWS+1 lines of the active page through INT 17h.
 print_screen:
         sti
@@ -2008,11 +2121,13 @@ print_screen:
         mov     byte [PRTSC_STATUS], 1
         mov     ah, 0x0F
         int     0x10
+        push    ax                      ; AH=columns; AH=03h returns the cursor shape in CX
+        mov     ah, 0x03
+        int     0x10
+        pop     ax
         mov     cl, ah
         mov     ch, [ROWS]
         inc     ch
-        mov     ah, 0x03
-        int     0x10
         push    dx
         call    .crlf
         jnz     .error

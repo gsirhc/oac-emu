@@ -193,6 +193,11 @@
   #keymapAllBtn {
     font-size: 9px; font-weight: 700; letter-spacing: .04em; padding: 0 5px;
   }
+  #mouseCaptureBtn {
+    width: 26px; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  #mouseCaptureBtn svg { display: block; }
   .audio-row { margin-top: 14px; justify-content: center; }
 
   /* ---- front panel ---- */
@@ -512,12 +517,15 @@
                     aria-label="Send Esc" disabled>Esc</button>
             <button type="button" id="keymapAllBtn" class="bezel-btn" title="Turn your key mappings on or off"
                     aria-label="Turn key mappings on or off" aria-pressed="false" disabled>KEYS</button>
+            <button type="button" id="mouseCaptureBtn" class="bezel-btn" title="Enable Mouse"
+                    aria-label="Enable Mouse" aria-pressed="false"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M8 1.5C6.1 1.5 4.5 2.9 4.5 4.7v5.1c0 1.9 1.6 3.5 3.5 3.5s3.5-1.6 3.5-3.5V4.7C11.5 2.9 9.9 1.5 8 1.5zm0 1.2c1.1 0 2 .8 2 1.8v1.5H6V4.5c0-1 .9-1.8 2-1.8z"/></svg></button>
             <button type="button" id="fullscreenBtn" class="bezel-btn" title="Fullscreen" aria-label="Fullscreen">&#x26F6;</button>
           </div>
         </div>
       </div>
       <div class="row audio-row">
         <label><input type="checkbox" id="speakerEnabled"> Sound</label>
+        <label><input type="checkbox" id="mouseCaptureEnabled"> Mouse</label>
         <label><input type="checkbox" id="keyboardToggle"> Keyboard</label>
       </div>
       <div id="keyboardCard" hidden>
@@ -536,7 +544,14 @@
       </div>
     </dialog>
 
-
+    <dialog id="lptDialog" class="site-dialog">
+      <h2>Printer (LPT1)</h2>
+      <p id="lptDialogBody">DOS sent output to the printer.</p>
+      <div class="row">
+        <button type="button" id="lptDiscardBtn">Discard</button>
+        <button type="button" id="lptDownloadBtn" autofocus>Download&hellip;</button>
+      </div>
+    </dialog>
 
     <div class="panel" id="frontPanelCard">
       <h2>Front panel</h2>
@@ -675,10 +690,11 @@
         <tr><td>Graphics</td><td>EGA</td></tr>
         <tr><td>Sound</td><td>PC speaker</td></tr>
         <tr><td>Storage</td><td>30 MB HDD (WD1003), 5.25&Prime; floppy A: 1.2MB / B: 360KB (NEC 765)</td></tr>
-        <tr><td>Input</td><td>Keyboard only</td></tr>
+        <tr><td>Input</td><td>Keyboard; serial mouse on COM1 (opt-in, needs a DOS driver such as CuteMouse)</td></tr>
+        <tr><td>Printer</td><td>LPT1 capture; a dialog offers download when a job finishes</td></tr>
         <tr><td>BIOS</td><td>Bochs legacy BIOS and an open EGA BIOS. IBM's original ROMs are still under copyright.</td></tr>
         <tr><td>OS</td><td>Ships with FreeDOS 1.3, compatible with PC-DOS / MS-DOS 3.x</td></tr>
-        <tr><td>Not included</td><td>Mouse, sound card, 386 software (EMM386, Windows enhanced mode)</td></tr>
+        <tr><td>Not included</td><td>Sound card, game port, 386 software (EMM386, Windows enhanced mode)</td></tr>
       </table>
     </div>
 

@@ -96,6 +96,7 @@ for (let d = 0; d < 10; d++) CHAR_TO_KEY[String(d)] = "Digit" + d;
 // characters that need Shift on a US layout
 const SHIFTED_CHAR_TO_KEY: Record<string, string> = {
   ":": "Semicolon",
+  ">": "Period",
 };
 
 /** Type a DOS command one key at a time, then Enter unless pressEnterAfter is false. Letters go unshifted since DOS is case-insensitive. */

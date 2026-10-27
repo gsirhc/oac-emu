@@ -113,6 +113,9 @@ TEST_F(EgaBiosTest, RomHeaderAndChecksumAreValid) {
 
 TEST_F(EgaBiosTest, InitHooksVectorsAndSetsMode3ForTheEnhancedDisplay) {
     EXPECT_EQ(word(0x10 * 4 + 2), 0xC000);
+    EXPECT_EQ(word(0x05 * 4 + 2), 0xC000);
+    EXPECT_EQ(word(0x15 * 4 + 2), 0xC000);
+    EXPECT_EQ(word(0x1C * 4 + 2), 0xC000);
     EXPECT_EQ(word(0x42 * 4), kIret);
     EXPECT_EQ(word(0x43 * 4 + 2), 0xC000);
     EXPECT_EQ(word(0x1F * 4 + 2), 0xC000);

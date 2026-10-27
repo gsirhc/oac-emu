@@ -20,10 +20,10 @@
 CXX      ?= c++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
 
-CHIPSET_SRCS = machine.cpp chipset.cpp cpu80286.cpp ../shared/pc/pic8259.cpp ../shared/pc/pit8253.cpp i8042.cpp ../shared/pc/cmos_rtc.cpp ../shared/pc/dma8237.cpp ../shared/pc/fdc765.cpp ega.cpp wd1003.cpp ../shared/pc/pcspeaker.cpp
-UNIT_TESTS = cpu80286_test cpu80286_timing_test cpu80286_pm_test pic8259_test pit8253_test i8042_test cmos_rtc_test dma8237_test chipset_test machine_test fdc765_test ega_test ega_render_test wd1003_test pcspeaker_test egabios_test bios_test
+CHIPSET_SRCS = machine.cpp chipset.cpp cpu80286.cpp ../shared/pc/pic8259.cpp ../shared/pc/pit8253.cpp i8042.cpp ../shared/pc/cmos_rtc.cpp ../shared/pc/dma8237.cpp ../shared/pc/fdc765.cpp ega.cpp wd1003.cpp ../shared/pc/pcspeaker.cpp ../shared/pc/ns16450.cpp serial_mouse.cpp ../shared/pc/lpt.cpp
+UNIT_TESTS = cpu80286_test cpu80286_timing_test cpu80286_pm_test pic8259_test pit8253_test i8042_test cmos_rtc_test dma8237_test chipset_test machine_test fdc765_test ega_test ega_render_test wd1003_test pcspeaker_test ns16450_test lpt_test serial_mouse_test egabios_test bios_test
 
-.PHONY: help test test-smoke bios egabios bios-check library hdd-image wasm serve coverage check clean
+.PHONY: help test test-smoke bios egabios bios-check library ctmouse-image hdd-image wasm serve coverage check clean
 
 LLVM_PROFDATA ?= xcrun llvm-profdata
 LLVM_COV      ?= xcrun llvm-cov
@@ -71,8 +71,14 @@ FDCD = ../pc486/disks/freedos-cd.iso
 $(FDCD):
 	$(MAKE) -C ../pc486 disks/freedos-cd.iso
 
-library: $(FDCD)
+disks/ctmouse.img: disks/build-ctmouse-floppy.sh disks/freedos-hdd.img
+	bash disks/build-ctmouse-floppy.sh
+
+ctmouse-image: disks/ctmouse.img
+
+library: $(FDCD) disks/ctmouse.img
 	python3 $(DOSLIB)/build-library.py --library disks/library.json --iso $(FDCD) --out disks/library
+	cp disks/ctmouse.img disks/library/
 
 wasm:
 	$(MAKE) -C web
@@ -96,6 +102,9 @@ coverage: egabios
 	    $(CURDIR)/ega_render.cpp $(CURDIR)/ega_render.h \
 	    $(CURDIR)/wd1003.cpp $(CURDIR)/wd1003.h \
 	    $(CURDIR)/../shared/pc/pcspeaker.cpp $(CURDIR)/../shared/pc/pcspeaker.h \
+	    $(CURDIR)/../shared/pc/ns16450.cpp $(CURDIR)/../shared/pc/ns16450.h \
+	    $(CURDIR)/serial_mouse.cpp $(CURDIR)/serial_mouse.h \
+	    $(CURDIR)/../shared/pc/lpt.cpp $(CURDIR)/../shared/pc/lpt.h \
 	    $(CURDIR)/chipset.cpp $(CURDIR)/chipset.h $(CURDIR)/machine.cpp $(CURDIR)/machine.h"; \
 	  $(LLVM_COV) report $$objs -instr-profile=cov.profdata $$srcs; \
 	  $(LLVM_COV) show $$objs -instr-profile=cov.profdata -format=html -output-dir=../coverage-cpp $$srcs >/dev/null; \

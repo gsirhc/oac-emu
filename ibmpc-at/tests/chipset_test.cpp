@@ -598,4 +598,22 @@ TEST(ChipsetTest, RtcIsThe5170sSixtyFourByteMc146818a) {
     EXPECT_EQ(cs.cmos.in(0x71), 0xF2) << "six address bits, so 0x5B is 0x1B";
 }
 
+TEST(ChipsetTest, Com1AndLpt1DecodeAndRaiseIrq) {
+    Chipset cs;
+    InitPics(cs);
+    auto bus = cs.make_bus();
+    bus.out(0x3FB, 0x03);
+    bus.out(0x3FC, 0x08);  // OUT2
+    bus.out(0x3F9, 0x02);  // ETHREI
+    cs.tick(0, 8000000.0);
+    EXPECT_TRUE(cs.com1.irq_pending());
+    EXPECT_EQ(cs.poll_interrupt(), 0x0C);  // IRQ4 -> vector 0x0C with ICW2=0x08
+
+    bus.out(0x378, 'Z');
+    bus.out(0x37A, 0x11);  // IRQ enable + strobe
+    bus.out(0x37A, 0x10);
+    ASSERT_EQ(cs.lpt1.capture_size(), 1u);
+    EXPECT_EQ(cs.lpt1.capture()[0], 'Z');
+}
+
 }  // namespace

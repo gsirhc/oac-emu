@@ -105,7 +105,67 @@
   screenEl.addEventListener("paste", keyboard.paste);
   screenEl.addEventListener("blur", keyboard.releaseAll);
   document.addEventListener("visibilitychange", () => { if (document.hidden) keyboard.releaseAll(); });
-  screenEl.addEventListener("click", () => screenEl.focus());
+  // ---- serial mouse (COM1); off by default, remembered ----
+  const MOUSE_KEY = "retro8080.ibmpcatMouse";
+  const mouseCaptureCheckbox = document.getElementById("mouseCaptureEnabled");
+  const mouseCaptureBtn = document.getElementById("mouseCaptureBtn");
+  try { mouseCaptureCheckbox.checked = localStorage.getItem(MOUSE_KEY) === "1"; } catch { mouseCaptureCheckbox.checked = false; }
+  function syncMouseBezel() {
+    mouseCaptureBtn.setAttribute("aria-pressed", mouseCaptureCheckbox.checked ? "true" : "false");
+  }
+  syncMouseBezel();
+  mouseCaptureCheckbox.addEventListener("change", () => {
+    try { localStorage.setItem(MOUSE_KEY, mouseCaptureCheckbox.checked ? "1" : "0"); } catch {}
+    syncMouseBezel();
+    if (!mouseCaptureCheckbox.checked && document.pointerLockElement === screenEl) {
+      document.exitPointerLock();
+    }
+  });
+  mouseCaptureBtn.addEventListener("click", () => {
+    mouseCaptureCheckbox.checked = !mouseCaptureCheckbox.checked;
+    mouseCaptureCheckbox.dispatchEvent(new Event("change"));
+  });
+  let mouseButtons = 0;
+  function mouseButtonBit(button) {
+    if (button === 0) return 0x01;
+    if (button === 2) return 0x02;
+    if (button === 1) return 0x04;
+    return 0;
+  }
+  document.addEventListener("pointerlockchange", () => {
+    if (document.pointerLockElement !== screenEl) {
+      mouseButtons = 0;
+      keyboard.releaseAll();
+    }
+  });
+  screenEl.addEventListener("mousedown", (e) => {
+    if (!machine || document.pointerLockElement !== screenEl) return;
+    mouseButtons |= mouseButtonBit(e.button);
+    machine.injectSerialMouse(0, 0, mouseButtons);
+    e.preventDefault();
+  });
+  screenEl.addEventListener("mouseup", (e) => {
+    if (!machine || document.pointerLockElement !== screenEl) return;
+    mouseButtons &= ~mouseButtonBit(e.button);
+    machine.injectSerialMouse(0, 0, mouseButtons);
+    e.preventDefault();
+  });
+  screenEl.addEventListener("contextmenu", (e) => {
+    if (document.pointerLockElement === screenEl) e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!machine || document.pointerLockElement !== screenEl) return;
+    if (e.movementX === 0 && e.movementY === 0) return;
+    // Microsoft serial: +Y is downward (CuteMouse PROTOCOL.TXT).
+    machine.injectSerialMouse(e.movementX, e.movementY, mouseButtons);
+  });
+
+  screenEl.addEventListener("click", () => {
+    screenEl.focus();
+    if (mouseCaptureCheckbox.checked && document.pointerLockElement !== screenEl) {
+      screenEl.requestPointerLock();
+    }
+  });
 
   // poweredOn is declared later, so pass it as a predicate
   const isRunning = () => poweredOn;
@@ -738,6 +798,7 @@
       bay.querySelector('[data-role="save"]').hidden = !(machine.floppyPresent(drive) && machine.floppyDirty(drive));
     }
     hddLed.classList.toggle("on", machine.hddBusy());
+    pollLptCapture();
 
     requestAnimationFrame(frame);
   }
@@ -872,6 +933,65 @@
     });
   });
 
+  // ---- LPT1 print capture (always fitted; dialog after a job settles) ----
+  const lptDialog = document.getElementById("lptDialog");
+  const lptDialogBody = document.getElementById("lptDialogBody");
+  const lptDownloadBtn = document.getElementById("lptDownloadBtn");
+  const lptDiscardBtn = document.getElementById("lptDiscardBtn");
+  const LPT_IDLE_MS = 400;
+  let lptLastSize = 0;
+  let lptIdleSince = 0;
+  let lptOfferedSize = 0;
+  function resetLptOffer() {
+    lptLastSize = 0;
+    lptIdleSince = 0;
+    lptOfferedSize = 0;
+    if (lptDialog.open) lptDialog.close();
+  }
+  function downloadLptCapture() {
+    if (!machine || machine.lptSize() === 0) return;
+    const bytes = machine.lptBytes();
+    const blob = new Blob([bytes], { type: "application/octet-stream" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "ibmpcat-lpt1.prn";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+  function discardLptCapture() {
+    if (machine) machine.lptClear();
+    resetLptOffer();
+  }
+  function pollLptCapture() {
+    if (!poweredOn || !machine) return;
+    const n = machine.lptSize();
+    if (n !== lptLastSize) {
+      lptLastSize = n;
+      lptIdleSince = performance.now();
+      return;
+    }
+    if (n === 0 || n === lptOfferedSize || lptDialog.open) return;
+    if (performance.now() - lptIdleSince < LPT_IDLE_MS) return;
+    lptOfferedSize = n;
+    lptDialogBody.textContent = n === 1
+      ? "DOS sent 1 byte to the printer. Download it as a file, or discard."
+      : ("DOS sent " + n + " bytes to the printer. Download them as a file, or discard.");
+    hideBootNotice();
+    lptDialog.showModal();
+  }
+  lptDownloadBtn.addEventListener("click", () => {
+    downloadLptCapture();
+    discardLptCapture();
+  });
+  lptDiscardBtn.addEventListener("click", () => {
+    discardLptCapture();
+  });
+  lptDialog.addEventListener("cancel", () => {
+    // Esc / backdrop: leave the capture; don't re-offer until more bytes arrive.
+  });
+
   // ---- memory ----
   // An extended-memory adapter is fitted at power-on, so the choice is locked while running.
   const EXT_MEM_KEY = "retro8080.ibmpcatExtMemKb";
@@ -927,6 +1047,7 @@
     requestAnimationFrame(frame);
     refreshHddControls();
     refreshMemoryControls();
+    resetLptOffer();
     refreshFkeyControls();
     updateFocusHint();
     let noticeDismissed = false;
@@ -997,6 +1118,7 @@
     if (audioCtx) { audioCtx.suspend().catch(() => {}); }
     refreshHddControls();
     refreshMemoryControls();
+    resetLptOffer();
     refreshFkeyControls();
     updateFocusHint();
     hideBootNotice();

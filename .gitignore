@@ -118,6 +118,7 @@ pc486/disks/freedos-hdd.img
 pc486/disks/freedos-cd.iso
 pc486/disks/freedos-boot.img
 pc486/disks/ctmouse.img
+ibmpc-at/disks/ctmouse.img
 pc486/web/pc486.js
 pc486/web/pc486.wasm
 pc486/web/pc486-perf.js
