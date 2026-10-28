@@ -1,0 +1,17 @@
+diff -ru a/rombios.c b/rombios.c
+--- a/rombios.c
++++ b/rombios.c
+@@ -8619,11 +8619,8 @@
+   bootdev -= 1;
+ #else
+   if (seq_nr ==2) BX_PANIC("No more boot devices.");
+-  if (!!(inb_cmos(0x2d) & 0x20) ^ (seq_nr == 1))
+-      /* Boot from floppy if the bit is set or it's the second boot */
+-    bootdev = 0x00;
+-  else
+-    bootdev = 0x01;
++  // A: then C:, with no setting (IBM PC/AT Technical Reference, BOOT_STRAP)
++  bootdev = seq_nr;
+ #endif
+ 
+   /* Read the boot device from the IPL table */

@@ -1,5 +1,5 @@
 import { test, expect } from "./fixtures";
-import { boot, typeStr, screenText, insertFloppy } from "./helpers";
+import { boot, typeStr, insertFloppy } from "./helpers";
 import path from "path";
 import fs from "fs";
 import os from "os";
@@ -94,12 +94,10 @@ test.describe("serial mouse", () => {
     });
 
     await typeStr(page, "A:\\MOUSMIC");
-    await expect.poll(async () => screenText(page), { timeout: 30_000 }).toMatch(/C:\\>/);
-    const mx = await page.evaluate(() => {
+    await expect.poll(() => page.evaluate(() => {
       const m = (window as any).__test.machine;
       return m.ramByte(0x500) | (m.ramByte(0x501) << 8);
-    });
-    expect(mx).not.toBe(0);
+    }), { timeout: 30_000 }).not.toBe(0);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

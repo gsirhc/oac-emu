@@ -1,0 +1,770 @@
+diff -ru a/rombios.c b/rombios.c
+--- a/rombios.c
++++ b/rombios.c
+@@ -122,8 +122,8 @@
+ #include "rombios.h"
+ 
+   // Sanity Checks
+-#if BX_CPU<3
+-#    error Only 386+ cpu supported
++#if BX_CPU<2
++#    error Only 286+ cpu supported
+ #endif
+ #if BX_USE_ATADRV && !BX_USE_EBDA
+ #    error ATA/ATAPI Driver can only be used if EBDA is available
+@@ -380,15 +380,17 @@
+     push bp
+     mov  bp, sp
+ 
+-      push eax
++      push ax
+       push bx
+       push ds
+       lds  bx, 8[bp] ; segment & offset
+-      mov  eax, 4[bp] ; data dword
+-      mov  [bx], eax  ; write data dword
++      mov  ax, 4[bp] ; data dword, low word
++      mov  [bx], ax
++      mov  ax, 6[bp] ; high word
++      mov  2[bx], ax
+       pop  ds
+       pop  bx
+-      pop  eax
++      pop  ax
+ 
+     pop  bp
+   ASM_END
+@@ -456,18 +458,26 @@
+     ret
+ 
+   ;; cmp function
++  ;; flags as a 32-bit CMP sets them, for both signed and unsigned branches
+   lcmpl:
+   lcmpul:
+-    push eax
+-    push ebx
+-    and  eax, #0x0000FFFF
+-    shl  ebx, #16
+-    or   eax, ebx
+     SEG SS
+-      cmp eax, dword ptr [di]
+-    pop  ebx
+-    pop  eax
++      cmp bx, 2[di]
++    jne  lcmp_done
++    SEG SS
++      cmp ax, [di]
++    je   lcmp_done
++    push ax
++    mov  ax, #1
++    jb   lcmp_below
++    cmp  ax, #0
++    pop  ax
+     ret
++  lcmp_below:
++    cmp  ax, #2
++    pop  ax
++  lcmp_done:
++    ret
+ 
+   ;; sub function
+   lsubl:
+@@ -481,28 +491,31 @@
+   ;; mul function
+   lmull:
+   lmulul:
+-    push edx
+-    push ebx
+-    push eax
+-    and  eax, #0x0000FFFF
+-    shl  ebx, #16
+-    or   eax, ebx
++    push cx
++    push dx
++    mov  cx, ax
+     SEG SS
+-    mul  eax, dword ptr [di]
+-    mov  edx, eax
+-    pop  eax
+-    mov  ax, dx
+-    shr  edx, #16
+-    pop  ebx
+-    mov  bx, dx
+-    pop  edx
++      mov  ax, 2[di]
++    mul  cx
++    xchg ax, bx
++    SEG SS
++      mul  word ptr [di]
++    add  bx, ax
++    mov  ax, cx
++    SEG SS
++      mul  word ptr [di]
++    add  bx, dx
++    pop  dx
++    pop  cx
+     ret
+ 
+   ;; dec function
+   ldecl:
+   ldecul:
+     SEG SS
+-    dec dword ptr [bx]
++      sub word ptr [bx], #1
++    SEG SS
++      sbb word ptr 2[bx], #0
+     ret
+ 
+   ;; or function
+@@ -518,25 +531,29 @@
+   lincl:
+   lincul:
+     SEG SS
+-    inc dword ptr [bx]
++      add word ptr [bx], #1
++    SEG SS
++      adc word ptr 2[bx], #0
+     ret
+ 
+   ;; tst function
++  ;; ZF and SF as a 32-bit TEST sets them
+   ltstl:
+   ltstul:
+-    push eax
+-    push ebx
+-    and  eax, #0x0000FFFF
+-    shl  ebx, #16
+-    or   eax, ebx
+-    test eax, eax
+-    pop  ebx
+-    pop  eax
++    test bx, bx
++    jnz  ltst_done
++    test ax, ax
++    jz   ltst_done
++    push ax
++    mov  ax, #1
++    test ax, ax
++    pop  ax
++  ltst_done:
+     ret
+ 
+   ;; sr function
+   lsrul:
+-    push ecx
++    push cx
+     mov  cx, di
+     jcxz lsr_exit
+   lsr_loop:
+@@ -544,13 +561,13 @@
+     rcr  ax, #1
+     loop lsr_loop
+   lsr_exit:
+-    pop  ecx
++    pop  cx
+     ret
+ 
+   ;; sl function
+   lsll:
+   lslul:
+-    push ecx
++    push cx
+     mov  cx, di
+     jcxz lsl_exit
+   lsl_loop:
+@@ -558,7 +575,7 @@
+     rcl  bx, #1
+     loop lsl_loop
+   lsl_exit:
+-    pop  ecx
++    pop  cx
+     ret
+ 
+   idiv_:
+@@ -571,27 +588,38 @@
+     div bx
+     ret
+ 
++  ;; BX:AX / SS:[DI], quotient in BX:AX, by shift and subtract
+   ldivul:
+-    push edx
+-    push ebx
+-    push eax
+-    and  eax, #0x0000FFFF
+-    shl  ebx, #16
+-    or   eax, ebx
+-    xor  edx, edx
++    push cx
++    push dx
++    push si
++    xor  dx, dx
++    xor  si, si
++    mov  cx, #32
++  ldiv_loop:
++    shl  ax, #1
++    rcl  bx, #1
++    rcl  si, #1
++    rcl  dx, #1
++    jc   ldiv_sub
+     SEG SS
+-    mov  bx,  2[di]
+-    shl  ebx, #16
++      cmp  dx, 2[di]
++    jb   ldiv_next
++    ja   ldiv_sub
+     SEG SS
+-    mov  bx,  [di]
+-    div  ebx
+-    mov  edx, eax
+-    pop  eax
+-    mov  ax, dx
+-    shr  edx, #16
+-    pop  ebx
+-    mov  bx, dx
+-    pop  edx
++      cmp  si, [di]
++    jb   ldiv_next
++  ldiv_sub:
++    SEG SS
++      sub  si, [di]
++    SEG SS
++      sbb  dx, 2[di]
++    inc  ax
++  ldiv_next:
++    loop ldiv_loop
++    pop  si
++    pop  dx
++    pop  cx
+     ret
+ 
+   imodu:
+@@ -2745,7 +2773,7 @@
+         BX_PANIC("ata-detect: Failed to detect ATA device\n");
+ 
+       removable = (read_byte_SS(buffer+0) & 0x80) >> 7;
+-      mode      = read_byte_SS(buffer+96) ? ATA_MODE_PIO32 : ATA_MODE_PIO16;
++      mode      = ATA_MODE_PIO16; // no 32-bit I/O on a 286
+       blksize   = read_word_SS(buffer+10);
+ 
+       cylinders = read_word_SS(buffer+(1*2)); // word 1
+@@ -2852,7 +2880,7 @@
+ 
+       type      = read_byte_SS(buffer+1) & 0x1f;
+       removable = (read_byte_SS(buffer+0) & 0x80) ? 1 : 0;
+-      mode      = read_byte_SS(buffer+96) ? ATA_MODE_PIO32 : ATA_MODE_PIO16;
++      mode      = ATA_MODE_PIO16; // no 32-bit I/O on a 286
+       blksize   = 2048;
+ 
+       write_byte_DS(&EbdaData->ata.devices[device].device, type);
+@@ -4041,6 +4069,48 @@
+       break;
+     }
+ 
++    case 0x86:
++      // Wait for CX:DX microseconds, counting port 61h bit 4 (refresh) toggles, 15 us apart.
++      CX = regs.u.r16.cx;
++      DX = regs.u.r16.dx;
++ASM_START
++      sti
++      push si
++      mov  bx, sp
++      SEG SS
++        mov  ax, _int15_function.CX + 2 [bx]
++      xor  dx, dx
++      mov  cx, #15
++      div  cx
++      mov  si, ax
++      SEG SS
++        mov  ax, _int15_function.DX + 2 [bx]
++      div  cx
++      mov  cx, ax
++
++      in   al, PORT_PS2_CTRLB
++      and  al, #0x10
++      mov  ah, al
++int1586_tick:
++      mov  dx, cx
++      or   dx, si
++      jz   int1586_tick_end
++int1586_wait:
++      in   al, PORT_PS2_CTRLB
++      and  al, #0x10
++      cmp  al, ah
++      je   int1586_wait
++      mov  ah, al
++      sub  cx, #1
++      sbb  si, #0
++      jmp  int1586_tick
++int1586_tick_end:
++      pop  si
++ASM_END
++      regs.u.r8.ah = 0;
++      CLEAR_CF();
++      break;
++
+     case 0x87:
+       // +++ should probably have descriptor checks
+       // +++ should have exception handlers
+@@ -4110,24 +4180,29 @@
+       SEG SS
+         mov  cx, _int15_function.CX [bx]
+ 
+-      // since we need to set SS:SP, save them to the BDA
+-      // for future restore
+-      push eax
+-      xor eax, eax
+-      mov ds, ax
+-      mov 0x0469, ss
+-      mov 0x0467, sp
++      // A 286 leaves protected mode only through RESET, which clears these
++      push bp
++      push si
++      push di
++      push ds
++      push es
++      xor  ax, ax
++      mov  ds, ax
++      mov  0x0469, ss
++      mov  0x0467, sp
+ 
++      ;; shutdown code 09h: POST comes back to block_move_return
++      mov  al, #0x0f
++      out  PORT_CMOS_INDEX, al
++      mov  al, #0x09
++      out  PORT_CMOS_DATA, al
++
+       SEG ES
+         lgdt [si + 0x08]
+       SEG CS
+         lidt [pmode_IDT_info]
+-      ;;  perhaps do something with IDT here
+-
+-      ;; set PE bit in CR0
+-      mov  eax, cr0
+-      or   al, #0x01
+-      mov  cr0, eax
++      mov  ax, #0x0001
++      lmsw ax
+       ;; far jump to flush CPU queue after transition to protected mode
+       JMP_AP(0x0020, protected_mode)
+ 
+@@ -4150,25 +4225,23 @@
+       mov ds, ax
+       mov es, ax
+ 
+-      ;; reset PG bit in CR0 ???
+-      mov  eax, cr0
+-      and  al, #0xFE
+-      mov  cr0, eax
++      ;; pulse RESET from the 8042
++      mov  al, #0xfe
++      out  PORT_PS2_STATUS, al
++block_move_halt:
++      hlt
++      jmp  block_move_halt
+ 
+-      ;; far jump to flush CPU queue after transition to real mode
+-      JMP_AP(0xf000, real_mode)
+-
+-real_mode:
+-      ;; restore IDT to normal real-mode defaults
+-      SEG CS
+-        lidt [rmode_IDT_info]
+-
+-      // restore SS:SP from the BDA
+-      xor ax, ax
+-      mov ds, ax
+-      mov ss, 0x0469
+-      mov sp, 0x0467
+-      pop eax
++block_move_return:
++      xor  ax, ax
++      mov  ds, ax
++      mov  ss, 0x0469
++      mov  sp, 0x0467
++      pop  es
++      pop  ds
++      pop  di
++      pop  si
++      pop  bp
+ ASM_END
+ 
+       set_enable_a20(prev_a20_enable);
+@@ -4251,10 +4324,10 @@
+       SEG ES
+         lidt [si + 0x10]
+ 
+-      // set PE bit in CR0
+-      mov  eax, cr0
++      // set PE in the MSW
++      smsw ax
+       or   al, #0x01
+-      mov  cr0, eax
++      lmsw ax
+       // far jump to flush CPU queue after transition to protected mode
+       JMP_AP(0x0038, protmode_switch)
+ 
+@@ -4647,6 +4720,7 @@
+ #endif // BX_USE_PS2_MOUSE
+ 
+ 
++#if BX_CPU >= 3
+ void set_e820_range(ES, DI, start, end, extra_start, extra_end, type)
+      Bit16u ES;
+      Bit16u DI;
+@@ -4878,6 +4952,7 @@
+       break;
+     }
+ }
++#endif // BX_CPU >= 3
+ 
+   void
+ int16_function(DI, SI, BP, SP, BX, DX, CX, AX, FLAGS)
+@@ -9176,6 +9251,7 @@
+ 
+   push  0x000E
+   pop   ds                   ;; Set DS to EBDA segment
++#if BX_ELTORITO_BOOT
+   cmp   dl, #0xE0
+   jb    int13_notcdrom
+ 
+@@ -9193,6 +9269,7 @@
+   jmp int13_out
+ 
+ int13_notcdrom:
++#endif
+ 
+ #endif
+ 
+@@ -9795,46 +9872,86 @@
+ 
+   ;; assuming DS=0000
+ 
+-  ;; get CMOS hours
+-  xor  eax, eax ;; clear EAX
++  push bp
++  push si
++  push di
++
++  ;; seconds since midnight in SI:DI
+   mov  al, #0x04
+   out  PORT_CMOS_INDEX, al
+   in   al, PORT_CMOS_DATA ;; AL has CMOS hours in BCD
+-  call BcdToBin  ;; EAX now has hours in binary
+-  imul eax, #60
+-  mov  edx, eax
+-
+-  ;; get CMOS minutes
+-  xor  eax, eax ;; clear EAX
++  call BcdToBin
++  mov  cx, #60
++  mul  cx
++  mov  di, ax
+   mov  al, #0x02
+   out  PORT_CMOS_INDEX, al
+   in   al, PORT_CMOS_DATA ;; AL has CMOS minutes in BCD
+-  call BcdToBin  ;; EAX now has minutes in binary
+-  add  eax, edx
+-  imul eax, #60
+-  mov  edx, eax
+-
+-  ;; get CMOS seconds
+-  xor  eax, eax ;; clear EAX
++  call BcdToBin
++  add  ax, di
++  mul  cx
++  mov  di, ax
++  mov  si, dx
+   mov  al, #0x00
+   out  PORT_CMOS_INDEX, al
+   in   al, PORT_CMOS_DATA ;; AL has CMOS seconds in BCD
+-  call BcdToBin  ;; EAX now has seconds in binary
+-  add  eax, edx
++  call BcdToBin
++  add  di, ax
++  adc  si, #0
+ 
+-  ;; multiplying 18.2065073649
+-  mov  ecx, eax
+-  imul ecx, #18
++  ;; high word of S * 886942379 (0x34DDAAAB) in BP
++  mov  ax, di
++  mov  bx, #0xAAAB
++  mul  bx
++  mov  cx, dx
++  mov  ax, di
++  mov  bx, #0x34DD
++  mul  bx
++  add  cx, ax
++  adc  dx, #0
++  mov  bp, dx
++  test si, si
++  jz   ttp_frac_done
++  add  cx, #0xAAAB
++  adc  bp, #0x34DD
++ttp_frac_done:
+ 
+-  mov  edx, #886942379
+-  mul  edx
+-  add  ecx, edx
++  ;; plus S * 18
++  mov  ax, di
++  mov  bx, #18
++  mul  bx
++  test si, si
++  jz   ttp_add
++  add  dx, #18
++ttp_add:
++  add  ax, bp
++  adc  dx, #0
+ 
+-  mov  0x46C, ecx ;; Timer Ticks Count
++  mov  0x46C, ax ;; Timer Ticks Count
++  mov  0x46E, dx
+   xor  al, al
+   mov  0x470, al  ;; Timer Ticks Rollover Flag
++  pop  di
++  pop  si
++  pop  bp
+   ret
+ 
++int08_tick:
++  ;; ticks dword, one day's worth at 18.2 Hz is 0x001800B0
++  add WORD 0x046c, #1
++  adc WORD 0x046e, #0
++  cmp WORD 0x046e, #0x0018
++  jb  int08_tick_done
++  ja  int08_midnight
++  cmp WORD 0x046c, #0x00B0
++  jb  int08_tick_done
++int08_midnight:
++  mov WORD 0x046c, #0
++  mov WORD 0x046e, #0
++  inc BYTE 0x0470 ;; increment rollover flag
++int08_tick_done:
++  ret
++
+ ;--------------------
+ int76_handler:
+   ;; record completion in BIOS task complete flag
+@@ -10947,11 +11064,7 @@
+ 
+ 
+ .align 16
+-#if !BX_PNPBIOS
+-;; Make sure the pnpbios structure is *not* aligned, so OSes will not see it if
+-;; they scan.
+-  db 0
+-#endif
++#if BX_PNPBIOS
+ pnpbios_structure:
+   .ascii "$PnP"
+   db 0x10 ;; version
+@@ -11007,6 +11120,7 @@
+ pnpbios_exit:
+   pop ebp
+   retf
++#endif
+ 
+ vga_rom_error_msg:
+   .ascii "No VGABIOS ROM at C000:0000h! Legacy BIOS does not support PCI ROM!\n"
+@@ -11051,11 +11165,13 @@
+   push cx       ;; Push seg
+   push #0x0003  ;; Push offset
+ 
++#if BX_PNPBIOS
+   ;; Point ES:DI at "$PnP", which tells the ROM that we are a PnP BIOS.
+   ;; That should stop it grabbing INT 19h; we will use its BEV instead.
+   mov  ax, #0xf000
+   mov  es, ax
+   lea  di, pnpbios_structure
++#endif
+ 
+   mov  bp, sp   ;; Call ROM init routine using seg:off on stack
+   db   0xff     ;; call_far ss:[bp+0]
+@@ -11085,10 +11201,12 @@
+   push cx       ;; Push seg
+   push ax       ;; Push offset
+ 
++#if BX_PNPBIOS
+   ;; Point ES:DI at "$PnP", which tells the ROM that we are a PnP BIOS.
+   mov  bx, #0xf000
+   mov  es, bx
+   lea  di, pnpbios_structure
++#endif
+   /* jump to BCV function entry pointer */
+   mov  bp, sp   ;; Call ROM BCV routine using seg:off on stack
+   db   0xff     ;; call_far ss:[bp+0]
+@@ -11168,12 +11286,13 @@
+   ;; set first 120 interrupts to default handler
+   xor  di, di         ;; offset index
+   mov  cx, #0x0078    ;; counter (120 interrupts)
+-  mov  ax, #0xF000
+-  shl  eax, #16
+-  mov  ax, #dummy_iret_handler
+   cld
+-  rep
+-    stosd
++post_default_ints:
++  mov  ax, #dummy_iret_handler
++  stosw
++  mov  ax, #0xF000
++  stosw
++  loop post_default_ints
+ 
+   ;; Master PIC vector
+   mov  bx, #0x0020
+@@ -11226,11 +11345,11 @@
+     stosw
+ 
+   ;; set vector 0x78 and above to zero
+-  xor  eax, eax
+-  mov  cl, #0x88 ;; 136 dwords
++  xor  ax, ax
++  mov  cx, #0x0110 ;; 272 words
+   mov  di, #0x1e0
+   rep
+-    stosd
++    stosw
+   ret
+ 
+ ;; the following area can be used to write dynamically generated tables
+@@ -11245,6 +11364,19 @@
+ .org 0xe05b ; POST Entry Point
+ post:
+ 
++  ;; shutdown code 09h: back to the INT 15h AH=87h block move
++  mov  al, #0x0f
++  out  PORT_CMOS_INDEX, al
++  in   al, PORT_CMOS_DATA
++  cmp  al, #0x09
++  jne  post_cold
++  mov  al, #0x0f
++  out  PORT_CMOS_INDEX, al
++  xor  al, al
++  out  PORT_CMOS_DATA, al
++  jmp  block_move_return
++post_cold:
++
+   xor ax, ax
+ 
+   ;; first reset the DMA controllers
+@@ -11535,7 +11667,9 @@
+   mov  cx, #0xc800  ;; init option roms
+   mov  ax, #0xe000
+   call rom_scan
++#if BX_PCIBIOS
+   call pci_set_pam_regs_ro
++#endif
+ 
+ #if BX_ELTORITO_BOOT
+   call _interactive_bootkey
+@@ -11988,10 +12122,12 @@
+ #endif
+   push  ds
+   push  es
++#if BX_CPU >= 3
+   cmp  ah, #0x86
+   je int15_handler32
+   cmp  ah, #0xE8
+   je int15_handler32
++#endif
+   pusha
+ #if BX_USE_PS2_MOUSE
+   cmp  ah, #0xC2
+@@ -12020,11 +12156,13 @@
+   jmp int15_handler_mouse_ret
+ #endif
+ 
++#if BX_CPU >= 3
+ int15_handler32:
+   pushad
+   call _int15_function32
+   popad
+   jmp int15_handler32_ret
++#endif
+ 
+ ;; Protected mode IDT descriptor
+ ;;
+@@ -12090,11 +12228,11 @@
+ ;;
+ int70_handler:
+   push ds
+-  pushad
++  pusha
+   xor  ax, ax
+   mov  ds, ax
+   call _int70_function
+-  popad
++  popa
+   pop  ds
+   iret
+ 
+@@ -12104,7 +12242,7 @@
+ .org 0xfea5 ; INT 08h System Timer ISR Entry Point
+ int08_handler:
+   sti
+-  push eax
++  push ax
+   push ds
+   xor ax, ax
+   mov ds, ax
+@@ -12125,18 +12263,7 @@
+   pop  dx
+ int08_floppy_off:
+ 
+-  mov eax, 0x046c ;; get ticks dword
+-  inc eax
+-
+-  ;; compare eax to one days worth of timer ticks at 18.2 hz
+-  cmp eax, #0x001800B0
+-  jb  int08_store_ticks
+-  ;; there has been a midnight rollover at this point
+-  xor eax, eax    ;; zero out counter
+-  inc BYTE 0x0470 ;; increment rollover flag
+-
+-int08_store_ticks:
+-  mov 0x046c, eax ;; store new ticks dword
++  call int08_tick
+   ;; chain to user timer tick INT #0x1c
+   //pushf
+   //;; call_ep [ds:loc]
+@@ -12145,7 +12272,7 @@
+   cli
+   call eoi_master_pic
+   pop ds
+-  pop eax
++  pop ax
+   iret
+ 
+ .org 0xfef3 ; Initial Interrupt Vector Offsets Loaded by POST
+diff -ru a/rombios.h b/rombios.h
+--- a/rombios.h
++++ b/rombios.h
+@@ -93,20 +93,18 @@
+ #define E820_NVS          4
+ #define E820_UNUSABLE     5
+ 
+-#define BX_CPU           3
+-#define BX_USE_PS2_MOUSE 1
++#define BX_CPU           2
++#define BX_USE_PS2_MOUSE 0
+ #define BX_CALL_INT15_4F 1
+ #define BX_USE_EBDA      1
+ #define BX_SUPPORT_FLOPPY 1
+ #define BX_FLOPPY_ON_CNT 37   /* 2 seconds */
+-#define BX_PCIBIOS       1
+-#define BX_APM           1
+-#define BX_PNPBIOS       1
+-/* define it if the (emulated) hardware supports SMM mode */
+-#define BX_USE_SMM
++#define BX_PCIBIOS       0
++#define BX_APM           0
++#define BX_PNPBIOS       0
+ 
+ #define BX_USE_ATADRV    1
+-#define BX_ELTORITO_BOOT 1
++#define BX_ELTORITO_BOOT 0
+ 
+ #define BX_MAX_ATA_INTERFACES   4
+ #define BX_MAX_ATA_DEVICES      (BX_MAX_ATA_INTERFACES*2)

@@ -264,20 +264,13 @@ TEST(ChipsetTest, RtcPeriodicInterruptReachesIrq8) {
     EXPECT_FALSE(cs.pic_slave.line(0)) << "reading register C drops IRQ8";
 }
 
-TEST(ChipsetTest, HddIdentifyAndReadGoesThroughAtomicSixteenBitBusPath) {
+TEST(ChipsetTest, HddReadGoesThroughAtomicSixteenBitBusPath) {
     // bus.in16 must reach the HDD data register, not split into two 8-bit accesses.
     Chipset cs;
     auto bus = cs.make_bus();
     std::vector<uint8_t> img(733 * 5 * 17 * 512, 0);
     img[512] = 0x42;  // sector 2 (1-based), first byte
     cs.hdd.mount(0, img.data(), img.size());
-
-    bus.out(0x1F6, 0xA0);  // drive 0, head 0
-    bus.out(0x1F7, 0xEC);  // IDENTIFY DEVICE
-    ASSERT_TRUE(bus.in(0x1F7) & 0x08);  // DRQ
-    EXPECT_EQ(bus.in16(0x1F0), 0x0040);  // word 0: general config, fixed device
-    EXPECT_EQ(bus.in16(0x1F0), 733);     // word 1: cylinders
-    for (int i = 0; i < 254; ++i) bus.in16(0x1F0);  // drain the rest
 
     bus.out(0x1F6, 0xA0);
     bus.out(0x1F2, 1);  // 1 sector

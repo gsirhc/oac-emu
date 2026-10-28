@@ -66,7 +66,6 @@ protected:
     bool AF() const { return cpu->flag(cpu80286::FLAG_AF); }
     bool PF() const { return cpu->flag(cpu80286::FLAG_PF); }
 
-    void allow_firmware() { cpu->firmware_at = [](uint32_t) { return true; }; }
     // Points vector `v` at 0700:0000.
     void handler(int v) {
         mem[v * 4 + 0] = 0x00; mem[v * 4 + 1] = 0x00;
@@ -316,21 +315,6 @@ TEST_F(Cpu80286Test, ShrSetsOverflowFromOriginalMsb) {
 // ---------------------------------------------------------------------------
 // Control flow: Jcc, LOOP, CALL/RET
 // ---------------------------------------------------------------------------
-
-TEST_F(Cpu80286Test, JccNear0FEncodingTakenWhenZero) {
-    allow_firmware();
-    // 0x0F 0x8x (Jcc rel16) is an 80386 addition the BIOS substitute needs.
-    cpu->set_flag(cpu80286::FLAG_ZF, true);
-    run({0x0F, 0x84, 0x05, 0x00});  // JZ near +5
-    EXPECT_EQ(cpu->ip, 4 + 5);
-}
-
-TEST_F(Cpu80286Test, JccNear0FEncodingNotTakenWhenNotZero) {
-    allow_firmware();
-    cpu->set_flag(cpu80286::FLAG_ZF, false);
-    run({0x0F, 0x84, 0x05, 0x00});
-    EXPECT_EQ(cpu->ip, 4);
-}
 
 TEST_F(Cpu80286Test, JzTakenWhenZero) {
     cpu->set_flag(cpu80286::FLAG_ZF, true);
@@ -597,77 +581,19 @@ TEST_F(Cpu80286Test, OutswSendsAtomicSixteenBitPortWriteFromDsSi) {
 // 0x66 operand-size prefix (386 concession, not 80286 behavior)
 // ---------------------------------------------------------------------------
 
-TEST_F(Cpu80286Test, OpSize32MovImmediateLoadsFullThirtyTwoBits) {
-    allow_firmware();
-    run({0x66, 0xB8, 0x78, 0x56, 0x34, 0x12});  // MOV EAX, 12345678h
-    EXPECT_EQ(cpu->ax, 0x12345678u);
-}
-
 TEST_F(Cpu80286Test, OpSize16WritePreservesUpperHalfOfFullRegister) {
     cpu->ax = 0xDEAD0000;
     run({0xB8, 0x34, 0x12});  // MOV AX, 1234h (no 0x66, 16-bit form)
     EXPECT_EQ(cpu->ax, 0xDEAD1234u);
 }
 
-TEST_F(Cpu80286Test, OpSize32AddRegReg) {
-    allow_firmware();
-    run({0x66, 0xB8, 0x01, 0x00, 0x00, 0x00});  // MOV EAX, 1
-    run({0x66, 0xBB, 0xFF, 0xFF, 0xFF, 0xFF});  // MOV EBX, FFFFFFFFh (-1)
-    // ADD EAX, EBX  (0x66 01 D8) -> 0, carry out
-    load({0x66, 0x01, 0xD8}, cpu->ip);
-    cpu->step();
-    EXPECT_EQ(cpu->ax, 0u);
-    EXPECT_TRUE(CF());
-}
-
-TEST_F(Cpu80286Test, OpSize32PushPopRoundTrip) {
-    allow_firmware();
-    cpu->ss = 0;
-    cpu->sp = 0x2000;
-    cpu->bx = 0x12345678;
-    runN({0x66, 0x53, 0x66, 0x59}, 2);  // PUSH EBX ; POP ECX  (0x66-prefixed)
-    EXPECT_EQ(cpu->cx, 0x12345678u);
-    EXPECT_EQ(cpu->sp, 0x2000u);
-}
-
-TEST_F(Cpu80286Test, MovzxByteToWord) {
-    allow_firmware();
-    cpu->bx = 0x00FF;  // BL = 0xFF
-    run({0x0F, 0xB6, 0xC3});  // MOVZX AX, BL
-    EXPECT_EQ(cpu->ax, 0x00FFu);  // zero-extended, not sign-extended
-}
-
-TEST_F(Cpu80286Test, MovsxByteToWordSignExtends) {
-    allow_firmware();
-    cpu->bx = 0x00FF;  // BL = 0xFF (-1)
-    run({0x0F, 0xBE, 0xC3});  // MOVSX AX, BL
-    EXPECT_EQ(cpu->ax, 0xFFFFu);
-}
-
-TEST_F(Cpu80286Test, SetccSetsByteFromCondition) {
-    allow_firmware();
-    cpu->set_flag(cpu80286::FLAG_ZF, true);
-    cpu->bx = 0;
-    run({0x0F, 0x94, 0xC3});  // SETZ BL
-    EXPECT_EQ(cpu->bx & 0xFF, 1u);
-    cpu->set_flag(cpu80286::FLAG_ZF, false);
-    run({0x0F, 0x94, 0xC3});
-    EXPECT_EQ(cpu->bx & 0xFF, 0u);
-}
-
-TEST_F(Cpu80286Test, TwoOperandImulSixteenBit) {
-    allow_firmware();
-    cpu->ax = 6;
-    cpu->bx = 7;
-    run({0x0F, 0xAF, 0xC3});  // IMUL AX, BX
-    EXPECT_EQ(cpu->ax, 42u);
-    EXPECT_FALSE(CF());
-}
-
-TEST_F(Cpu80286Test, Opcodes386OutsideFirmwareRaiseInvalidOpcode) {
+TEST_F(Cpu80286Test, Opcodes386RaiseInvalidOpcode) {
     handler(6);
     const std::initializer_list<uint8_t> forms[] = {
         {0x66, 0xB8, 0x78, 0x56, 0x34, 0x12},  // MOV EAX, imm32
+        {0x66, 0x60},                          // PUSHAD
+        {0x0F, 0x20, 0xC0},                    // MOV EAX, CR0
+        {0x0F, 0x22, 0xC0},                    // MOV CR0, EAX
         {0x0F, 0x84, 0x05, 0x00},              // JZ rel16
         {0x0F, 0x94, 0xC3},                    // SETZ BL
         {0x0F, 0xAF, 0xC3},                    // IMUL AX, BX
@@ -681,16 +607,6 @@ TEST_F(Cpu80286Test, Opcodes386OutsideFirmwareRaiseInvalidOpcode) {
         EXPECT_EQ(frame(0), 0) << "#UD saves the faulting instruction's address";
         EXPECT_EQ(cpu->ax, 0x1111u);
     }
-}
-
-TEST_F(Cpu80286Test, FirmwarePredicateSeesTheInstructionsPhysicalAddress) {
-    std::vector<uint32_t> asked;
-    cpu->firmware_at = [&](uint32_t a) { asked.push_back(a); return true; };
-    cpu->bx = 0x80;
-    exec({0x90, 0x0F, 0xB6, 0xC3}, 2);  // NOP ; MOVZX AX, BL
-    ASSERT_FALSE(asked.empty());
-    EXPECT_EQ(asked.back(), 0x1001u);
-    EXPECT_EQ(cpu->ax, 0x80u);
 }
 
 TEST_F(Cpu80286Test, UndefinedAndRealModeOnlyOpcodesRaiseInvalidOpcode) {
@@ -1430,227 +1346,6 @@ TEST_F(Cpu80286Test, LoadallIsReported) {
     EXPECT_EQ(cpu->ip, 2);
 }
 
-TEST_F(Cpu80286Test, FirmwareOpcodesWithNoModelAreReportedNotFaulted) {
-    allow_firmware();
-    handler(6);
-    exec({0x0F, 0x00, 0xC0});  // SLDT AX
-    EXPECT_EQ(reported, 0x0F00u);
-    EXPECT_FALSE(in_handler());
-    exec({0x64});  // FS:
-    EXPECT_EQ(reported, 0x0064u);
-    EXPECT_FALSE(in_handler());
-}
-
-// ---------------------------------------------------------------------------
-// 386 forms the BIOS ROM uses (0x66 and 0F, firmware only)
-// ---------------------------------------------------------------------------
-
-TEST_F(Cpu80286Test, PushadAndPopadMoveAllEightDwords) {
-    allow_firmware();
-    cpu->ax = 0x11112222u; cpu->cx = 0x33334444u; cpu->di = 0x55556666u;
-    exec({0x66, 0x60}, 1);  // PUSHAD
-    EXPECT_EQ(cpu->sp, 0x8000u - 32);
-    EXPECT_EQ(mem[0x7FFC] | (mem[0x7FFF] << 24), 0x11000022) << "EAX on top";
-    EXPECT_EQ(mem[0x7FE0], 0x66) << "EDI lowest";
-    cpu->ax = 0; cpu->cx = 0; cpu->di = 0;
-    cpu->ip = 0;
-    mem[0x1000] = 0x66; mem[0x1001] = 0x61;  // POPAD
-    cpu->cs = 0x0100;
-    cpu->step();
-    EXPECT_EQ(cpu->ax, 0x11112222u);
-    EXPECT_EQ(cpu->cx, 0x33334444u);
-    EXPECT_EQ(cpu->di, 0x55556666u);
-    EXPECT_EQ(cpu->sp, 0x8000u);
-}
-
-TEST_F(Cpu80286Test, OpSize32MovReachesEveryRegister) {
-    allow_firmware();
-    exec({0x66, 0xBA, 0x02, 0x00, 0x00, 0x80,   // MOV EDX
-          0x66, 0xBC, 0x04, 0x00, 0x00, 0x80,   // MOV ESP
-          0x66, 0xBD, 0x05, 0x00, 0x00, 0x80,   // MOV EBP
-          0x66, 0xBE, 0x06, 0x00, 0x00, 0x80,   // MOV ESI
-          0x66, 0xBF, 0x07, 0x00, 0x00, 0x80},  // MOV EDI
-         5);
-    EXPECT_EQ(cpu->dx, 0x80000002u);
-    EXPECT_EQ(cpu->sp, 0x80000004u);
-    EXPECT_EQ(cpu->bp, 0x80000005u);
-    EXPECT_EQ(cpu->si, 0x80000006u);
-    EXPECT_EQ(cpu->di, 0x80000007u);
-}
-
-TEST_F(Cpu80286Test, OpSize32AluForms) {
-    allow_firmware();
-    struct Case { uint8_t op; bool cf_in; uint32_t want; };
-    const Case cases[] = {
-        {0x09, false, 0x1F3F5F7Fu},  // OR
-        {0x11, true,  0x21436588u},  // ADC
-        {0x19, true,  0x03254768u},  // SBB
-        {0x21, false, 0x02040608u},  // AND
-        {0x29, false, 0x03254769u},  // SUB
-        {0x31, false, 0x1D3B5977u},  // XOR
-        {0x39, false, 0x12345678u},  // CMP leaves EAX
-    };
-    for (const auto &k : cases) {
-        cpu->ax = 0x12345678u; cpu->bx = 0x0F0F0F0Fu;
-        cpu->set_flag(cpu80286::FLAG_CF, k.cf_in);
-        exec({0x66, k.op, 0xD8});
-        EXPECT_EQ(cpu->ax, k.want) << "opcode " << std::hex << int(k.op);
-    }
-    cpu->ax = 0x80000000u; cpu->bx = 1;
-    exec({0x66, 0x39, 0xD8});  // CMP EAX, EBX
-    EXPECT_TRUE(OF());
-    EXPECT_FALSE(CF());
-    cpu->ax = 0; cpu->bx = 1;
-    exec({0x66, 0x29, 0xD8});
-    EXPECT_EQ(cpu->ax, 0xFFFFFFFFu);
-    EXPECT_TRUE(CF());
-    EXPECT_TRUE(SF());
-}
-
-TEST_F(Cpu80286Test, OpSize32ImmediateGroup) {
-    allow_firmware();
-    cpu->ax = 1;
-    exec({0x66, 0x81, 0xC0, 0xFF, 0xFF, 0xFF, 0x7F});  // ADD EAX, 7FFFFFFFh
-    EXPECT_EQ(cpu->ax, 0x80000000u);
-    EXPECT_TRUE(OF());
-    cpu->ax = 0xFFFFFFFFu;
-    exec({0x66, 0x83, 0xF8, 0xFF});  // CMP EAX, -1
-    EXPECT_TRUE(ZF());
-    EXPECT_EQ(cpu->ax, 0xFFFFFFFFu);
-}
-
-TEST_F(Cpu80286Test, OpSize32ShiftsAndRotates) {
-    allow_firmware();
-    struct Case { uint8_t modrm; uint32_t want; bool cf, of; };
-    const Case cases[] = {
-        {0xC0, 0x00000003u, true, true},   // ROL
-        {0xC8, 0xC0000000u, true, false},  // ROR
-        {0xD0, 0x00000002u, true, true},   // RCL
-        {0xD8, 0x40000000u, true, true},   // RCR
-        {0xE0, 0x00000002u, true, true},   // SHL
-        {0xE8, 0x40000000u, true, true},   // SHR
-        {0xF8, 0xC0000000u, true, false},  // SAR
-    };
-    for (const auto &k : cases) {
-        cpu->ax = 0x80000001u;
-        cpu->set_flag(cpu80286::FLAG_CF, false);
-        exec({0x66, 0xD1, k.modrm});
-        EXPECT_EQ(cpu->ax, k.want) << std::hex << int(k.modrm);
-        EXPECT_EQ(CF(), k.cf) << std::hex << int(k.modrm);
-        EXPECT_EQ(OF(), k.of) << std::hex << int(k.modrm);
-    }
-    cpu->ax = 0x80000001u;
-    exec({0x66, 0xC1, 0xE0, 0x04});  // SHL EAX, 4
-    EXPECT_EQ(cpu->ax, 0x00000010u);
-    EXPECT_FALSE(CF());
-    cpu->set_flag(cpu80286::FLAG_CF, true);
-    exec({0x66, 0xC1, 0xE0, 0x00});  // SHL EAX, 0
-    EXPECT_EQ(cpu->ax, 0x00000010u);
-    EXPECT_TRUE(CF());
-}
-
-TEST_F(Cpu80286Test, OpSize32UnaryGroup) {
-    allow_firmware();
-    cpu->ax = 0x80000000u;
-    exec({0x66, 0xF7, 0xC0, 0x00, 0x00, 0x00, 0x80});  // TEST EAX, 80000000h
-    EXPECT_TRUE(SF());
-    EXPECT_EQ(cpu->ax, 0x80000000u);
-    exec({0x66, 0xF7, 0xD0});  // NOT EAX
-    EXPECT_EQ(cpu->ax, 0x7FFFFFFFu);
-    exec({0x66, 0xF7, 0xD8});  // NEG EAX
-    EXPECT_EQ(cpu->ax, 0x80000001u);
-    EXPECT_TRUE(CF());
-
-    cpu->ax = 0x80000000u; cpu->bx = 4;
-    exec({0x66, 0xF7, 0xE3});  // MUL EBX
-    EXPECT_EQ(cpu->ax, 0u);
-    EXPECT_EQ(cpu->dx, 2u);
-    EXPECT_TRUE(CF());
-    cpu->ax = 0xFFFFFFFEu; cpu->bx = 3;
-    exec({0x66, 0xF7, 0xEB});  // IMUL EBX
-    EXPECT_EQ(cpu->ax, 0xFFFFFFFAu);
-    EXPECT_EQ(cpu->dx, 0xFFFFFFFFu);
-    EXPECT_FALSE(CF());
-    cpu->dx = 1; cpu->ax = 0; cpu->bx = 2;
-    exec({0x66, 0xF7, 0xF3});  // DIV EBX
-    EXPECT_EQ(cpu->ax, 0x80000000u);
-    EXPECT_EQ(cpu->dx, 0u);
-    cpu->dx = 0xFFFFFFFFu; cpu->ax = 0xFFFFFFF9u; cpu->bx = 2;
-    exec({0x66, 0xF7, 0xFB});  // IDIV EBX: -7 / 2
-    EXPECT_EQ(cpu->ax, 0xFFFFFFFDu);
-    EXPECT_EQ(cpu->dx, 0xFFFFFFFFu);
-}
-
-TEST_F(Cpu80286Test, OpSize32DivideErrors) {
-    allow_firmware();
-    handler(0);
-    const struct { uint32_t dx, ax, bx; uint8_t modrm; } cases[] = {
-        {2, 0, 2, 0xF3},                    // DIV quotient over 32 bits
-        {0, 1, 0, 0xF3},                    // DIV by zero
-        {0x80000000u, 0, 0xFFFFFFFFu, 0xFB},  // IDIV -2^63 / -1
-        {1, 0, 1, 0xFB},                    // IDIV quotient over 7FFFFFFFh
-        {0, 1, 0, 0xFB},                    // IDIV by zero
-    };
-    for (const auto &k : cases) {
-        cpu->dx = k.dx; cpu->ax = k.ax; cpu->bx = k.bx;
-        exec({0x66, 0xF7, k.modrm});
-        EXPECT_TRUE(in_handler()) << std::hex << k.dx << ":" << k.ax << " / " << k.bx;
-        EXPECT_EQ(frame(0), 0);
-    }
-}
-
-TEST_F(Cpu80286Test, OpSize32MultipliesAndExtends) {
-    allow_firmware();
-    cpu->bx = 0x10000;
-    exec({0x66, 0x69, 0xC3, 0x00, 0x00, 0x01, 0x00});  // IMUL EAX, EBX, 10000h
-    EXPECT_EQ(cpu->ax, 0u);
-    EXPECT_TRUE(OF());
-    cpu->bx = 5;
-    exec({0x66, 0x6B, 0xC3, 0xFE});  // IMUL EAX, EBX, -2
-    EXPECT_EQ(cpu->ax, 0xFFFFFFF6u);
-    EXPECT_FALSE(OF());
-    cpu->ax = 6; cpu->bx = 7;
-    exec({0x66, 0x0F, 0xAF, 0xC3});  // IMUL EAX, EBX
-    EXPECT_EQ(cpu->ax, 42u);
-
-    cpu->bx = 0x8000;
-    exec({0x66, 0x0F, 0xB7, 0xC3});  // MOVZX EAX, BX
-    EXPECT_EQ(cpu->ax, 0x00008000u);
-    exec({0x66, 0x0F, 0xBF, 0xC3});  // MOVSX EAX, BX
-    EXPECT_EQ(cpu->ax, 0xFFFF8000u);
-    cpu->ax = 0xAAAA0000u;
-    exec({0x0F, 0xB7, 0xC3});  // MOVZX AX, BX
-    EXPECT_EQ(cpu->ax, 0xAAAA8000u);
-    exec({0x0F, 0xBF, 0xC3});  // MOVSX AX, BX
-    EXPECT_EQ(cpu->ax, 0xAAAA8000u);
-}
-
-TEST_F(Cpu80286Test, OpSize32PushAndStringOps) {
-    allow_firmware();
-    cpu->bx = 0x11223344u;
-    exec({0x66, 0xFF, 0xF3});  // PUSH EBX
-    EXPECT_EQ(cpu->sp, 0x7FFCu);
-    EXPECT_EQ(frame(0), 0x3344);
-    EXPECT_EQ(frame(1), 0x1122);
-
-    cpu->ds = 0x0200; cpu->es = 0x0300;
-    mem[0x2000] = 0x44; mem[0x2001] = 0x33; mem[0x2002] = 0x22; mem[0x2003] = 0x11;
-    cpu->si = 0; cpu->di = 0;
-    exec({0x66, 0xA5});  // MOVSD
-    EXPECT_EQ(mem[0x3003], 0x11);
-    EXPECT_EQ(cpu->si, 4u);
-    cpu->si = 0; cpu->di = 0;
-    exec({0x66, 0xA7});  // CMPSD
-    EXPECT_TRUE(ZF());
-    cpu->si = 0;
-    exec({0x66, 0xAD});  // LODSD
-    EXPECT_EQ(cpu->ax, 0x11223344u);
-    cpu->di = 0;
-    exec({0x66, 0xAF});  // SCASD
-    EXPECT_TRUE(ZF());
-    EXPECT_EQ(cpu->di, 4u);
-}
-
 // ---------------------------------------------------------------------------
 // Single-byte instructions and their remaining forms
 // ---------------------------------------------------------------------------
@@ -2012,130 +1707,6 @@ TEST_F(Cpu80286Test, UnhookedReportsAreSilent) {
     cpu->on_unimplemented = nullptr;
     exec({0x0F, 0x05});  // LOADALL
     EXPECT_EQ(cpu->ip, 2);
-    allow_firmware();
-    exec({0x0F, 0x00, 0xC0});
-    exec({0x64});
-    EXPECT_EQ(cpu->ip, 1);
-}
-
-// ---------------------------------------------------------------------------
-// More 0x66 forms
-// ---------------------------------------------------------------------------
-
-TEST_F(Cpu80286Test, OpSize32SingleByteForms) {
-    allow_firmware();
-    cpu->ax = 0xFFFFFFFFu;
-    exec({0x66, 0x40});  // INC EAX
-    EXPECT_EQ(cpu->ax, 0u);
-    exec({0x66, 0x48});  // DEC EAX
-    EXPECT_EQ(cpu->ax, 0xFFFFFFFFu);
-    cpu->ax = 0x8000;
-    exec({0x66, 0x98});  // CWDE
-    EXPECT_EQ(cpu->ax, 0xFFFF8000u);
-    exec({0x66, 0x99});  // CDQ
-    EXPECT_EQ(cpu->dx, 0xFFFFFFFFu);
-    cpu->ax = 0x7FFFFFFFu;
-    exec({0x66, 0x99});
-    EXPECT_EQ(cpu->dx, 0u);
-    cpu->ax = 1; cpu->bx = 2;
-    exec({0x66, 0x93});  // XCHG EAX, EBX
-    EXPECT_EQ(cpu->ax, 2u);
-    EXPECT_EQ(cpu->bx, 1u);
-    cpu->ax = 0x80000000u;
-    exec({0x66, 0xA9, 0x00, 0x00, 0x00, 0x80});  // TEST EAX, 80000000h
-    EXPECT_TRUE(SF());
-    cpu->ax = 1;
-    exec({0x66, 0x05, 0x01, 0x00, 0x00, 0x00});  // ADD EAX, 1
-    EXPECT_EQ(cpu->ax, 2u);
-    exec({0x66, 0x3D, 0x02, 0x00, 0x00, 0x00});  // CMP EAX, 2
-    EXPECT_TRUE(ZF());
-    cpu->bx = 5;
-    exec({0x66, 0x03, 0xC3});  // ADD EAX, EBX
-    EXPECT_EQ(cpu->ax, 7u);
-    cpu->bx = 7;
-    exec({0x66, 0x3B, 0xC3});  // CMP EAX, EBX
-    EXPECT_TRUE(ZF());
-    EXPECT_EQ(cpu->ax, 7u);
-}
-
-TEST_F(Cpu80286Test, OpSize32StackAndMemoryForms) {
-    allow_firmware();
-    exec({0x66, 0x68, 0x44, 0x33, 0x22, 0x11});  // PUSH 11223344h
-    EXPECT_EQ(cpu->sp, 0x7FFCu);
-    EXPECT_EQ(frame(1), 0x1122);
-    exec({0x66, 0x6A, 0xFF});  // PUSH -1 as a dword
-    EXPECT_EQ(frame(0), 0xFFFF);
-    EXPECT_EQ(frame(1), 0xFFFF);
-
-    cpu->ds = 0;
-    cpu->ax = 0xCAFEBABEu;
-    exec({0x66, 0xA3, 0x00, 0x05});  // MOV [0500h], EAX
-    EXPECT_EQ(mem[0x0503], 0xCA);
-    cpu->ax = 0;
-    exec({0x66, 0xA1, 0x00, 0x05});  // MOV EAX, [0500h]
-    EXPECT_EQ(cpu->ax, 0xCAFEBABEu);
-    cpu->bx = 0x01020304u;
-    exec({0x66, 0x89, 0x1E, 0x00, 0x06});  // MOV [0600h], EBX
-    EXPECT_EQ(mem[0x0603], 0x01);
-    exec({0x66, 0x8B, 0x0E, 0x00, 0x06});  // MOV ECX, [0600h]
-    EXPECT_EQ(cpu->cx, 0x01020304u);
-    exec({0x66, 0xC7, 0x06, 0x00, 0x07, 0x78, 0x56, 0x34, 0x12});  // MOV DWORD [0700h], 12345678h
-    EXPECT_EQ(mem[0x0703], 0x12);
-    exec({0x66, 0xFF, 0x06, 0x00, 0x07});  // INC DWORD [0700h]
-    EXPECT_EQ(mem[0x0700], 0x79);
-    exec({0x66, 0xFF, 0x0E, 0x00, 0x07});  // DEC DWORD [0700h]
-    EXPECT_EQ(mem[0x0700], 0x78);
-    exec({0x66, 0x50, 0x66, 0x8F, 0x06, 0x00, 0x08}, 2);  // PUSH EAX ; POP DWORD [0800h]
-    EXPECT_EQ(mem[0x0803], 0xCA);
-    cpu->bx = 0x10; cpu->si = 0x20;
-    exec({0x66, 0x8D, 0x00});  // LEA EAX, [BX+SI]
-    EXPECT_EQ(cpu->ax, 0x30u);
-}
-
-TEST_F(Cpu80286Test, OpSize32ByteExtendsAndStosd) {
-    allow_firmware();
-    cpu->bx = 0x80;
-    exec({0x66, 0x0F, 0xB6, 0xC3});  // MOVZX EAX, BL
-    EXPECT_EQ(cpu->ax, 0x80u);
-    exec({0x66, 0x0F, 0xBE, 0xC3});  // MOVSX EAX, BL
-    EXPECT_EQ(cpu->ax, 0xFFFFFF80u);
-    cpu->es = 0x0300; cpu->di = 0;
-    exec({0x66, 0xAB});  // STOSD
-    EXPECT_EQ(mem[0x3003], 0xFF);
-    EXPECT_EQ(cpu->di, 4u);
-}
-
-TEST_F(Cpu80286Test, OpSize32RotatesCarryTheOtherBitValue) {
-    allow_firmware();
-    cpu->set_flag(cpu80286::FLAG_CF, true);
-    cpu->ax = 1;
-    exec({0x66, 0xD1, 0xC0});  // ROL EAX
-    EXPECT_EQ(cpu->ax, 2u);
-    EXPECT_FALSE(CF());
-    exec({0x66, 0xD1, 0xC8});  // ROR EAX
-    EXPECT_EQ(cpu->ax, 1u);
-    cpu->set_flag(cpu80286::FLAG_CF, true);
-    cpu->ax = 0;
-    exec({0x66, 0xD1, 0xD0});  // RCL EAX, CF=1 in
-    EXPECT_EQ(cpu->ax, 1u);
-    cpu->set_flag(cpu80286::FLAG_CF, true);
-    cpu->ax = 0;
-    exec({0x66, 0xD1, 0xD8});  // RCR EAX, CF=1 in
-    EXPECT_EQ(cpu->ax, 0x80000000u);
-}
-
-TEST_F(Cpu80286Test, OpSize32DivideEdges) {
-    allow_firmware();
-    cpu->dx = 0; cpu->ax = 5; cpu->bx = 0xFFFFFFFFu;
-    exec({0x66, 0xF7, 0xFB});  // IDIV EBX: 5 / -1
-    EXPECT_EQ(cpu->ax, 0xFFFFFFFBu);
-    handler(0);
-    cpu->dx = 0xFFFFFFFFu; cpu->ax = 0; cpu->bx = 1;
-    exec({0x66, 0xF7, 0xFB});  // -2^32 / 1 under -2^31
-    EXPECT_TRUE(in_handler());
-    cpu->ax = 0x80;
-    exec({0x66, 0xF7, 0xC8, 0x80, 0x00, 0x00, 0x00});  // TEST EAX, 80h via /1
-    EXPECT_FALSE(ZF());
 }
 
 }  // namespace

@@ -8,12 +8,11 @@
 //  - READ/WRITE DATA is paced to the real data rate (500 kbit/s HD, 250 kbit/s
 //    DD), then done as one bulk copy. DMA count is not decremented byte by byte
 //    mid-transfer.
-//  - Seek/recalibrate use a fixed per-track time from the DriveType.
-//    SPECIFY is stored but does not affect timing.
 //  - FORMAT TRACK takes one revolution and fills the sectors its IDs name,
 //    wherever the head is, skipping IDs off the image's geometry.
-//  - The data rate written to 0x3F7 is latched but never checked against the
-//    media. Pacing uses the media's rate.
+//  - lenient_media (the 486, whose stand-in BIOS never seeks, sends SPECIFY or
+//    writes 0x3F7) reads at the command's C whatever the head and data rate,
+//    and steps at a fixed per-track time from the DriveType.
 //  - The chipset performs the memory<->image copy via transfer_ready(),
 //    transfer_image_ptr() and finish_transfer().
 #ifndef SHARED_PC_FDC765_H
@@ -27,6 +26,8 @@ namespace pc {
 
 // One drive's mechanism. Media geometry still follows the image size.
 struct DriveType {
+    int tracks;             // physical tracks: 80 (96 or 135 tpi) or 40 (48 tpi)
+    bool hd;                // reads high-density media
     int hd_sectors;         // sectors per track on the drive's HD media: 15 (5.25") or 18 (3.5")
     int dd_cylinders;       // 40 for 360KB, 80 for 720KB
     double dd_step_s;       // per-track step time with DD media
@@ -34,9 +35,9 @@ struct DriveType {
     bool dskchg_needs_disk; // DSKCHG set on eject, cleared only by a STEP with a disk in
 };
 // 3.5" DSKCHG rule: TEAC FD-235HF spec, "Disk Change".
-constexpr DriveType kDrive12M{15, 40, 0.006, 360.0, false};
-constexpr DriveType kDrive360K{15, 40, 0.006, 300.0, false};
-constexpr DriveType kDrive144M{18, 80, 0.003, 300.0, true};
+constexpr DriveType kDrive12M{80, true, 15, 40, 0.006, 360.0, false};
+constexpr DriveType kDrive360K{40, false, 15, 40, 0.006, 300.0, false};
+constexpr DriveType kDrive144M{80, true, 18, 80, 0.003, 300.0, true};
 
 class Fdc765 {
 public:
@@ -45,7 +46,7 @@ public:
         bool present = false;
         bool write_protected = false;
         int cylinders = 0, heads = 0, sectors_per_track = 0;
-        int current_cylinder = 0;
+        int current_cylinder = 0;  // physical track under the head
         bool motor_on = false;
         bool dirty = false;
         // DSKCHG is asserted at power-on and after every mount(), and cleared by the
@@ -61,6 +62,7 @@ public:
         long capacity_bytes() const { return long(cylinders) * heads * sectors_per_track * kBytesPerSector; }
     };
     Drive drives[2];
+    bool lenient_media = false;
 
     Fdc765(double cpu_hz, const DriveType& a, const DriveType& b) : cpu_hz_(cpu_hz), types_{a, b} { reset(); }
 
@@ -87,7 +89,10 @@ public:
         }
         if (xfer_active_) {
             xfer_credit_ += double(d);
-            if (xfer_credit_ >= xfer_target_) transfer_ready_ = true;
+            if (xfer_credit_ >= xfer_target_) {
+                if (xfer_failed_) end_failed_command();
+                else transfer_ready_ = true;
+            }
         }
     }
 
@@ -122,6 +127,7 @@ private:
 
     uint8_t dor_ = 0x00;        // Digital Output Register (0x3F2)
     uint8_t data_rate_ = 0;     // Floppy Control register (0x3F7 write)
+    uint8_t srt_ = 0;           // SPECIFY step rate: 16 - SRT ms at 500 kbit/s
 
     uint8_t cmd_ = 0;
     uint8_t params_[9] = {};
@@ -145,6 +151,7 @@ private:
     std::size_t transfer_len_ = 0;
     double xfer_credit_ = 0.0, xfer_target_ = 0.0;
     bool xfer_active_ = false;
+    bool xfer_failed_ = false;  // ends with result_ after two index pulses, no data
     bool formatting_ = false;
     uint8_t format_fill_ = 0;
     std::vector<uint8_t> format_ids_;  // C, H, R, N per sector, read by DMA
@@ -158,6 +165,11 @@ private:
     void start_command(uint8_t first_byte);
     void run_command();  // called once all parameter bytes are in
     void begin_transfer(bool is_write);
+    int rate_for_media(int drive) const;
+    int media_track(int drive) const;
+    double step_cycles(int drive) const;
+    void fail_command(int drive, int head, uint8_t st1, uint8_t st2);
+    void end_failed_command();
     void begin_format();
     void apply_format(std::size_t id_bytes);
 };

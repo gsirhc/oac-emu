@@ -51,7 +51,7 @@ add_unit_test(egabios_test  egabios_test.cpp
 target_compile_definitions(egabios_test PRIVATE EGABIOS_PATH="${CORE}/roms/egabios/egabios.bin")
 add_unit_test(bios_test  bios_test.cpp
   ${CORE}/machine.cpp ${CORE}/cpu80286.cpp ${CHIPSET_COMMON})
-target_compile_definitions(bios_test PRIVATE BIOS_PATH="${CORE}/roms/BIOS-bochs-legacy")
+target_compile_definitions(bios_test PRIVATE BIOS_PATH="${CORE}/roms/BIOS-bochs-legacy" EGABIOS_PATH="${CORE}/roms/egabios/egabios.bin")
 
 include(GoogleTest)
 gtest_discover_tests(cpu80286_test)

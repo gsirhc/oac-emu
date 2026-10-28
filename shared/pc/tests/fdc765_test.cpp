@@ -33,7 +33,10 @@ protected:
 // The 486's single 3.5" drive.
 class Fdc765Drive35Test : public Fdc765Test {
 protected:
-    Fdc765Drive35Test() { fdc = Fdc765(66e6, pc::kDrive144M, pc::kDrive144M); }
+    Fdc765Drive35Test() {
+        fdc = Fdc765(66e6, pc::kDrive144M, pc::kDrive144M);
+        fdc.lenient_media = true;
+    }
 
     uint64_t Format(int cyl, int head, int sectors, uint8_t fill) {
         const uint8_t cmd[] = {0x4D, uint8_t(head << 2), 0x02, uint8_t(sectors), 0x6C, fill};
@@ -126,6 +129,7 @@ TEST_F(Fdc765Test, WriteDataMarksDriveDirty) {
     auto img = MakeImage(40, 2, 9);
     fdc.mount(1, img.data(), img.size());  // drive B: (360KB)
     PowerOnMotorAndSelect(1);
+    fdc.out(0x3F7, 2);
     ASSERT_FALSE(fdc.dirty(1));
 
     fdc.out(0x3F5, 0xC5);  // WRITE DATA (MT|MFM|base 0x05)
@@ -223,7 +227,7 @@ TEST_F(Fdc765Test, FormatTrackFillsTheNamedSectorsAfterOneRevolution) {
     }
     fdc.finish_transfer(15 * 4);
     EXPECT_TRUE(fdc.irq_pending());
-    EXPECT_EQ(fdc.in(0x3F5), 0x00);
+    EXPECT_EQ(fdc.in(0x3F5), 0x04);  // ST0: normal termination, head 1
     const auto& d = fdc.drives[0];
     for (int r = 1; r <= 15; ++r) {
         EXPECT_EQ(d.image[std::size_t(d.offset_for(5, 1, r))], 0xF6) << r;
@@ -276,6 +280,7 @@ TEST_F(Fdc765Test, SeekTakesOneStepTimePerCylinderAndReportsTheNewCylinder) {
     auto img = MakeImage(80, 2, 15);
     fdc.mount(0, img.data(), img.size());
     PowerOnMotorAndSelect(0);
+    fdc.out(0x3F5, 0x03); fdc.out(0x3F5, 0xDF); fdc.out(0x3F5, 0x02);  // SPECIFY SRT D: 3 ms
     fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x00); fdc.out(0x3F5, 10);  // SEEK drive 0, cylinder 10
     EXPECT_EQ(fdc.in(0x3F4) & 0x01, 0x01) << "drive 0 busy seeking";
     EXPECT_EQ(fdc.in(0x3F4) & 0x80, 0x80) << "RQM stays up during a seek";
@@ -312,7 +317,7 @@ TEST_F(Fdc765Test, ReadIdReportsTheCylinderUnderTheHead) {
     fdc.out(0x3F5, 0x4A); fdc.out(0x3F5, 0x04);  // READ ID, MFM, head 1
     uint8_t res[7];
     for (auto &b : res) b = fdc.in(0x3F5);
-    EXPECT_EQ(res[0], 0x00);
+    EXPECT_EQ(res[0], 0x04);  // head 1, drive 0
     EXPECT_EQ(res[3], 7);  // C
     EXPECT_EQ(res[4], 1);  // H
     EXPECT_EQ(res[6], 2);  // N: 512 bytes
@@ -339,20 +344,122 @@ TEST_F(Fdc765Test, MultiSectorReadRunsFromRToEotOnTheSelectedHead) {
     EXPECT_EQ(res[5], 4);
 }
 
-TEST_F(Fdc765Test, A360KDiskReadsAtHalfTheRateOfA12MDisk) {
-    auto cycles_for_one_sector = [this](std::size_t cyl, int spt) {
+TEST_F(Fdc765Test, EachMediaReadsAtItsOwnDataRate) {
+    auto cycles_for_one_sector = [this](int drive, std::size_t cyl, int spt, uint8_t rate) {
         fdc.reset();
         auto img = MakeImage(cyl, 2, spt);
-        fdc.mount(0, img.data(), img.size());
-        PowerOnMotorAndSelect(0);
-        const uint8_t cmd[] = {0xE6, 0x00, 0x00, 0x00, 0x01, 0x02, 0x01, 0x1B, 0xFF};
+        fdc.mount(drive, img.data(), img.size());
+        PowerOnMotorAndSelect(drive);
+        fdc.out(0x3F7, rate);
+        const uint8_t cmd[] = {0xE6, uint8_t(drive), 0x00, 0x00, 0x01, 0x02, 0x01, 0x1B, 0xFF};
         for (uint8_t b : cmd) fdc.out(0x3F5, b);
         uint64_t c = 0;
         for (; c < 10'000'000 && !fdc.transfer_ready(); c += 16) fdc.tick(c);
         return double(c);
     };
-    EXPECT_NEAR(cycles_for_one_sector(80, 15), 512.0 / 62500.0 * 8e6, 32.0);  // 500 kbit/s
-    EXPECT_NEAR(cycles_for_one_sector(40, 9), 512.0 / 31250.0 * 8e6, 32.0);   // 250 kbit/s
+    EXPECT_NEAR(cycles_for_one_sector(0, 80, 15, 0), 512.0 / 62500.0 * 8e6, 32.0);  // 1.2MB: 500 kbit/s
+    EXPECT_NEAR(cycles_for_one_sector(0, 40, 9, 1), 512.0 / 37500.0 * 8e6, 32.0);   // 360KB in A:: 300
+    EXPECT_NEAR(cycles_for_one_sector(1, 40, 9, 2), 512.0 / 31250.0 * 8e6, 32.0);   // 360KB in B:: 250
+}
+
+TEST_F(Fdc765Test, TheWrongDataRateFindsNoAddressMarkAfterTwoRevolutions) {
+    auto img = MakeImage(80, 2, 15);
+    fdc.mount(0, img.data(), img.size());
+    PowerOnMotorAndSelect(0);
+    fdc.out(0x3F7, 1);
+    const uint8_t cmd[] = {0xE6, 0x04, 0x00, 0x01, 0x01, 0x02, 0x01, 0x1B, 0xFF};
+    for (uint8_t b : cmd) fdc.out(0x3F5, b);
+    uint64_t c = 0;
+    for (; c < 10'000'000 && !fdc.irq_pending(); c += 100) fdc.tick(c);
+    EXPECT_FALSE(fdc.transfer_ready());
+    EXPECT_NEAR(double(c), 2.0 * 8e6 / 6.0, 200.0);
+    uint8_t res[7];
+    for (auto &b : res) b = fdc.in(0x3F5);
+    EXPECT_EQ(res[0], 0x44);  // abnormal termination, head 1
+    EXPECT_EQ(res[1], 0x01);  // MA
+    EXPECT_EQ(fdc.in(0x3F4) & 0x10, 0x00);
+}
+
+TEST_F(Fdc765Test, A360KDiskInTheHighDensityDriveReadsOnlyOnEvenTracks) {
+    auto img = MakeImage(40, 2, 9);
+    fdc.mount(0, img.data(), img.size());
+    PowerOnMotorAndSelect(0);
+    fdc.out(0x3F7, 1);
+    uint64_t now = 0;
+    auto run = [&] { while (now < 100'000'000 && !fdc.transfer_ready() && !fdc.irq_pending()) fdc.tick(now += 100); };
+    auto seek = [&](int track) {
+        fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x00); fdc.out(0x3F5, uint8_t(track));
+        run();
+        fdc.out(0x3F5, 0x08); fdc.in(0x3F5); fdc.in(0x3F5);
+    };
+    uint8_t st[7];
+    auto read = [&](int cyl) {
+        const uint8_t cmd[] = {0xE6, 0x00, uint8_t(cyl), 0x00, 0x01, 0x02, 0x01, 0x1B, 0xFF};
+        for (uint8_t b : cmd) fdc.out(0x3F5, b);
+        run();
+        int first = -1;
+        if (fdc.transfer_ready()) {
+            first = fdc.transfer_image_ptr()[0];
+            fdc.finish_transfer(512);
+        }
+        for (auto& b : st) b = fdc.in(0x3F5);
+        return first;
+    };
+
+    seek(4);
+    EXPECT_EQ(read(2), 2 * 18);
+    EXPECT_EQ(st[0] & 0xC0, 0x00);
+
+    seek(2);
+    EXPECT_EQ(read(2), -1);
+    EXPECT_EQ(st[1], 0x04);  // ND
+    EXPECT_EQ(st[2], 0x10);  // WC: the ID says cylinder 1
+
+    seek(3);
+    EXPECT_EQ(read(1), -1);
+    EXPECT_EQ(st[0] & 0xC0, 0x40);
+    EXPECT_EQ(st[1], 0x01);  // MA between two 48 tpi tracks
+}
+
+TEST_F(Fdc765Test, ReadIdReportsTheMediaTrackNotTheHeadPosition) {
+    auto img = MakeImage(40, 2, 9);
+    fdc.mount(0, img.data(), img.size());
+    PowerOnMotorAndSelect(0);
+    fdc.out(0x3F7, 1);
+    fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x00); fdc.out(0x3F5, 14);
+    for (uint64_t c = 0; c < 100'000'000 && !fdc.irq_pending(); c += 1000) fdc.tick(c);
+    fdc.out(0x3F5, 0x08); fdc.in(0x3F5); fdc.in(0x3F5);
+    fdc.out(0x3F5, 0x4A); fdc.out(0x3F5, 0x00);
+    uint8_t res[7];
+    for (auto &b : res) b = fdc.in(0x3F5);
+    EXPECT_EQ(res[0], 0x00);
+    EXPECT_EQ(res[3], 7);
+}
+
+TEST_F(Fdc765Test, AHighDensityDiskInThe360KDriveNeverReads) {
+    auto img = MakeImage(80, 2, 15);
+    fdc.mount(1, img.data(), img.size());
+    PowerOnMotorAndSelect(1);
+    for (uint8_t rate : {0, 1, 2}) {
+        fdc.out(0x3F7, rate);
+        fdc.out(0x3F5, 0x4A); fdc.out(0x3F5, 0x01);
+        for (uint64_t c = 0; c < 100'000'000 && !fdc.irq_pending(); c += 1000) fdc.tick(c);
+        EXPECT_EQ(fdc.in(0x3F5), 0x41) << int(rate);
+        EXPECT_EQ(fdc.in(0x3F5), 0x01) << int(rate);
+        for (int i = 0; i < 5; ++i) fdc.in(0x3F5);
+    }
+}
+
+TEST_F(Fdc765Test, SpecifyStepRateStretchesAtLowerDataRates) {
+    auto img = MakeImage(40, 2, 9);
+    fdc.mount(0, img.data(), img.size());
+    PowerOnMotorAndSelect(0);
+    fdc.out(0x3F5, 0x03); fdc.out(0x3F5, 0xDF); fdc.out(0x3F5, 0x02);
+    fdc.out(0x3F7, 1);
+    fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x00); fdc.out(0x3F5, 6);
+    uint64_t c = 0;
+    for (; c < 100'000'000 && !fdc.irq_pending(); c += 100) fdc.tick(c);
+    EXPECT_NEAR(double(c), 6 * 0.003 * 500.0 / 300.0 * 8e6, 200.0);
 }
 
 TEST_F(Fdc765Test, ResetDuringATransferAbandonsIt) {
@@ -431,7 +538,7 @@ TEST_F(Fdc765Drive35Test, FormatTrackFillsAll18SectorsInOne300RpmRevolution) {
     PowerOnMotorAndSelect(0);
     uint64_t took = Format(0, 1, 18, 0xF6);
     EXPECT_NEAR(double(took), 66e6 / 5.0, 2000.0);
-    EXPECT_EQ(fdc.in(0x3F5), 0x00);
+    EXPECT_EQ(fdc.in(0x3F5), 0x04);
     const auto& d = fdc.drives[0];
     for (int r = 1; r <= 18; ++r) EXPECT_EQ(d.image[std::size_t(d.offset_for(0, 1, r))], 0xF6) << r;
     EXPECT_EQ(d.image[std::size_t(d.offset_for(0, 0, 1))], 0x00);

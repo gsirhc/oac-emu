@@ -85,7 +85,10 @@ must always be written fresh from datasheets and schematics.
 Exceptions. These do not waive the rest of this section.
 
 - **Bochs BIOS and the LGPL VGA BIOS.** Both PCs ship `BIOS-bochs-legacy`
-  as the system BIOS stand-in, fetched at build time. The 486 also ships
+  as the system BIOS stand-in. The 486 fetches the prebuilt binary. The
+  PC/AT builds it with dev86 from the pinned `rombios.c` plus the patches in
+  `ibmpc-at/roms/bochs-bios/patches/`; reading and editing `rombios.c` for
+  those patches is allowed, since it is the guest firmware. The 486 also ships
   `VGABIOS-lgpl-latest.bin`; the PC/AT ships the from-scratch EGA BIOS
   stand-in `egabios` instead (`ibmpc-at/roms/egabios/`). Redistributing the
   Bochs BIOS binary is allowed when its license permits it. Comments,

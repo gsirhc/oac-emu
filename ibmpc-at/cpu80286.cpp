@@ -18,10 +18,8 @@ void Cpu::reset() {
     ip = 0xFFF0;
     flags = FLAG_R1;
     halted = false;
-    cycles = 0;
     seg_override_ = -1;
     rep_ = REP_NONE;
-    opsize32_ = false;
     extra_cycles_ = 0;
     msw_ = 0xFFF0;
     gdt_base_ = idt_base_ = 0;
@@ -252,7 +250,18 @@ void Cpu::restore_regs() {
 
 // --- register file ----------------------------------------------------
 
-uint16_t Cpu::get_reg16(int idx) const { return uint16_t(get_reg32(idx)); }
+uint16_t Cpu::get_reg16(int idx) const {
+    switch (idx & 7) {
+        case 0: return uint16_t(ax);
+        case 1: return uint16_t(cx);
+        case 2: return uint16_t(dx);
+        case 3: return uint16_t(bx);
+        case 4: return uint16_t(sp);
+        case 5: return uint16_t(bp);
+        case 6: return uint16_t(si);
+        default: return uint16_t(di);
+    }
+}
 void Cpu::set_reg16(int idx, uint16_t v) {
     // Upper 16 bits are preserved.
     switch (idx & 7) {
@@ -264,30 +273,6 @@ void Cpu::set_reg16(int idx, uint16_t v) {
         case 5: bp = (bp & 0xFFFF0000u) | v; break;
         case 6: si = (si & 0xFFFF0000u) | v; break;
         default: di = (di & 0xFFFF0000u) | v; break;
-    }
-}
-uint32_t Cpu::get_reg32(int idx) const {
-    switch (idx & 7) {
-        case 0: return ax;
-        case 1: return cx;
-        case 2: return dx;
-        case 3: return bx;
-        case 4: return sp;
-        case 5: return bp;
-        case 6: return si;
-        default: return di;
-    }
-}
-void Cpu::set_reg32(int idx, uint32_t v) {
-    switch (idx & 7) {
-        case 0: ax = v; break;
-        case 1: cx = v; break;
-        case 2: dx = v; break;
-        case 3: bx = v; break;
-        case 4: sp = v; break;
-        case 5: bp = v; break;
-        case 6: si = v; break;
-        default: di = v; break;
     }
 }
 uint8_t Cpu::get_reg8(int idx) const {
@@ -393,11 +378,6 @@ void Cpu::set_pzs16(uint16_t r) {
     set_flag(FLAG_SF, (r & 0x8000) != 0);
     set_flag(FLAG_PF, parity_even(uint8_t(r & 0xFF)));
 }
-void Cpu::set_pzs32(uint32_t r) {
-    set_flag(FLAG_ZF, r == 0);
-    set_flag(FLAG_SF, (r & 0x80000000u) != 0);
-    set_flag(FLAG_PF, parity_even(uint8_t(r & 0xFF)));
-}
 
 // --- ALU primitives -------------------------------------------------------
 
@@ -480,40 +460,6 @@ uint16_t Cpu::xor16(uint16_t a, uint16_t b) {
     return r;
 }
 
-uint32_t Cpu::add32(uint32_t a, uint32_t b, bool carry_in) {
-    uint64_t r = uint64_t(a) + uint64_t(b) + (carry_in ? 1u : 0u);
-    uint32_t res = uint32_t(r);
-    set_flag(FLAG_CF, r > 0xFFFFFFFFull);
-    set_flag(FLAG_AF, ((a ^ b ^ res) & 0x10) != 0);
-    set_flag(FLAG_OF, ((~(a ^ b)) & (a ^ res) & 0x80000000u) != 0);
-    set_pzs32(res);
-    return res;
-}
-uint32_t Cpu::sub32(uint32_t a, uint32_t b, bool borrow_in) {
-    uint64_t bb = uint64_t(b) + (borrow_in ? 1u : 0u);
-    uint32_t res = uint32_t(uint64_t(a) - bb);
-    set_flag(FLAG_CF, uint64_t(a) < bb);
-    set_flag(FLAG_AF, ((a ^ b ^ res) & 0x10) != 0);
-    set_flag(FLAG_OF, ((a ^ b) & (a ^ res) & 0x80000000u) != 0);
-    set_pzs32(res);
-    return res;
-}
-uint32_t Cpu::and32(uint32_t a, uint32_t b) {
-    uint32_t r = a & b;
-    set_flag(FLAG_CF, false); set_flag(FLAG_OF, false); set_pzs32(r);
-    return r;
-}
-uint32_t Cpu::or32(uint32_t a, uint32_t b) {
-    uint32_t r = a | b;
-    set_flag(FLAG_CF, false); set_flag(FLAG_OF, false); set_pzs32(r);
-    return r;
-}
-uint32_t Cpu::xor32(uint32_t a, uint32_t b) {
-    uint32_t r = a ^ b;
-    set_flag(FLAG_CF, false); set_flag(FLAG_OF, false); set_pzs32(r);
-    return r;
-}
-
 uint8_t Cpu::alu_apply8(int alu, uint8_t a, uint8_t b) {
     switch (alu) {
         case 0: return add8(a, b, false);              // ADD
@@ -536,19 +482,6 @@ uint16_t Cpu::alu_apply16(int alu, uint16_t a, uint16_t b) {
         case 5: return sub16(a, b, false);
         case 6: return xor16(a, b);
         default: return sub16(a, b, false);
-    }
-}
-
-uint32_t Cpu::alu_apply32(int alu, uint32_t a, uint32_t b) {
-    switch (alu) {
-        case 0: return add32(a, b, false);
-        case 1: return or32(a, b);
-        case 2: return add32(a, b, flag(FLAG_CF));
-        case 3: return sub32(a, b, flag(FLAG_CF));
-        case 4: return and32(a, b);
-        case 5: return sub32(a, b, false);
-        case 6: return xor32(a, b);
-        default: return sub32(a, b, false);
     }
 }
 
@@ -612,38 +545,6 @@ uint16_t Cpu::shiftrot16(int op, uint16_t v, int count) {
             case 5: of = (orig & 0x8000) != 0; break;
             case 7: of = false; break;
             default: of = ((res & 0x8000) != 0) != cf; break;
-        }
-        set_flag(FLAG_OF, of);
-    }
-    return res;
-}
-
-uint32_t Cpu::shiftrot32(int op, uint32_t v, int count) {
-    count &= 0x1F;
-    if (count == 0) return v;
-    uint32_t orig = v;
-    bool cf = flag(FLAG_CF);
-    uint32_t res = v;
-    for (int i = 0; i < count; ++i) {
-        switch (op) {
-            case 0: cf = (res & 0x80000000u) != 0; res = (res << 1) | (cf ? 1u : 0u); break;
-            case 1: cf = (res & 1) != 0; res = (res >> 1) | (cf ? 0x80000000u : 0u); break;
-            case 2: { bool nc = (res & 0x80000000u) != 0; res = (res << 1) | (cf ? 1u : 0u); cf = nc; break; }
-            case 3: { bool nc = (res & 1) != 0; res = (res >> 1) | (cf ? 0x80000000u : 0u); cf = nc; break; }
-            case 5: cf = (res & 1) != 0; res = res >> 1; break;
-            case 7: cf = (res & 1) != 0; res = uint32_t(int32_t(res) >> 1); break;
-            default: cf = (res & 0x80000000u) != 0; res = res << 1; break;
-        }
-    }
-    set_flag(FLAG_CF, cf);
-    if (op >= 4) set_pzs32(res);
-    if (count == 1) {
-        bool of;
-        switch (op) {
-            case 1: case 3: of = ((res & 0x80000000u) != 0) != ((res & 0x40000000u) != 0); break;
-            case 5: of = (orig & 0x80000000u) != 0; break;
-            case 7: of = false; break;
-            default: of = ((res & 0x80000000u) != 0) != cf; break;
         }
         set_flag(FLAG_OF, of);
     }
@@ -752,29 +653,15 @@ void Cpu::aad() {
 void Cpu::push_reg(int idx) {
     // PUSH SP pushes SP from before the push; the 8086 pushes the decremented
     // value. Intel iAPX 286 PRM, "Instruction Set Differences from the 8086".
-    if (opsize32_) push32(get_reg32(idx));
-    else push16(get_reg16(idx));
+    push16(get_reg16(idx));
 }
 void Cpu::pusha() {
     uint32_t orig_sp = sp;
-    // PUSHAD/POPAD under 0x66 are 386 additions; BIOS-bochs-legacy's 32-bit INT 15h frame uses them.
-    if (opsize32_) {
-        push32(ax); push32(cx); push32(dx); push32(bx);
-        push32(orig_sp);
-        push32(bp); push32(si); push32(di);
-        return;
-    }
     push16(ax); push16(cx); push16(dx); push16(bx);
     push16(uint16_t(orig_sp));
     push16(bp); push16(si); push16(di);
 }
 void Cpu::popa() {
-    if (opsize32_) {
-        di = pop32(); si = pop32(); bp = pop32();
-        pop32();
-        bx = pop32(); dx = pop32(); cx = pop32(); ax = pop32();
-        return;
-    }
     di = pop16(); si = pop16(); bp = pop16();
     pop16();  // saved-SP slot is discarded
     bx = pop16(); dx = pop16(); cx = pop16(); ax = pop16();
@@ -795,16 +682,6 @@ void Cpu::imul_imm16(int dst_reg, const RM &rm, uint16_t imm) {
     set_flag(FLAG_CF, of);
     set_flag(FLAG_OF, of);
     set_reg16(dst_reg, res);
-}
-void Cpu::imul_imm32(int dst_reg, const RM &rm, uint32_t imm) {
-    int64_t a = int32_t(rm_read32(rm));
-    int64_t b = int32_t(imm);
-    int64_t r = a * b;
-    uint32_t res = uint32_t(r);
-    bool of = (int64_t(int32_t(res)) != r);
-    set_flag(FLAG_CF, of);
-    set_flag(FLAG_OF, of);
-    set_reg32(dst_reg, res);
 }
 int Cpu::enter() {
     uint16_t size = fetch16();
@@ -1488,44 +1365,37 @@ int Cpu::string_op(uint8_t op) {
     bool is_rep = (rep_ != REP_NONE);
     int src_seg = (seg_override_ >= 0) ? seg_override_ : SEG_DS;
     bool is_cmp_scan = (op == 0xA6 || op == 0xA7 || op == 0xAE || op == 0xAF);
-    // 0x66 widens word string ops to dword (REP MOVSD); byte forms are unaffected.
-    bool dword = wide && opsize32_;
     int iterations = 0;  // actually executed; REPE/REPNE can stop early
     const int per_iteration = (op == 0xA4 || op == 0xA5) ? 4 : (op == 0xA6 || op == 0xA7) ? 9
                             : (op == 0xAA || op == 0xAB) ? 3 : (op == 0xAC || op == 0xAD) ? 4 : 8;
     do {
         if (is_rep && cx == 0) break;
         if (is_rep) save_regs();
-        int step = dword ? 4 : (wide ? 2 : 1);
+        int step = wide ? 2 : 1;
         int dir = flag(FLAG_DF) ? -step : step;
         switch (op) {
             case 0xA4: case 0xA5:  // MOVS
                 if (!wide) wb(SEG_ES, di, rb(src_seg, si));
-                else if (dword) wd(SEG_ES, di, rd(src_seg, si));
                 else ww(SEG_ES, di, rw(src_seg, si));
                 si = uint16_t(si + dir); di = uint16_t(di + dir);
                 break;
             case 0xA6: case 0xA7:  // CMPS
                 if (!wide) sub8(rb(src_seg, si), rb(SEG_ES, di), false);
-                else if (dword) sub32(rd(src_seg, si), rd(SEG_ES, di), false);
                 else sub16(rw(src_seg, si), rw(SEG_ES, di), false);
                 si = uint16_t(si + dir); di = uint16_t(di + dir);
                 break;
             case 0xAA: case 0xAB:  // STOS
                 if (!wide) wb(SEG_ES, di, get_reg8(0));
-                else if (dword) wd(SEG_ES, di, ax);
                 else ww(SEG_ES, di, uint16_t(ax));
                 di = uint16_t(di + dir);
                 break;
             case 0xAC: case 0xAD:  // LODS
                 if (!wide) set_reg8(0, rb(src_seg, si));
-                else if (dword) ax = rd(src_seg, si);
                 else ax = (ax & 0xFFFF0000u) | rw(src_seg, si);
                 si = uint16_t(si + dir);
                 break;
             case 0xAE: case 0xAF:  // SCAS
                 if (!wide) sub8(get_reg8(0), rb(SEG_ES, di), false);
-                else if (dword) sub32(ax, rd(SEG_ES, di), false);
                 else sub16(uint16_t(ax), rw(SEG_ES, di), false);
                 di = uint16_t(di + dir);
                 break;
@@ -1607,12 +1477,6 @@ int Cpu::grp1_immed(uint8_t op) {  // 0x80/0x82: r/m8,imm8  0x81: r/m16/32,imm16
         uint8_t imm = fetch8();
         uint8_t res = alu_apply8(alu, rm_read8(rm), imm);
         if (alu != 7) rm_write8(rm, res);
-    } else if (opsize32_) {
-        uint32_t imm;
-        if (op == 0x83) { int8_t d = int8_t(fetch8()); imm = uint32_t(int32_t(d)); }
-        else imm = fetch32();
-        uint32_t res = alu_apply32(alu, rm_read32(rm), imm);
-        if (alu != 7) rm_write32(rm, res);
     } else {
         uint16_t imm;
         if (op == 0x83) { int8_t d = int8_t(fetch8()); imm = uint16_t(int16_t(d)); }
@@ -1635,9 +1499,6 @@ int Cpu::grp2_shift(uint8_t op) {  // 0xC0/0xD0/0xD2: 8-bit  0xC1/0xD1/0xD3: 16-
     if (!wide) {
         uint8_t res = shiftrot8(alu, rm_read8(rm), count);
         if (count != 0) rm_write8(rm, res);
-    } else if (opsize32_) {
-        uint32_t res = shiftrot32(alu, rm_read32(rm), count);
-        if (count != 0) rm_write32(rm, res);
     } else {
         uint16_t res = shiftrot16(alu, rm_read16(rm), count);
         if (count != 0) rm_write16(rm, res);
@@ -1687,44 +1548,6 @@ int Cpu::grp3_unary(uint8_t op) {  // 0xF6: r/m8  0xF7: r/m16, TEST/NOT/NEG/MUL/
                 break;
             }
         }
-    } else if (opsize32_) {
-        uint32_t v = rm_read32(rm);
-        switch (alu) {
-            case 0: case 1: { uint32_t imm = fetch32(); and32(v, imm); break; }
-            case 2: rm_write32(rm, ~v); break;
-            case 3: { bool nz = v != 0; rm_write32(rm, sub32(0, v, false)); set_flag(FLAG_CF, nz); break; }
-            case 4: {
-                uint64_t r = uint64_t(ax) * v;
-                ax = uint32_t(r); dx = uint32_t(r >> 32);
-                bool ov = dx != 0;
-                set_flag(FLAG_CF, ov); set_flag(FLAG_OF, ov);
-                break;
-            }
-            case 5: {
-                int64_t r = int64_t(int32_t(ax)) * int64_t(int32_t(v));
-                ax = uint32_t(r); dx = uint32_t(uint64_t(r) >> 32);
-                bool ov = (int64_t(int32_t(uint32_t(r))) != r);
-                set_flag(FLAG_CF, ov); set_flag(FLAG_OF, ov);
-                break;
-            }
-            case 6: {
-                uint64_t dividend = (uint64_t(dx) << 32) | ax;
-                if (v == 0) { raise(EXC_DE); break; }
-                uint64_t q = dividend / v, rem = dividend % v;
-                if (q > 0xFFFFFFFFull) { raise(EXC_DE); break; }
-                ax = uint32_t(q); dx = uint32_t(rem);
-                break;
-            }
-            default: {
-                int64_t dividend = int64_t((uint64_t(dx) << 32) | ax);
-                int32_t divisor = int32_t(v);
-                if (divisor == 0 || (divisor == -1 && dividend == INT64_MIN)) { raise(EXC_DE); break; }
-                int64_t q = dividend / divisor, rem = dividend % divisor;
-                if (q > 2147483647ll || q < -2147483648ll) { raise(EXC_DE); break; }
-                ax = uint32_t(int32_t(q)); dx = uint32_t(int32_t(rem));
-                break;
-            }
-        }
     } else {
         uint16_t v = rm_read16(rm);
         switch (alu) {
@@ -1764,7 +1587,7 @@ int Cpu::grp3_unary(uint8_t op) {  // 0xF6: r/m8  0xF7: r/m16, TEST/NOT/NEG/MUL/
             }
         }
     }
-    // iAPX 286 PRM timing appendix. The 0x66 forms reuse the 16-bit numbers; no 286 timing exists for them.
+    // iAPX 286 PRM timing appendix.
     switch (alu) {
         case 0: case 1: return rm.is_mem ? 6 : 3;                                   // TEST
         case 2: case 3: return rm.is_mem ? 7 : 2;                                   // NOT, NEG
@@ -1786,14 +1609,12 @@ int Cpu::grp5(uint8_t op) {  // 0xFE: INC/DEC r/m8   0xFF: INC/DEC/CALL/JMP/PUSH
     switch (alu) {
         case 0: {
             bool cf = flag(FLAG_CF);
-            if (opsize32_) { uint32_t r = add32(rm_read32(rm), 1, false); set_flag(FLAG_CF, cf); rm_write32(rm, r); }
-            else { uint16_t r = add16(rm_read16(rm), 1, false); set_flag(FLAG_CF, cf); rm_write16(rm, r); }
+            uint16_t r = add16(rm_read16(rm), 1, false); set_flag(FLAG_CF, cf); rm_write16(rm, r);
             return rm.is_mem ? 7 : 2;
         }
         case 1: {
             bool cf = flag(FLAG_CF);
-            if (opsize32_) { uint32_t r = sub32(rm_read32(rm), 1, false); set_flag(FLAG_CF, cf); rm_write32(rm, r); }
-            else { uint16_t r = sub16(rm_read16(rm), 1, false); set_flag(FLAG_CF, cf); rm_write16(rm, r); }
+            uint16_t r = sub16(rm_read16(rm), 1, false); set_flag(FLAG_CF, cf); rm_write16(rm, r);
             return rm.is_mem ? 7 : 2;
         }
         // Indirect transfers: reg 7, mem 11, far 16 (CALL) / 15 (JMP), each plus the refill tax.
@@ -1809,7 +1630,7 @@ int Cpu::grp5(uint8_t op) {  // 0xFE: INC/DEC r/m8   0xFF: INC/DEC/CALL/JMP/PUSH
             if (!far_operand(rm, off, seg)) return 3;
             return 15 + far_jmp(seg, off) + flush();
         }
-        case 6: { if (opsize32_) push32(rm_read32(rm)); else push16(rm_read16(rm)); return rm.is_mem ? 5 : 3; }  // PUSH r/m16/32
+        case 6: { push16(rm_read16(rm)); return rm.is_mem ? 5 : 3; }  // PUSH r/m16
         default: ud(); return 3;
     }
 }
@@ -1828,7 +1649,6 @@ int Cpu::step() {
 
     seg_override_ = -1;
     rep_ = REP_NONE;
-    opsize32_ = false;
     extra_cycles_ = 0;
     instr_start_ip_ = ip;
     rep_resumed_ = rep_resume_;
@@ -1856,7 +1676,6 @@ int Cpu::step() {
             case 0x2E: seg_override_ = SEG_CS; break;
             case 0x36: seg_override_ = SEG_SS; break;
             case 0x3E: seg_override_ = SEG_DS; break;
-            case 0x66: if (!firmware()) ud(); opsize32_ = true; break;  // 386 operand-size override
             // LOCK is IOPL-sensitive in protected mode (Intel iAPX 286 PRM); no other bus master to lock out.
             case 0xF0: io_ok(); break;
             case 0xF1: io_ok(); break;    // LOCK alias on the 286, tested on hardware (rep lodsb, "Intel 286 secrets")
@@ -1918,23 +1737,20 @@ int Cpu::execute(uint8_t op, int c) {
             case 0: { RM rm = decode_modrm(); uint8_t res = alu_apply8(alu, rm_read8(rm), get_reg8(last_reg_)); if (alu != 7) rm_write8(rm, res); c += rm.is_mem ? CYC_MEM : CYC_REG; break; }
             case 1: {
                 RM rm = decode_modrm();
-                if (opsize32_) { uint32_t res = alu_apply32(alu, rm_read32(rm), get_reg32(last_reg_)); if (alu != 7) rm_write32(rm, res); }
-                else { uint16_t res = alu_apply16(alu, rm_read16(rm), get_reg16(last_reg_)); if (alu != 7) rm_write16(rm, res); }
+                uint16_t res = alu_apply16(alu, rm_read16(rm), get_reg16(last_reg_)); if (alu != 7) rm_write16(rm, res);
                 c += rm.is_mem ? CYC_MEM : CYC_REG;
                 break;
             }
             case 2: { RM rm = decode_modrm(); uint8_t res = alu_apply8(alu, get_reg8(last_reg_), rm_read8(rm)); if (alu != 7) set_reg8(last_reg_, res); c += rm.is_mem ? (alu == 7 ? 6 : CYC_MEM) : CYC_REG; break; }
             case 3: {
                 RM rm = decode_modrm();
-                if (opsize32_) { uint32_t res = alu_apply32(alu, get_reg32(last_reg_), rm_read32(rm)); if (alu != 7) set_reg32(last_reg_, res); }
-                else { uint16_t res = alu_apply16(alu, get_reg16(last_reg_), rm_read16(rm)); if (alu != 7) set_reg16(last_reg_, res); }
+                uint16_t res = alu_apply16(alu, get_reg16(last_reg_), rm_read16(rm)); if (alu != 7) set_reg16(last_reg_, res);
                 c += rm.is_mem ? (alu == 7 ? 6 : CYC_MEM) : CYC_REG;  // CMP reg,mem is 6
                 break;
             }
             case 4: { uint8_t imm = fetch8(); uint8_t res = alu_apply8(alu, get_reg8(0), imm); if (alu != 7) set_reg8(0, res); c += 3; break; }
             default: {
-                if (opsize32_) { uint32_t imm = fetch32(); uint32_t res = alu_apply32(alu, get_reg32(0), imm); if (alu != 7) set_reg32(0, res); }
-                else { uint16_t imm = fetch16(); uint16_t res = alu_apply16(alu, get_reg16(0), imm); if (alu != 7) set_reg16(0, res); }
+                uint16_t imm = fetch16(); uint16_t res = alu_apply16(alu, get_reg16(0), imm); if (alu != 7) set_reg16(0, res);
                 c += 3;  // ALU acc,imm
                 break;
             }
@@ -1960,58 +1776,8 @@ int Cpu::execute(uint8_t op, int c) {
                 // LOADALL: reported no-op until a primary-source table layout (C14).
                 if (on_unimplemented) on_unimplemented(cs, instr_start_ip_, 0x0F05);
                 c += 3;
-            } else if (!firmware()) {
-                ud();  // includes SLDT..VERW, LAR and LSL, which are #UD in real mode
-            } else if (op2 == 0x20 || op2 == 0x22) {
-                // MOV r32,CR0 / MOV CR0,r32, 386 additions. BIOS-bochs-legacy's INT 15h
-                // AH=87h enters and leaves protected mode with them; a 286 can't clear PE.
-                uint8_t m = fetch8();
-                if ((m >> 3) & 7) { if (on_unimplemented) on_unimplemented(cs, instr_start_ip_, uint16_t(0x0F00 | op2)); }
-                else if (op2 == 0x20) set_reg32(m & 7, msw_);
-                else msw_ = uint16_t(0xFFF0 | (get_reg32(m & 7) & 0x000F));
-                c += 3;
-            } else if (op2 >= 0x80 && op2 <= 0x8F) {
-                // Jcc rel16 is an 80386 addition (the 286 has only rel8). BIOS-bochs-legacy needs it.
-                int16_t rel = int16_t(fetch16());
-                if (cond(op2 & 0xF)) { ip = uint16_t(ip + rel); transfer_ = true; }
-                c += 3;
-            } else if (op2 >= 0x90 && op2 <= 0x9F) {
-                // SETcc r/m8, 386 addition.
-                RM rm2 = decode_modrm();
-                rm_write8(rm2, cond(op2 & 0xF) ? 1 : 0);
-                c += 3;
-            } else if (op2 == 0xAF) {
-                // two-operand IMUL, 386 addition (the 286 has only the 0x69/0x6B imm forms)
-                RM rm2 = decode_modrm();
-                if (opsize32_) {
-                    int64_t a = int32_t(get_reg32(last_reg_)), b = int32_t(rm_read32(rm2));
-                    int64_t r = a * b;
-                    bool of = (int64_t(int32_t(uint32_t(r))) != r);
-                    set_flag(FLAG_CF, of); set_flag(FLAG_OF, of);
-                    set_reg32(last_reg_, uint32_t(r));
-                } else {
-                    int32_t a = int16_t(get_reg16(last_reg_)), b = int16_t(rm_read16(rm2));
-                    int32_t r = a * b;
-                    bool of = (int32_t(int16_t(uint16_t(r))) != r);
-                    set_flag(FLAG_CF, of); set_flag(FLAG_OF, of);
-                    set_reg16(last_reg_, uint16_t(r));
-                }
-                c += 3;
-            } else if (op2 == 0xB6 || op2 == 0xB7) {
-                // MOVZX r16/32, r/m8 (0xB6) or r/m16 (0xB7), 386 addition.
-                RM rm2 = decode_modrm();
-                if (op2 == 0xB6) { uint8_t v = rm_read8(rm2); if (opsize32_) set_reg32(last_reg_, v); else set_reg16(last_reg_, v); }
-                else { uint16_t v = rm_read16(rm2); if (opsize32_) set_reg32(last_reg_, v); else set_reg16(last_reg_, v); }
-                c += 3;
-            } else if (op2 == 0xBE || op2 == 0xBF) {
-                // MOVSX r16/32, r/m8 (0xBE) or r/m16 (0xBF), 386 addition.
-                RM rm2 = decode_modrm();
-                if (op2 == 0xBE) { int8_t v = int8_t(rm_read8(rm2)); if (opsize32_) set_reg32(last_reg_, uint32_t(int32_t(v))); else set_reg16(last_reg_, uint16_t(int16_t(v))); }
-                else { int16_t v = int16_t(rm_read16(rm2)); if (opsize32_) set_reg32(last_reg_, uint32_t(int32_t(v))); else set_reg16(last_reg_, uint16_t(v)); }
-                c += 3;
             } else {
-                if (on_unimplemented) on_unimplemented(cs, instr_start_ip_, uint16_t(0x0F00 | op2));
-                c += 3;  // other protected-mode 0x0F opcodes are unimplemented
+                ud();  // includes SLDT..VERW, LAR and LSL, which are #UD in real mode
             }
             break;
         }
@@ -2026,20 +1792,18 @@ int Cpu::execute(uint8_t op, int c) {
         default:
             if (op <= 0x47) {
                 int r = op - 0x40; bool cf = flag(FLAG_CF);
-                if (opsize32_) set_reg32(r, add32(get_reg32(r), 1, false));
-                else set_reg16(r, add16(get_reg16(r), 1, false));
+                set_reg16(r, add16(get_reg16(r), 1, false));
                 set_flag(FLAG_CF, cf); c += CYC_REG;
             }
             else if (op <= 0x4F) {
                 int r = op - 0x48; bool cf = flag(FLAG_CF);
-                if (opsize32_) set_reg32(r, sub32(get_reg32(r), 1, false));
-                else set_reg16(r, sub16(get_reg16(r), 1, false));
+                set_reg16(r, sub16(get_reg16(r), 1, false));
                 set_flag(FLAG_CF, cf); c += CYC_REG;
             }
             else if (op <= 0x57) { push_reg(op - 0x50); c += 3; }  // PUSH reg16 costs 3 (iAPX 286 PRM timing appendix)
             else if (op <= 0x5F) {
                 int r = op - 0x58;
-                if (opsize32_) set_reg32(r, pop32()); else set_reg16(r, pop16());
+                set_reg16(r, pop16());
                 c += 5;
             }
             else if (op == 0x60) { pusha(); c += 17; }  // PUSHA
@@ -2053,16 +1817,16 @@ int Cpu::execute(uint8_t op, int c) {
                 set_flag(FLAG_ZF, adjust);
                 c += rm.is_mem ? 11 : 10;
             }
-            else if (op == 0x68) { if (opsize32_) push32(fetch32()); else push16(fetch16()); c += 3; }
+            else if (op == 0x68) { push16(fetch16()); c += 3; }
             else if (op == 0x69) {
                 RM rm = decode_modrm(); int r = last_reg_;
-                if (opsize32_) imul_imm32(r, rm, fetch32()); else imul_imm16(r, rm, fetch16());
+                imul_imm16(r, rm, fetch16());
                 c += rm.is_mem ? 24 : 21;
             }
-            else if (op == 0x6A) { int8_t imm = int8_t(fetch8()); if (opsize32_) push32(uint32_t(int32_t(imm))); else push16(uint16_t(int16_t(imm))); c += 3; }
+            else if (op == 0x6A) { int8_t imm = int8_t(fetch8()); push16(uint16_t(int16_t(imm))); c += 3; }
             else if (op == 0x6B) {
                 RM rm = decode_modrm(); int r = last_reg_; int8_t imm = int8_t(fetch8());
-                if (opsize32_) imul_imm32(r, rm, uint32_t(int32_t(imm))); else imul_imm16(r, rm, uint16_t(int16_t(imm)));
+                imul_imm16(r, rm, uint16_t(int16_t(imm)));
                 c += rm.is_mem ? 24 : 21;
             }
             else if (op >= 0x6C && op <= 0x6F) { if (io_ok()) c += io_string_op(op); else c += 5; }
@@ -2074,12 +1838,12 @@ int Cpu::execute(uint8_t op, int c) {
             else if (op == 0x87) { RM rm = decode_modrm(); uint16_t a = get_reg16(last_reg_), b = rm_read16(rm); set_reg16(last_reg_, b); rm_write16(rm, a); c += rm.is_mem ? 5 : 3; }
             // MOV memory cost is directional: write 3, read 5 (iAPX 286 PRM timing appendix).
             else if (op == 0x88) { RM rm = decode_modrm(); rm_write8(rm, get_reg8(last_reg_)); c += rm.is_mem ? 3 : CYC_REG; }
-            else if (op == 0x89) { RM rm = decode_modrm(); if (opsize32_) rm_write32(rm, get_reg32(last_reg_)); else rm_write16(rm, get_reg16(last_reg_)); c += rm.is_mem ? 3 : CYC_REG; }
+            else if (op == 0x89) { RM rm = decode_modrm(); rm_write16(rm, get_reg16(last_reg_)); c += rm.is_mem ? 3 : CYC_REG; }
             else if (op == 0x8A) { RM rm = decode_modrm(); set_reg8(last_reg_, rm_read8(rm)); c += rm.is_mem ? 5 : CYC_REG; }
-            else if (op == 0x8B) { RM rm = decode_modrm(); if (opsize32_) set_reg32(last_reg_, rm_read32(rm)); else set_reg16(last_reg_, rm_read16(rm)); c += rm.is_mem ? 5 : CYC_REG; }
+            else if (op == 0x8B) { RM rm = decode_modrm(); set_reg16(last_reg_, rm_read16(rm)); c += rm.is_mem ? 5 : CYC_REG; }
             // MOV reg16,segreg and segreg,reg16 cost 2 register-to-register.
             else if (op == 0x8C) { RM rm = decode_modrm(); rm_write16(rm, seg_reg(last_reg_ & 3)); c += rm.is_mem ? 3 : CYC_REG; }
-            else if (op == 0x8D) { RM rm = decode_modrm(); if (!rm.is_mem) ud(); else if (opsize32_) set_reg32(last_reg_, rm.off); else set_reg16(last_reg_, rm.off); c += 3; }  // LEA
+            else if (op == 0x8D) { RM rm = decode_modrm(); if (!rm.is_mem) ud(); else set_reg16(last_reg_, rm.off); c += 3; }  // LEA
             else if (op == 0x8E) {
                 RM rm = decode_modrm();
                 int sr = last_reg_ & 3;
@@ -2087,16 +1851,15 @@ int Cpu::execute(uint8_t op, int c) {
                 else { load_seg(sr, rm_read16(rm)); if (sr == SEG_SS) shadow_ = true; }
                 c += pe() ? (rm.is_mem ? 19 : 17) : (rm.is_mem ? 5 : CYC_REG);
             }
-            else if (op == 0x8F) { RM rm = decode_modrm(); if (opsize32_) rm_write32(rm, pop32()); else rm_write16(rm, pop16()); c += 5; }
+            else if (op == 0x8F) { RM rm = decode_modrm(); rm_write16(rm, pop16()); c += 5; }
             else if (op == 0x90) { c += 3; }
             else if (op >= 0x91 && op <= 0x97) {
                 int r = op - 0x90;
-                if (opsize32_) { uint32_t t = ax; ax = get_reg32(r); set_reg32(r, t); }
-                else { uint16_t t = uint16_t(ax); ax = (ax & 0xFFFF0000u) | get_reg16(r); set_reg16(r, t); }
+                uint16_t t = uint16_t(ax); ax = (ax & 0xFFFF0000u) | get_reg16(r); set_reg16(r, t);
                 c += 3;
             }
-            else if (op == 0x98) { if (opsize32_) ax = uint32_t(int32_t(int16_t(ax))); else ax = (ax & 0xFFFF0000u) | uint16_t(int16_t(int8_t(ax & 0xFF))); c += CYC_REG; }  // CBW / CWDE
-            else if (op == 0x99) { if (opsize32_) dx = (ax & 0x80000000u) ? 0xFFFFFFFFu : 0u; else dx = (dx & 0xFFFF0000u) | ((ax & 0x8000) ? 0xFFFFu : 0u); c += CYC_REG; }  // CWD / CDQ
+            else if (op == 0x98) { ax = (ax & 0xFFFF0000u) | uint16_t(int16_t(int8_t(ax & 0xFF))); c += CYC_REG; }  // CBW
+            else if (op == 0x99) { dx = (dx & 0xFFFF0000u) | ((ax & 0x8000) ? 0xFFFFu : 0u); c += CYC_REG; }  // CWD
             else if (op == 0x9A) { uint16_t off = fetch16(); uint16_t seg = fetch16(); c += 13 + far_call(seg, off) + flush(); }  // CALL far: floor 13 plus queue-refill tax
             else if (op == 0x9B) { if ((msw_ & MSW_MP) && (msw_ & MSW_TS)) raise(EXC_NM); c += 3; }  // WAIT: no coprocessor present
             else if (op == 0x9C) { push16(flags); c += 3; }
@@ -2109,24 +1872,24 @@ int Cpu::execute(uint8_t op, int c) {
                 uint16_t off = fetch16();
                 bool is_load = (op == 0xA0 || op == 0xA1);
                 if (op == 0xA0) set_reg8(0, rb(seg, off));
-                else if (op == 0xA1) { if (opsize32_) ax = rd(seg, off); else ax = (ax & 0xFFFF0000u) | rw(seg, off); }
+                else if (op == 0xA1) { ax = (ax & 0xFFFF0000u) | rw(seg, off); }
                 else if (op == 0xA2) wb(seg, off, get_reg8(0));
-                else { if (opsize32_) wd(seg, off, ax); else ww(seg, off, uint16_t(ax)); }
+                else ww(seg, off, uint16_t(ax));
                 c += is_load ? 5 : 3;
             }
             else if (op >= 0xA4 && op <= 0xA7) { c += string_op(op); }
             else if (op == 0xA8) { uint8_t imm = fetch8(); and8(get_reg8(0), imm); c += 3; }
-            else if (op == 0xA9) { if (opsize32_) and32(ax, fetch32()); else and16(uint16_t(ax), fetch16()); c += 3; }
+            else if (op == 0xA9) { and16(uint16_t(ax), fetch16()); c += 3; }
             else if (op >= 0xAA && op <= 0xAF) { c += string_op(op); }
             else if (op >= 0xB0 && op <= 0xB7) { set_reg8(op - 0xB0, fetch8()); c += CYC_REG; }
-            else if (op >= 0xB8 && op <= 0xBF) { if (opsize32_) set_reg32(op - 0xB8, fetch32()); else set_reg16(op - 0xB8, fetch16()); c += CYC_REG; }
+            else if (op >= 0xB8 && op <= 0xBF) { set_reg16(op - 0xB8, fetch16()); c += CYC_REG; }
             else if (op == 0xC0 || op == 0xC1) { c += grp2_shift(op); }
             else if (op == 0xC2) { uint16_t n = fetch16(); ip = pop16(); sp = uint16_t(sp + n); c += 11 + flush(); }  // RET imm16: floor 11 plus queue-refill tax
             else if (op == 0xC3) { ip = pop16(); c += 11 + flush(); }  // RET: floor 11 plus queue-refill tax
             else if (op == 0xC4) { RM rm = decode_modrm(); int r = last_reg_; uint16_t off, seg; if (far_operand(rm, off, seg)) { load_seg(SEG_ES, seg); if (!fault_) set_reg16(r, off); } c += pe() ? 21 : CYC_MEM; }
             else if (op == 0xC5) { RM rm = decode_modrm(); int r = last_reg_; uint16_t off, seg; if (far_operand(rm, off, seg)) { load_seg(SEG_DS, seg); if (!fault_) set_reg16(r, off); } c += pe() ? 21 : CYC_MEM; }
             else if (op == 0xC6) { RM rm = decode_modrm(); uint8_t imm = fetch8(); rm_write8(rm, imm); c += rm.is_mem ? 3 : CYC_REG; }
-            else if (op == 0xC7) { RM rm = decode_modrm(); if (opsize32_) rm_write32(rm, fetch32()); else rm_write16(rm, fetch16()); c += rm.is_mem ? 3 : CYC_REG; }
+            else if (op == 0xC7) { RM rm = decode_modrm(); rm_write16(rm, fetch16()); c += rm.is_mem ? 3 : CYC_REG; }
             // ENTER: 11 (level 0), 15 (level 1), 12+4*(lex-1) (level>1), iAPX 286 PRM timing appendix.
             else if (op == 0xC8) { int lex = enter(); c += (lex == 0) ? 11 : (lex == 1) ? 15 : (12 + 4 * (lex - 1)); }
             else if (op == 0xC9) { leave(); c += 5; }
@@ -2169,10 +1932,6 @@ int Cpu::execute(uint8_t op, int c) {
             else if (op == 0xFC) { set_flag(FLAG_DF, false); c += CYC_REG; }
             else if (op == 0xFD) { set_flag(FLAG_DF, true); c += CYC_REG; }
             else if (op == 0xFE || op == 0xFF) { c += grp5(op); }
-            else if (firmware()) {
-                if (on_unimplemented) on_unimplemented(cs, instr_start_ip_, op);
-                c += 2;
-            }
             else ud();
             break;
     }

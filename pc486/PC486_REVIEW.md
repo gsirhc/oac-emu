@@ -7270,3 +7270,15 @@ TRACK in the execution phase when the drive has no disk, since a drive
 with no disk gives no INDEX pulses (TEAC FD-235HF spec 8.3.9) and the
 uPD765 ends those commands only on the index hole. The BIOS times out and
 DOS reports the drive not ready. Details are in IBM_PCAT_REVIEW.md §60.
+
+## 58. The floppy controller's media checks stay off here
+
+The shared `fdc765` now reads only what a real drive would: media at its
+own data rate, IDs from the track under the head, SPECIFY's step rate, and
+MA, ND or WC after two index pulses otherwise (IBM_PCAT_REVIEW.md §69).
+The AT's patched BIOS seeks and sets the rate. This machine's prebuilt
+BIOS-bochs-legacy never seeks, sends SPECIFY or writes 3F7h, so its
+chipset sets `lenient_media`: reads land at the command's cylinder,
+whatever the head and rate, and seeks use the DriveType's fixed step
+time. That's a departure from the real controller until this BIOS gets
+the same patches.

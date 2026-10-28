@@ -3,18 +3,10 @@
 // Drive C: ships preloaded with the OS and has no swap UI, like a real AT.
 //
 // Simplifications (IBM_PCAT_REVIEW.md):
-//  - BIOS-bochs-legacy drives the disk as ATA: 0x55/0xAA scratch test, SRST
-//    soft reset, signature check, then IDENTIFY DEVICE (0xEC) for geometry.
-//    IDENTIFY (ATA, 1988+) and 28-bit LBA (bit 6 of Drive/Head, ATA-2) postdate
-//    the real WD1003. They are compatibility concessions for the firmware
-//    substitute; see offset_for_current_registers(). Machine::configure_factory_cmos()
-//    also seeds the Type 47 CMOS geometry that the same BIOS reads separately.
-//  - READ SECTORS and READ VERIFY wait for each sector to pass under the head:
+//  - READ, READ VERIFY and WRITE wait for each sector to pass under the head:
 //    3600 RPM, 17 slots a track, 3:1 interleave unless FORMAT TRACK set one.
-//  - WRITE SECTORS commits synchronously when the last byte arrives, with one
-//    IRQ at the end. The firmware's write poll (rombios.c ata_cmd_data_io())
-//    checks for DRQ right after each outsw, so per-sector BSY would fail it.
-//  - Seeks, RESTORE and DIAGNOSE complete at once.
+//  - DIAGNOSE completes at once. Buffered seeks take the time from a curve through
+//    the ST4038's maximums, not a measured profile.
 //  - Bad-block marks, WRITE LONG's stored ECC and FORMAT TRACK's interleave
 //    live in memory only; the raw image has nowhere to keep them.
 #ifndef IBMPCAT_WD1003_H
@@ -121,21 +113,15 @@ private:
     };
     enum Error : uint8_t { ERR_ABRT = 0x04, ERR_IDNF = 0x10, ERR_ECC = 0x40, ERR_BB = 0x80 };
     enum class PioMode { kNone, kReadDrain, kWriteFill };
-    enum class Xfer { kNone, kRead, kVerify, kWrite, kFormat };
+    enum class Xfer { kNone, kRead, kVerify, kWrite, kFormat, kSeek };
 
     uint8_t error_ = 0;
     uint8_t precomp_ = 0;         // 0x1F1 when written: write precomp cylinder / 4
-    uint16_t sector_count_ = 1;   // 0 means 256 in ATA
+    uint16_t sector_count_ = 1;   // 0 means 256
     uint8_t sector_number_ = 1;
     uint8_t cyl_low_ = 0, cyl_high_ = 0;
     uint8_t drive_head_ = 0xA0;   // bits 5 and 7 always read 1
     uint8_t status_ = ST_DRDY | ST_DSC;
-    // Cylinder Low/High and Status come from the one real device, except for a
-    // window after a soft reset with the absent slave selected, when they float
-    // to 0xFF. ata_detect() reads Cylinder Low then High to conclude "no second
-    // drive", so this counts those two reads down from 2. Afterwards the real
-    // device answers whatever is selected (IBM_PCAT_REVIEW.md, boot-sector-read bug).
-    int floating_reads_left_ = 0;
     bool nien_ = false;           // Device Control bit1: host interrupts disabled
     bool srst_prev_ = false;
     int selected_drive_ = 0;
@@ -149,7 +135,6 @@ private:
     Xfer xfer_ = Xfer::kNone;
     bool xfer_active_ = false;
     long xfer_offset_ = 0;
-    std::size_t xfer_len_ = 0;
     int sectors_left_ = 0;
     bool long_ = false;        // L bit: 4 ECC bytes follow each sector's data
     bool no_retry_ = false;    // T bit
@@ -158,44 +143,38 @@ private:
     int retries_ = 0;
     double due_ = 0.0;
     uint64_t prev_cycles_ = 0;
+    int head_cyl_ = 0;          // drive 0's heads
+    uint8_t step_rate_ = 0x0D;  // rate field of the last RESTORE or SEEK, 6.5 ms after reset
+    bool rate_set_ = false;
 
     static constexpr double kCpuHz = 8000000.0;
     static constexpr double kBytesPerSec = 625000.0;  // 5 Mbit/s (WD1003-WA2 OEM manual)
     static constexpr double kRevsPerSec = 60.0;       // 3600 RPM (Seagate ST4038 product manual)
     static constexpr double kCyclesPerRev = kCpuHz / kRevsPerSec;
     static constexpr int kFactoryInterleave = 3;  // IBM adapter default (retrocmp.de 5170 notes)
+    static constexpr double kTrackToTrackMs = 11.0;  // slow-step, max (Seagate ST4038 product manual 4.3.2)
 
-    // True when drive_head_ bit4 selects the unpopulated slave. Fixed by wiring,
-    // not by Drive::present, since drive 0 answers even with no image mounted.
-    //
-    // Gates only command-register writes (0x1F7), as on a single-device ATA
-    // cable: a command aimed at Device 1 never executes. ata_detect() relies on
-    // this, since its IDENTIFY to the "second drive" must do nothing or the BIOS
-    // reads a phantom all-zero geometry.
-    //
-    // Other task-file writes (0x1F0-0x1F6, 0x3F6) and all reads are ungated, as on
-    // real ATA. ata_detect() leaves the slave selected and the boot-sector read
-    // programs CHS/count before reselecting the master, so gating those writes
-    // corrupted the first boot read (IBM_PCAT_REVIEW.md).
+    // Drive 1 is never fitted, whatever is mounted; drive 0 answers even empty.
     bool selected_drive_absent() const { return (selected_drive_ & 1) != 0; }
 
-    // Byte offset implied by Sector Number, Cylinder Low/High and Drive/Head,
-    // for both CHS and 28-bit LBA.
+    // Byte offset of the CHS in Sector Number, Cylinder Low/High and Drive/Head.
     long offset_for_current_registers() const;
 
     void run_command(uint8_t cmd);
+    double seek_cycles(int from, int to) const;
+    double implied_seek(int cyl);
+    void begin_seek(double cycles, int cyl);
     void complete(uint8_t error = 0);
-    void do_identify();
     void do_diagnose();
     void begin_read(Xfer kind, uint8_t cmd);
     void begin_write(uint8_t cmd);
     void begin_format();
     void seek_sector();
     void sector_arrived();
-    void finish_write();
+    void sector_written();
     void finish_format();
     // Cycle at which the sector's data field has passed under the head.
-    double sector_due(long sector) const;
+    double sector_due(long sector, double now) const;
     // Index of the first bad-marked sector in [first, first + count), or -1.
     long first_bad(long first, int count) const;
     uint8_t pio_read_byte();

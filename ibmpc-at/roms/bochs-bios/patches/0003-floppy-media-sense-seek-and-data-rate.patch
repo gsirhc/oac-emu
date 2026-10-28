@@ -1,0 +1,357 @@
+--- a/rombios.c
++++ b/rombios.c
+@@ -913,7 +913,9 @@
+ static bx_bool        floppy_drive_exists();
+ static bx_bool        floppy_drive_recal();
+ static bx_bool        floppy_media_known();
+-static bx_bool        floppy_media_sense();
++static Bit16u         floppy_media_sense();
++static bx_bool        floppy_seek();
++static Bit16u         floppy_read_id();
+ static bx_bool        set_enable_a20();
+ static void           keyboard_init();
+ static void           keyboard_panic();
+@@ -6598,8 +6600,7 @@
+       SET_AH(0);
+       SET_DISK_RET_STATUS(0);
+       set_diskette_ret_status(0);
+-      set_diskette_current_cyl(0, 0); /* current cylinder, diskette 1 */
+-      set_diskette_current_cyl(1, 0); /* current cylinder, diskette 2 */
++      write_byte(0x0040, 0x003e, read_byte(0x0040, 0x003e) & 0xfc); /* recalibrate both diskettes next time */
+       CLEAR_CF(); /* successful */
+       return;
+       break;
+@@ -7184,6 +7185,12 @@
+ ASM_END
+     write_byte_DS(0x003e, val8);
+   }
++
++  // SPECIFY from the INT 1Eh diskette parameter table, then the media's data rate
++  outb(PORT_FD_DATA, 0x03);
++  outb(PORT_FD_DATA, read_byte(read_word(0, 0x007a), read_word(0, 0x0078)));
++  outb(PORT_FD_DATA, read_byte(read_word(0, 0x007a), read_word(0, 0x0078) + 1) & 0xfe);
++  outb(0x03f7, read_byte_DS(drive ? 0x0091 : 0x0090) >> 6);
+ }
+ 
+   bx_bool
+@@ -7202,6 +7209,11 @@
+     val8 >>= 1;
+   val8 &= 0x01;
+   if (val8 == 0)
++    return(0);
++
++  // DSKCHG: the new disk may be another type
++  outb(PORT_FD_DOR, (inb(PORT_FD_DOR) & 0xfc) | drive);
++  if (inb(0x03f7) & 0x80)
+     return(0);
+ 
+   media_state_offset = 0x0090;
+@@ -7217,11 +7229,12 @@
+   return(1);
+ }
+ 
+-  bx_bool
++// Returns 1 when the media is established, 0 when no rate reads it, 2 on a timeout (empty drive).
++  Bit16u
+ floppy_media_sense(drive)
+   Bit16u drive;
+ {
+-  bx_bool retval;
++  Bit16u retval;
+   Bit16u  media_state_offset;
+   Bit8u   drive_type, config_data, media_state;
+ 
+@@ -7273,19 +7286,22 @@
+ 
+   // Changed if-else to switch
+   switch(drive_type) {
+-    case 1:    // 360K 5.25" drive
+-      config_data = 0x00; // 0000 0000
+-      media_state = 0x35; // 0011 0101
++    case 1:    // 360K 5.25" drive: 250 kbps
++      config_data = 0x80; // 1000 0000
++      media_state = 0x93; // 1001 0011
+       retval = 1;
+       break;
+-    case 2:    // 1.2 MB 5.25" drive
++    case 2:    // 1.2 MB 5.25" drive: 1.2M media at 500 kbps, else 360K media at 300 double stepped
+       config_data = 0x00; // 0000 0000
+       media_state = 0x15; // 0001 0101
+       retval = 1;
+       break;
+-    case 3:    // 720K 3.5" drive
+-      /* config_data - 0000 0000 ??? */
+-    case 4:    // 1.44 MB 3.5" drive
++    case 3:    // 720K 3.5" drive: 250 kbps
++      config_data = 0x80; // 1000 0000
++      media_state = 0x97; // 1001 0111
++      retval = 1;
++      break;
++    case 4:    // 1.44 MB 3.5" drive: 1.44M media at 500 kbps, else 720K at 250
+       config_data = 0x00; // 0000 0000
+       media_state = 0x17; // 0001 0111
+       retval = 1;
+@@ -7317,10 +7333,113 @@
+   write_byte_DS(0x008B, config_data);
+   write_byte_DS(media_state_offset, media_state);
+ 
++  if (retval && drive_type <= 4) {
++    retval = floppy_read_id(drive);
++    if (retval == 0 && (drive_type == 2 || drive_type == 4)) {
++      media_state = (drive_type == 2) ? 0x74 : 0x97; // 0111 0100: 360K in 1.2M; 1001 0111: 720K
++      config_data = media_state & 0xc0;
++      write_byte_DS(0x008B, config_data);
++      write_byte_DS(media_state_offset, media_state);
++      retval = floppy_read_id(drive);
++    }
++    if (retval != 1)
++      write_byte_DS(media_state_offset, media_state & 0xef);
++  }
++
+   return(retval);
+ }
+ 
++// SEEK to a logical track, double stepping 48 tpi media in a 96 tpi drive.
+   bx_bool
++floppy_seek(drive, track)
++  Bit16u drive;
++  Bit8u  track;
++{
++  Bit8u  val8, cyl;
++  Bit16u curr_cyl_offset;
++
++  //
++  // DS has been set to 0x40 before call
++  //
++
++  curr_cyl_offset = drive ? 0x0095 : 0x0094;
++  cyl = track;
++  if (read_byte_DS(drive ? 0x0091 : 0x0090) & 0x20)
++    cyl <<= 1;
++  if (read_byte_DS(curr_cyl_offset) == cyl)
++    return(1);
++
++  floppy_prepare_controller(drive);
++  outb(PORT_FD_DATA, 0x0f);  // 0f: Seek
++  outb(PORT_FD_DATA, drive);
++  outb(PORT_FD_DATA, cyl);
++
++ASM_START
++  sti
++ASM_END
++  do {
++    if (read_byte_DS(0x0040) == 0) {
++      floppy_reset_controller();
++      return(0);
++    }
++    val8 = (read_byte_DS(0x003e) & 0x80);
++  } while ( val8 == 0 );
++
++  val8 = 0; // separate asm from while() loop
++ASM_START
++  cli
++ASM_END
++
++  val8 = read_byte_DS(0x003e);
++  write_byte_DS(0x003e, val8 & 0x7f);
++  write_byte_DS(curr_cyl_offset, cyl);
++  return(1);
++}
++
++// READ ID on head 0 at the selected data rate: 1 found an ID, 0 none, 2 timed out.
++  Bit16u
++floppy_read_id(drive)
++  Bit16u drive;
++{
++  Bit8u  val8, st0;
++
++  //
++  // DS has been set to 0x40 before call
++  //
++
++  floppy_prepare_controller(drive);
++  outb(PORT_FD_DATA, 0x4a);  // 4a: Read ID, MFM
++  outb(PORT_FD_DATA, drive);
++
++ASM_START
++  sti
++ASM_END
++  do {
++    if (read_byte_DS(0x0040) == 0) {
++      floppy_reset_controller();
++      return(2);
++    }
++    val8 = (read_byte_DS(0x003e) & 0x80);
++  } while ( val8 == 0 );
++
++  val8 = 0; // separate asm from while() loop
++ASM_START
++  cli
++ASM_END
++
++  val8 = read_byte_DS(0x003e);
++  write_byte_DS(0x003e, val8 & 0x7f);
++  st0 = inb(PORT_FD_DATA);
++  val8 = inb(PORT_FD_DATA);
++  val8 = inb(PORT_FD_DATA);
++  val8 = inb(PORT_FD_DATA);
++  val8 = inb(PORT_FD_DATA);
++  val8 = inb(PORT_FD_DATA);
++  val8 = inb(PORT_FD_DATA);
++  return((st0 & 0xc0) == 0);
++}
++
++  bx_bool
+ floppy_drive_recal(drive)
+   Bit16u drive;
+ {
+@@ -7431,7 +7550,7 @@
+       SET_AH(0);
+       set_diskette_ret_status(0);
+       CLEAR_CF(); // successful
+-      set_diskette_current_cyl(drive, 0); // current cylinder
++      write_byte_DS(0x003e, read_byte_DS(0x003e) & 0xfc); // recalibrate both drives next time
+       return;
+ 
+     case 0x01: // Read Diskette Status
+@@ -7473,9 +7592,11 @@
+ 
+       // see if media in drive, and type is known
+       if (floppy_media_known(drive) == 0) {
+-        if (floppy_media_sense(drive) == 0) {
+-          SET_AH(0x0C); // Media type not found
+-          set_diskette_ret_status(0x0C);
++        val8 = floppy_media_sense(drive);
++        if (val8 != 1) {
++          val8 = val8 ? 0x80 : 0x0C; // not ready, or media type not found
++          SET_AH(val8);
++          set_diskette_ret_status(val8);
+           SET_AL(0); // no sectors read
+           SET_CF(); // error occurred
+           return;
+@@ -7549,6 +7670,13 @@
+         //--------------------------------------
+         // set up floppy controller for transfer
+         //--------------------------------------
++        if (floppy_seek(drive, track) == 0) {
++          SET_AH(0x80); // drive not ready (timeout)
++          set_diskette_ret_status(0x80);
++          SET_AL(0); // no sectors read / write
++          SET_CF(); // error occurred
++          return;
++        }
+         floppy_prepare_controller(drive);
+ 
+         // send read-normal-data command (9 bytes) to controller
+@@ -7570,6 +7698,13 @@
+         //--------------------------------------
+         // set up floppy controller for transfer
+         //--------------------------------------
++        if (floppy_seek(drive, track) == 0) {
++          SET_AH(0x80); // drive not ready (timeout)
++          set_diskette_ret_status(0x80);
++          SET_AL(0); // no sectors read / write
++          SET_CF(); // error occurred
++          return;
++        }
+         floppy_prepare_controller(drive);
+ 
+         // send write-normal-data command (9 bytes) to controller
+@@ -7632,29 +7767,26 @@
+       memcpyb(0x0040, 0x0042, get_SS(), return_status, 7);
+ 
+       if ( (return_status[0] & 0xc0) != 0 ) {
+-        if (ah == 0x02) {
+-          SET_AH(0x20);
+-          set_diskette_ret_status(0x20);
+-          SET_AL(0); // no sectors read
+-          SET_CF(); // error occurred
+-          return;
+-        } else {  // if (ah == 0x03)
+-          if ( (return_status[1] & 0x02) != 0 ) {
+-            // diskette not writable.
+-            // AH=status code=0x03 (tried to write on write-protected disk)
+-            // AL=number of sectors written=0
+-            AX = 0x0300;
+-            SET_CF();
+-            return;
+-          } else {
+-            BX_PANIC("int13_diskette_function: write error\n");
+-          }
+-        }
++        // the disk may be another type now: sense it again next time
++        write_byte_DS(drive ? 0x0091 : 0x0090, read_byte_DS(drive ? 0x0091 : 0x0090) & 0xef);
++        if (return_status[1] & 0x02)
++          val8 = 0x03; // write protected
++        else if (return_status[1] & 0x01)
++          val8 = 0x02; // address mark not found
++        else if (return_status[2] & 0x10)
++          val8 = 0x40; // seek failed
++        else if (return_status[1] & 0x04)
++          val8 = 0x04; // sector not found
++        else
++          val8 = 0x20; // controller failure
++        SET_AH(val8);
++        set_diskette_ret_status(val8);
++        SET_AL(0); // no sectors read / written
++        SET_CF(); // error occurred
++        return;
+       }
+ 
+ floppy_return_success:
+-      // ??? should track be new val from return_status[3] ?
+-      set_diskette_current_cyl(drive, track);
+       // AL = number of sectors read (same value as passed)
+       SET_AH(0x00); // success
+       CLEAR_CF();   // success
+@@ -7685,9 +7817,11 @@
+ 
+       // see if media in drive, and type is known
+       if (floppy_media_known(drive) == 0) {
+-        if (floppy_media_sense(drive) == 0) {
+-          SET_AH(0x0C); // Media type not found
+-          set_diskette_ret_status(0x0C);
++        val8 = floppy_media_sense(drive);
++        if (val8 != 1) {
++          val8 = val8 ? 0x80 : 0x0C; // not ready, or media type not found
++          SET_AH(val8);
++          set_diskette_ret_status(val8);
+           SET_AL(0); // no sectors read
+           SET_CF(); // error occurred
+           return;
+@@ -7730,6 +7864,12 @@
+       outb(PORT_DMA1_MASK_REG, 0x02);
+ 
+       // set up floppy controller for transfer
++      if (floppy_seek(drive, track) == 0) {
++        SET_AH(0x80); // drive not ready (timeout)
++        set_diskette_ret_status(0x80);
++        SET_CF(); // error occurred
++        return;
++      }
+       floppy_prepare_controller(drive);
+ 
+       // send format-track command (6 bytes) to controller
+@@ -7798,7 +7938,6 @@
+ 
+       SET_AH(0);
+       set_diskette_ret_status(0);
+-      set_diskette_current_cyl(drive, 0);
+       CLEAR_CF(); // successful
+       return;
+ 
+@@ -8066,9 +8205,11 @@
+ 
+       // see if media in drive, and type is known
+       if (floppy_media_known(drive) == 0) {
+-        if (floppy_media_sense(drive) == 0) {
+-          SET_AH(0x0C); // drive type unknown
+-          set_diskette_ret_status(0x0C);
++        val8 = floppy_media_sense(drive);
++        if (val8 != 1) {
++          val8 = val8 ? 0x80 : 0x0C; // not ready, or drive type unknown
++          SET_AH(val8);
++          set_diskette_ret_status(val8);
+           SET_CF();
+           return;
+         }

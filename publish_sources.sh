@@ -37,6 +37,11 @@ if [ ! -f "$OUT/$BOCHS_TAR" ]; then
     git -C "$tmp/bochs" archive --prefix="bochs-bios-${BOCHS_COMMIT:0:12}/" -o "$PWD/$OUT/$BOCHS_TAR" "$BOCHS_COMMIT" bochs/bios bochs/COPYING
 fi
 
+PATCH_SUM=$(cat ibmpc-at/roms/bochs-bios/Makefile ibmpc-at/roms/bochs-bios/short_jcc.py ibmpc-at/roms/bochs-bios/patches/*.patch | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-12)
+AT_PATCH_TAR="ibmpcat-bochs-bios-patches-$PATCH_SUM.tar.gz"
+rm -f "$OUT"/ibmpcat-bochs-bios-patches-*.tar.gz
+tar -czf "$OUT/$AT_PATCH_TAR" -C ibmpc-at/roms bochs-bios/Makefile bochs-bios/short_jcc.py bochs-bios/patches
+
 VGA_TAR="vgabios-0.9d-${VGABIOS_COMMIT:0:12}.tar.gz"
 if [ ! -f "$OUT/$VGA_TAR" ]; then
     curl -sSfL --retry 3 -o "$OUT/$VGA_TAR" "https://github.com/bochs-emu/VGABIOS/archive/$VGABIOS_COMMIT.tar.gz"
@@ -50,7 +55,8 @@ ls -l "$OUT"
 NOTES="Source code for the third-party software the oac-emu PCs ship:
 
 - FD13-LiveCD.zip: FreeDOS 1.3 LiveCD, unchanged ($FD_URL, SHA-256 $FD_SHA). Every package on it carries its source under SOURCE/. It covers the FreeDOS C: images on both PCs and the Disk library floppies.
-- $BOCHS_TAR: Bochs BIOS source (bochs/bios) at bochs-emu/Bochs@$BOCHS_COMMIT, the build of BIOS-bochs-legacy both PCs ship. GNU LGPL 2.1.
+- $BOCHS_TAR: Bochs BIOS source (bochs/bios) at bochs-emu/Bochs@$BOCHS_COMMIT. The 486 ships its BIOS-bochs-legacy unchanged. GNU LGPL 2.1.
+- $AT_PATCH_TAR: the patches, the build recipe (dev86 0.16.21) and its jump-shortening script that turn that source into the IBM PC/AT's modified BIOS-bochs-legacy. GNU LGPL 2.1.
 - $VGA_TAR: LGPL VGABIOS 0.9d at bochs-emu/VGABIOS@$VGABIOS_COMMIT, the source of the 486's VGABIOS-lgpl-latest.bin. GNU LGPL 2.1.
 - fntcol16.zip: Yossi Gil's EGA/VGA font collection. The IBM PC/AT's EGA BIOS uses its VGA-ROM.F08 and VGA-ROM.F14."
 

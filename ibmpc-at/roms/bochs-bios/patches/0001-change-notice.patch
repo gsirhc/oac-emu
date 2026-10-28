@@ -1,0 +1,12 @@
+--- a/rombios.c
++++ b/rombios.c
+@@ -19,6 +19,9 @@
+ //  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
+ 
+ // ROM BIOS for use with Bochs/Plex86/QEMU emulation environment
++//
++// Modified 2026-10 for the oac-emu IBM PC/AT 5170: see the patches in
++// ibmpc-at/roms/bochs-bios/patches/ (oac-emu.dev).
+ 
+ 
+ // ROM BIOS compatibility entry points:

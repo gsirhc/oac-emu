@@ -9,15 +9,15 @@ namespace {
 using ibmpcat::Machine;
 
 TEST(MachineTest, ConstructorSeedsFactoryCmosConfiguration) {
-    // Without the factory CMOS bytes the BIOS panics "No bootable device" (IBM_PCAT_REVIEW.md §8).
     Machine m;
     EXPECT_EQ(m.chipset.cmos.peek(0x10), 0x21);  // drive A: 1.2MB, B: 360KB
     EXPECT_EQ(m.chipset.cmos.peek(0x14), 0x41);  // two diskette drives, EGA
     EXPECT_EQ(m.chipset.cmos.peek(0x15), 0x80);  // base memory low byte
     EXPECT_EQ(m.chipset.cmos.peek(0x16), 0x02);  // base memory high byte -> 640KB
-    EXPECT_EQ(m.chipset.cmos.peek(0x3D) & 0x0F, 0x01);         // 1st boot device = floppy
-    EXPECT_EQ((m.chipset.cmos.peek(0x3D) >> 4) & 0x0F, 0x02);  // 2nd = hard disk fallback
-    EXPECT_EQ(m.chipset.cmos.peek(0x3F) & 0x01, 0x01);          // no F12 boot-menu pause
+    EXPECT_EQ(m.chipset.cmos.peek(0x12), 0x80);  // C: type 8, no D:
+    for (uint8_t reg = 0x19; reg <= 0x2D; ++reg) EXPECT_EQ(m.chipset.cmos.peek(reg), 0x00) << int(reg);
+    EXPECT_EQ(m.chipset.cmos.peek(0x3D), 0x00);
+    EXPECT_EQ(m.chipset.cmos.peek(0x3F), 0x00);
     // Checksum 0x2E/0x2F covers 0x10-0x2D.
     uint16_t sum = 0;
     for (uint16_t reg = 0x10; reg <= 0x2D; ++reg) sum = uint16_t(sum + m.chipset.cmos.peek(uint8_t(reg)));
@@ -45,19 +45,8 @@ TEST(MachineTest, FactoryCmosSurvivesAnExplicitResetCall) {
     // CMOS is battery-backed and must survive reset (IBM_PCAT_REVIEW.md §8).
     Machine m;
     m.reset();
-    EXPECT_EQ(m.chipset.cmos.peek(0x3D) & 0x0F, 0x01);
     EXPECT_EQ(m.chipset.cmos.peek(0x10), 0x21);
-}
-
-TEST(MachineTest, OnlyTheSystemRomGetsThe386Concession) {
-    Machine m;
-    std::vector<uint8_t> rom(0x4000, 0x90);
-    m.chipset.load_rom(0xC0000, rom.data(), rom.size());
-    m.chipset.load_rom(0xFC000, rom.data(), rom.size());
-    EXPECT_FALSE(m.cpu.firmware_at(0xC0003));
-    EXPECT_TRUE(m.cpu.firmware_at(0xFC003));
-    EXPECT_TRUE(m.cpu.firmware_at(0xFFC003));
-    EXPECT_FALSE(m.cpu.firmware_at(0x7C00));
+    EXPECT_EQ(m.chipset.cmos.peek(0x14), 0x41);
 }
 
 TEST(MachineTest, RunCyclesAdvancesAtLeastTheRequestedAmount) {
@@ -127,6 +116,29 @@ TEST(MachineTest, KeyboardControllerResetTrickResetsCpuWithoutLosingPacing) {
     EXPECT_GE(m.total_cycles(), before);  // pacing counter kept advancing, not zeroed by the reset
 }
 
+TEST(MachineTest, ACpuResetKeepsTheClockTheEgaSlotsAgainst) {
+    Machine m;
+    m.reset();
+    const uint8_t rom[16] = {0xB8, 0x00, 0xA0,        // MOV AX,A000h
+                             0x8E, 0xC0,              // MOV ES,AX
+                             0x26, 0xA2, 0x00, 0x00,  // MOV ES:[0],AL
+                             0xF4,                    // HLT
+                             0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
+    m.chipset.load_rom(0xFFFF0, rom, sizeof rom);
+    m.cpu.cycles = 1'000'000'000;  // two minutes of uptime
+    m.cpu.cs = 0xF000;
+    m.cpu.ip = 0xFFF0;
+    m.run_cycles(100);
+    ASSERT_TRUE(m.cpu.halted);
+    m.cpu.halted = false;
+
+    m.chipset.kbc.out(0x64, 0xFE);  // INT 15h AH=87h returns through a reset like this
+    uint64_t before = m.total_cycles();
+    for (int i = 0; i < 100 && !m.cpu.halted; ++i) m.run_cycles(100);
+    ASSERT_TRUE(m.cpu.halted);
+    EXPECT_LT(m.total_cycles() - before, 100'000u);
+}
+
 TEST(MachineTest, ShutdownResetsTheCpu) {
     Machine m;
     m.reset();
@@ -187,28 +199,21 @@ TEST(MachineTest, A20ClosesWhenRomCodeEntersABootSector) {
     EXPECT_FALSE(m.chipset.kbc.a20_enabled()) << "IBM's POST closes A20 before booting";
 }
 
-TEST(MachineTest, Opcodes386RunFromRomButNotFromRam) {
+TEST(MachineTest, Opcodes386RaiseInvalidOpcodeEvenFromRom) {
     Machine m;
     m.reset();
     const uint8_t movzx[] = {0x0F, 0xB6, 0xC3, 0xF4};  // MOVZX AX, BL ; HLT
     m.chipset.load_rom(0xE0000, movzx, sizeof movzx);
     auto &mem = m.chipset.mem;
-    for (int i = 0; i < 4; ++i) mem[0x0600 + i] = movzx[i];
     mem[6 * 4 + 0] = 0x00; mem[6 * 4 + 1] = 0x50;  // IVT[6] -> 0000:5000
     mem[6 * 4 + 2] = 0x00; mem[6 * 4 + 3] = 0x00;
     m.cpu.ss = 0; m.cpu.sp = 0x8000;
     m.cpu.bx = 0x80;
-
+    m.cpu.ax = 0;
     m.cpu.cs = 0xE000; m.cpu.ip = 0;
     m.run_cycles(1);
-    EXPECT_EQ(m.cpu.ax & 0xFFFF, 0x80u);
-    EXPECT_EQ(m.cpu.ip, 3);
-
-    m.cpu.ax = 0;
-    m.cpu.cs = 0; m.cpu.ip = 0x0600;
-    m.run_cycles(1);
     EXPECT_EQ(m.cpu.ax, 0u);
-    EXPECT_EQ(m.cpu.ip, 0x5000) << "a 286 raises #UD outside the firmware";
+    EXPECT_EQ(m.cpu.ip, 0x5000);
 }
 
 TEST(MachineTest, MovSsHoldsOffAPendingIrqForOneInstruction) {

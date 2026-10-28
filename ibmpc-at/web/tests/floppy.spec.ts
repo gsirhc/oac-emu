@@ -86,6 +86,21 @@ test.describe("floppy drives", () => {
     expect(imageBytes).toBe(4096);
   });
 
+  test("pressing the lever's far end keeps it closed until the click ejects", async ({ page }) => {
+    await boot(page);
+    await page.evaluate(() => { document.documentElement.dataset.theme = "subtle"; });
+    await insertFloppy(page, 0, makeBlankImage(4096));
+    const bayA = bay(page, 0);
+    const lever = bayA.locator('[data-role="eject"]');
+    await lever.scrollIntoViewIfNeeded();
+    const box = (await lever.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height * 0.9);
+    await page.mouse.down();
+    expect(await lever.evaluate((el) => getComputedStyle(el).transform)).toBe("matrix(0, 1, -1, 0, 0, 0)");
+    await page.mouse.up();
+    await expect(bayA).not.toHaveClass(/loaded/);
+  });
+
   test("ejecting is independent of power state -- works while the machine is off", async ({ page }) => {
     // slots work with or without power (app.js pendingFloppy)
     await boot(page);

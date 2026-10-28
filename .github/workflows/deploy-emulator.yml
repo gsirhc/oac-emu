@@ -156,7 +156,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ibmpc-at/disks/freedos-hdd.img
-          key: ibmpcat-hdd-${{ hashFiles('ibmpc-at/*.h', 'ibmpc-at/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'ibmpc-at/disks/*.cpp', 'ibmpc-at/disks/*.sh', 'ibmpc-at/roms/*.sh', 'ibmpc-at/roms/egabios/*') }}
+          key: ibmpcat-hdd-${{ hashFiles('ibmpc-at/*.h', 'ibmpc-at/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'ibmpc-at/disks/*.cpp', 'ibmpc-at/disks/*.sh', 'ibmpc-at/roms/*.sh', 'ibmpc-at/roms/bochs-bios/Makefile', 'ibmpc-at/roms/bochs-bios/short_jcc.py', 'ibmpc-at/roms/bochs-bios/patches/*', 'ibmpc-at/roms/egabios/*') }}
 
       - name: Build IBM PC/AT FreeDOS HDD image
         if: steps.ibmpcat-hdd.outputs.cache-hit != 'true'
@@ -592,7 +592,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ibmpc-at/disks/freedos-hdd.img
-          key: ibmpcat-hdd-${{ hashFiles('ibmpc-at/*.h', 'ibmpc-at/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'ibmpc-at/disks/*.cpp', 'ibmpc-at/disks/*.sh', 'ibmpc-at/roms/*.sh', 'ibmpc-at/roms/egabios/*') }}
+          key: ibmpcat-hdd-${{ hashFiles('ibmpc-at/*.h', 'ibmpc-at/*.cpp', 'shared/pc/*.h', 'shared/pc/*.cpp', 'ibmpc-at/disks/*.cpp', 'ibmpc-at/disks/*.sh', 'ibmpc-at/roms/*.sh', 'ibmpc-at/roms/bochs-bios/Makefile', 'ibmpc-at/roms/bochs-bios/short_jcc.py', 'ibmpc-at/roms/bochs-bios/patches/*', 'ibmpc-at/roms/egabios/*') }}
 
       - name: Build IBM PC/AT FreeDOS HDD image
         if: steps.ibmpcat-hdd.outputs.cache-hit != 'true'

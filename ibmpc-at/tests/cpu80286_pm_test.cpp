@@ -456,18 +456,7 @@ TEST_F(Cpu80286PmTest, PmOnlyInstructionsAreUdInRealMode) {
     EXPECT_EQ(cpu->cs, 0x0700);
 }
 
-TEST_F(Cpu80286PmTest, FirmwareMovCr0LeavesProtectedModeKeepingTheCaches) {
-    cpu->firmware_at = [](uint32_t) { return true; };
-    pm({0xB8, HIGH, 0x00, 0x8E, 0xC0,          // MOV AX,HIGH ; MOV ES,AX
-        0x0F, 0x20, 0xC0,                      // MOV EAX,CR0
-        0x24, 0xFE,                            // AND AL,FEh
-        0x0F, 0x22, 0xC0,                      // MOV CR0,EAX
-        0x26, 0xA2, 0x00, 0x00}, 6);           // MOV ES:[0],AL
-    EXPECT_EQ(cpu->msw() & 1, 0);
-    EXPECT_EQ(mem[0x123450], 0xF0) << "ES keeps its protected-mode base until reloaded";
-}
-
-TEST_F(Cpu80286PmTest, OnlyFirmwareMayUseMovCr0) {
+TEST_F(Cpu80286PmTest, MovCr0IsInvalidOnA286) {
     w16(6 * 4, 0x0000); w16(6 * 4 + 2, 0x0700);
     put(0x1000, {0x0F, 0x20, 0xC0});
     cpu->cs = 0x0100; cpu->ip = 0; cpu->ss = 0; cpu->sp = 0x8000;

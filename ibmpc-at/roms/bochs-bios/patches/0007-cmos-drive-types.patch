@@ -1,0 +1,2009 @@
+diff -ru a/rombios.c b/rombios.c
+--- a/rombios.c
++++ b/rombios.c
+@@ -2150,6 +2150,7 @@
+ 
+ static char drivetypes[][10]={"", "Floppy","Hard Disk","CD-Rom", "Network"};
+ 
++#if BX_ELTORITO_BOOT || BX_PNPBIOS
+ static void
+ init_boot_vectors()
+ {
+@@ -2206,6 +2207,7 @@
+   memcpyb(ss, e, IPL_SEG, IPL_TABLE_OFFSET + i * sizeof (*e), sizeof (*e));
+   return 1;
+ }
++#endif
+ 
+ #if BX_ELTORITO_BOOT
+   void
+@@ -4381,10 +4383,12 @@
+       ES = 0xF000;
+       break;
+ 
++#if BX_USE_EBDA
+     case 0xc1:
+       ES = ebda_seg;
+       CLEAR_CF();
+       break;
++#endif
+ 
+     case 0xd8:
+       bios_printf(BIOS_PRINTF_DEBUG, "EISA BIOS not present\n");
+@@ -5499,6 +5503,7 @@
+   return(1);
+ }
+ 
++#if BX_USE_PS2_MOUSE
+   void
+ int74_function(make_farcall, Z, Y, X, status)
+   Bit16u make_farcall, Z, Y, X, status;
+@@ -5554,6 +5559,7 @@
+   }
+   write_byte_DS(&EbdaData->mouse_flag1, mouse_flags_1);
+ }
++#endif
+ 
+ #define SET_DISK_RET_STATUS(status) write_byte(0x0040, 0x0074, status)
+ 
+@@ -6573,621 +6579,748 @@
+ 
+ #else //BX_USE_ATADRV
+ 
++// Fixed disk on the WD1003 from CMOS drive types and FD_TBL
++// (IBM PC/AT Technical Reference 6183355, DISK module)
++
++#define HF_PORT        0x01f0
++#define HF_REG_PORT    0x03f6
++#define FD_TBL         0xe401
++
++#define HD_WRITE_FAULT 0xcc
++#define HD_UNDEF_ERR   0xbb
++#define HD_NOT_RDY     0xaa
++#define HD_TIME_OUT    0x80
++#define HD_BAD_SEEK    0x40
++#define HD_BAD_CNTLR   0x20
++#define HD_CORRECTED   0x11
++#define HD_BAD_ECC     0x10
++#define HD_BAD_SECTOR  0x0a
++#define HD_DMA_BOUND   0x09
++#define HD_INIT_FAIL   0x07
++#define HD_BAD_RESET   0x05
++#define HD_NOT_FOUND   0x04
++#define HD_BAD_ADDR    0x02
++#define HD_BAD_CMD     0x01
++
+   void
+-outLBA(cylinder,hd_heads,head,hd_sectors,sector,dl)
+-  Bit16u cylinder;
+-  Bit16u hd_heads;
+-  Bit16u head;
+-  Bit16u hd_sectors;
+-  Bit16u sector;
+-  Bit16u dl;
++hd_unmask()
+ {
+ ASM_START
+-        push   bp
+-        mov    bp, sp
+-        push   eax
+-        push   ebx
+-        push   edx
+-        xor    eax,eax
+-        mov    ax,4[bp]  // cylinder
+-        xor    ebx,ebx
+-        mov    bl,6[bp]  // hd_heads
+-        imul   ebx
++  cli
++  in   al, PORT_PIC2_DATA
++  and  al, #0xbf
++  out  PORT_PIC2_DATA, al
++  in   al, PORT_PIC1_DATA
++  and  al, #0xfb
++  out  PORT_PIC1_DATA, al
++  sti
++ASM_END
++}
+ 
+-        mov    bl,8[bp]  // head
+-        add    eax,ebx
+-        mov    bl,10[bp] // hd_sectors
+-        imul   ebx
+-        mov    bl,12[bp] // sector
+-        add    eax,ebx
++// INT 15h AX=9000h, then IRQ 14's flag at 40:8E
++  Bit8u
++hd_wait_int()
++{
++ASM_START
++  push ds
++  push bx
++  push cx
++  mov  ax, #0x0040
++  mov  ds, ax
++  sti
++  xor  cx, cx
++  clc
++  mov  ax, #0x9000
++  int  #0x15
++  jc   hd_wait_int_timeout
++  mov  bl, #0x25
++hd_wait_int_loop:
++  test BYTE 0x008E, #0x80
++  loopz hd_wait_int_loop
++  jnz  hd_wait_int_done
++  dec  bl
++  jnz  hd_wait_int_loop
++hd_wait_int_timeout:
++  mov  al, #0x80
++  jmp  hd_wait_int_ret
++hd_wait_int_done:
++  mov  BYTE 0x008E, #0x00
++  xor  al, al
++hd_wait_int_ret:
++  xor  ah, ah
++  pop  cx
++  pop  bx
++  pop  ds
++ASM_END
++}
+ 
+-        dec    eax
+-        mov    dx,#0x1f3
+-        out    dx,al
+-        mov    dx,#0x1f4
+-        mov    al,ah
+-        out    dx,al
+-        shr    eax,#16
+-        mov    dx,#0x1f5
+-        out    dx,al
+-        and    ah,#0xf
+-        mov    bl,14[bp] // dl
+-        and    bl,#1
+-        shl    bl,#4
+-        or     ah,bl
+-        or     ah,#0xe0
+-        mov    al,ah
+-        mov    dx,#0x01f6
+-        out    dx,al
+-        pop    edx
+-        pop    ebx
+-        pop    eax
+-        pop    bp
++  Bit8u
++hd_not_busy()
++{
++ASM_START
++  push bx
++  push cx
++  push dx
++  sti
++  xor  cx, cx
++  mov  dx, #0x01f7
++  mov  bl, #0x25
++hd_not_busy_loop:
++  in   al, dx
++  test al, #0x80
++  loopnz hd_not_busy_loop
++  jz   hd_not_busy_done
++  dec  bl
++  jnz  hd_not_busy_loop
++  mov  al, #0x80
++  jmp  hd_not_busy_ret
++hd_not_busy_done:
++  xor  al, al
++hd_not_busy_ret:
++  xor  ah, ah
++  pop  dx
++  pop  cx
++  pop  bx
+ ASM_END
+ }
+ 
+-  void
+-int13_harddisk(DS, ES, DI, SI, BP, ELDX, BX, DX, CX, AX, IP, CS, FLAGS)
+-  Bit16u DS, ES, DI, SI, BP, ELDX, BX, DX, CX, AX, IP, CS, FLAGS;
++  Bit8u
++hd_wait_drq()
+ {
+-  Bit8u    drive, num_sectors, sector, head, status, mod;
+-  Bit8u    drive_map;
+-  Bit8u    n_drives;
+-  Bit16u   cyl_mod, ax;
+-  Bit16u   max_cylinder, cylinder, total_sectors;
+-  Bit16u   hd_cylinders;
+-  Bit8u    hd_heads, hd_sectors;
+-  Bit16u   val16;
+-  Bit8u    sector_count;
+-  unsigned int i;
+-  Bit16u   tempbx;
+-  Bit16u   dpsize;
++ASM_START
++  push cx
++  push dx
++  mov  cx, #0x0100
++  mov  dx, #0x01f7
++hd_wait_drq_loop:
++  in   al, dx
++  test al, #0x08
++  jnz  hd_wait_drq_done
++  loop hd_wait_drq_loop
++  mov  al, #0x80
++  jmp  hd_wait_drq_ret
++hd_wait_drq_done:
++  xor  al, al
++hd_wait_drq_ret:
++  xor  ah, ah
++  pop  dx
++  pop  cx
++ASM_END
++}
+ 
+-  Bit16u   count, segment, offset;
+-  Bit32u   lba;
+-  Bit16u   error;
+-
+-  BX_DEBUG_INT13_HD("int13 harddisk: AX=%04x BX=%04x CX=%04x DX=%04x ES=%04x\n", AX, BX, CX, DX, ES);
+-
+-  write_byte(0x0040, 0x008e, 0);  // clear completion flag
+-
+-  /* at this point, DL is >= 0x80 to be passed from the floppy int13h
+-     handler code */
+-  /* check how many disks first (cmos reg 0x12), return an error if
+-     drive not present */
+-  drive_map = inb_cmos(0x12);
+-  drive_map = (((drive_map & 0xf0)==0) ? 0 : 1) |
+-              (((drive_map & 0x0f)==0) ? 0 : 2);
+-  n_drives = (drive_map==0) ? 0 : ((drive_map==3) ? 2 : 1);
+-
+-  if (!(drive_map & (1<<(GET_ELDL()&0x7f)))) { /* allow 0, 1, or 2 disks */
+-    SET_AH(0x01);
+-    SET_DISK_RET_STATUS(0x01);
+-    SET_CF(); /* error occurred */
+-    return;
+-  }
+-
+-  switch (GET_AH()) {
+-
+-    case 0x00: /* disk controller reset */
+-BX_DEBUG_INT13_HD("int13_f00\n");
+-
+-      SET_AH(0);
+-      SET_DISK_RET_STATUS(0);
+-      set_diskette_ret_status(0);
+-      write_byte(0x0040, 0x003e, read_byte(0x0040, 0x003e) & 0xfc); /* recalibrate both diskettes next time */
+-      CLEAR_CF(); /* successful */
+-      return;
+-      break;
+-
+-    case 0x01: /* read disk status */
+-BX_DEBUG_INT13_HD("int13_f01\n");
+-      status = read_byte(0x0040, 0x0074);
+-      SET_AH(status);
+-      SET_DISK_RET_STATUS(0);
+-      /* set CF if error status read */
+-      if (status) SET_CF();
+-      else        CLEAR_CF();
+-      return;
+-      break;
+-
+-    case 0x04: // verify disk sectors
+-    case 0x02: // read disk sectors
+-      drive = GET_ELDL();
+-      get_hd_geometry(drive, &hd_cylinders, &hd_heads, &hd_sectors);
+-
+-      num_sectors = GET_AL();
+-      cylinder    = (GET_CL() & 0x00c0) << 2 | GET_CH();
+-      sector      = (GET_CL() & 0x3f);
+-      head        = GET_DH();
+-
+-
+-      if (hd_cylinders > 1024) {
+-        if (hd_cylinders <= 2048) {
+-          cylinder <<= 1;
+-        }
+-        else if (hd_cylinders <= 4096) {
+-          cylinder <<= 2;
+-        }
+-        else if (hd_cylinders <= 8192) {
+-          cylinder <<= 3;
+-        }
+-        else { // hd_cylinders <= 16384
+-          cylinder <<= 4;
+-        }
+-
+-        ax = head / hd_heads;
+-        cyl_mod = LOBYTE(ax);
+-        head    = HIBYTE(ax);
+-        cylinder |= cyl_mod;
+-      }
+-
+-      if ( (cylinder >= hd_cylinders) ||
+-           (sector > hd_sectors) ||
+-           (head >= hd_heads) ) {
+-        SET_AH(1);
+-        SET_DISK_RET_STATUS(1);
+-        SET_CF(); /* error occurred */
+-        return;
+-      }
+-
+-      if ( (num_sectors > 128) || (num_sectors == 0) )
+-        BX_PANIC("int13_harddisk: num_sectors out of range!\n");
+-
+-      if (head > 15)
+-        BX_PANIC("hard drive BIOS:(read/verify) head > 15\n");
+-
+-      if ( GET_AH() == 0x04 ) {
+-        SET_AH(0);
+-        SET_DISK_RET_STATUS(0);
+-        CLEAR_CF();
+-        return;
+-      }
+-
+-      status = inb(PORT_ATA1_CMD_BASE + 7);
+-      if (status & 0x80) {
+-        BX_PANIC("hard drive BIOS:(read/verify) BUSY bit set\n");
+-      }
+-      outb(PORT_ATA1_CMD_BASE + 2, num_sectors);
+-      /* activate LBA? (tomv) */
+-      if (hd_heads > 16) {
+-BX_DEBUG_INT13_HD("CHS: %x %x %x\n", cylinder, head, sector);
+-        outLBA(cylinder,hd_heads,head,hd_sectors,sector,drive);
+-      }
+-      else {
+-        outb(PORT_ATA1_CMD_BASE + 3, sector);
+-        outb(PORT_ATA1_CMD_BASE + 4, LOBYTE(cylinder));
+-        outb(PORT_ATA1_CMD_BASE + 5, HIBYTE(cylinder));
+-        outb(PORT_ATA1_CMD_BASE + 6, 0xa0 | ((drive & 0x01)<<4) | (head & 0x0f));
+-      }
+-      outb(PORT_ATA1_CMD_BASE + 7, 0x20);
+-
+-      while (1) {
+-        status = inb(PORT_ATA1_CMD_BASE + 7);
+-        if (!(status & 0x80)) break;
+-      }
+-
+-      if (status & 0x01) {
+-        BX_PANIC("hard drive BIOS:(read/verify) read error\n");
+-      } else if (!(status & 0x08)) {
+-        BX_DEBUG_INT13_HD("status was %02x\n", (unsigned) status);
+-        BX_PANIC("hard drive BIOS:(read/verify) expected DRQ=1\n");
+-      }
+-
+-      sector_count = 0;
+-      tempbx = BX;
+-
++  void
++hd_pio_in(seg, off)
++  Bit16u seg;
++  Bit16u off;
++{
+ ASM_START
+-  sti  ;; enable higher priority interrupts
++  push bp
++  mov  bp, sp
++    push es
++    push di
++    push cx
++    push dx
++    mov  ax, 4[bp]
++    mov  es, ax
++    mov  di, 6[bp]
++    mov  cx, #0x0100
++    mov  dx, #0x01f0
++    cli
++    cld
++    rep
++      insw
++    sti
++    pop  dx
++    pop  cx
++    pop  di
++    pop  es
++  pop  bp
+ ASM_END
++}
+ 
+-      while (1) {
++  void
++hd_pio_out(seg, off)
++  Bit16u seg;
++  Bit16u off;
++{
+ ASM_START
+-        ;; store temp bx in real DI register
+-        push bp
+-        mov  bp, sp
+-        mov  di, _int13_harddisk.tempbx + 2 [bp]
+-        pop  bp
++  push bp
++  mov  bp, sp
++    push ds
++    push si
++    push cx
++    push dx
++    mov  si, 6[bp]
++    mov  ax, 4[bp]
++    mov  ds, ax
++    mov  cx, #0x0100
++    mov  dx, #0x01f0
++    cli
++    cld
++    rep
++      outsw
++    sti
++    pop  dx
++    pop  cx
++    pop  si
++    pop  ds
++  pop  bp
++ASM_END
++}
+ 
+-        ;; adjust if there will be an overrun
+-        cmp   di, #0xfe00
+-        jbe   i13_f02_no_adjust
+-i13_f02_adjust:
+-        sub   di, #0x0200 ; sub 512 bytes from offset
+-        mov   ax, es
+-        add   ax, #0x0020 ; add 512 to segment
+-        mov   es, ax
+-
+-i13_f02_no_adjust:
+-        mov  cx, #0x0100   ;; counter (256 words = 512b)
+-        mov  dx, #0x01f0  ;; AT data read port
+-
+-        rep
+-          insw ;; CX words transferred from port(DX) to ES:[DI]
+-
+-i13_f02_done:
+-        ;; store real DI register back to temp bx
+-        push bp
+-        mov  bp, sp
+-        mov  _int13_harddisk.tempbx + 2 [bp], di
+-        pop  bp
++  void
++hd_reset_floppy()
++{
++ASM_START
++  push ax
++  push dx
++  xor  ax, ax
++  xor  dx, dx
++  int  #0x40
++  pop  dx
++  pop  ax
+ ASM_END
++}
+ 
+-        sector_count++;
+-        num_sectors--;
+-        if (num_sectors == 0) {
+-          status = inb(PORT_ATA1_CMD_BASE + 7);
+-          if ((status & 0xc9) != 0x40)
+-            BX_PANIC("no sectors left to read/verify, status is %02x\n", (unsigned) status);
+-          break;
+-        }
+-        else {
+-          status = inb(PORT_ATA1_CMD_BASE + 7);
+-          if ((status & 0xc9) != 0x48)
+-            BX_PANIC("more sectors left to read/verify, status is %02x\n", (unsigned) status);
+-          continue;
+-        }
+-      }
++  Bit8u
++hd_check_st()
++{
++  Bit8u st;
+ 
+-      SET_AH(0);
+-      SET_DISK_RET_STATUS(0);
+-      SET_AL(sector_count);
+-      CLEAR_CF(); /* successful */
+-      return;
+-      break;
++  st = inb(HF_PORT + 7);
++  write_byte(0x0040, 0x008c, st);
++  if (st & 0x80) return 0;
++  if (st & 0x20) return HD_WRITE_FAULT;
++  if (!(st & 0x40)) return HD_NOT_RDY;
++  if (!(st & 0x10)) return HD_BAD_SEEK;
++  if (st & 0x04) return HD_CORRECTED;
++  return 0;
++}
+ 
+-    case 0x03: /* write disk sectors */
+-BX_DEBUG_INT13_HD("int13_f03\n");
+-      drive = GET_ELDL ();
+-      get_hd_geometry(drive, &hd_cylinders, &hd_heads, &hd_sectors);
++// highest error bit wins (IBM PC/AT Technical Reference, CHECK_ER)
++  Bit8u
++hd_check_er()
++{
++  Bit8u err;
+ 
+-      num_sectors = GET_AL();
+-      cylinder    = GET_CH();
+-      cylinder    |= ( ((Bit16u) GET_CL()) << 2) & 0x300;
+-      sector      = (GET_CL() & 0x3f);
+-      head        = GET_DH();
++  err = inb(HF_PORT + 1);
++  write_byte(0x0040, 0x008d, err);
++  if (err & 0x80) return HD_BAD_SECTOR;
++  if (err & 0x40) return HD_BAD_ECC;
++  if (err & 0x20) return HD_UNDEF_ERR;
++  if (err & 0x10) return HD_NOT_FOUND;
++  if (err & 0x08) return HD_UNDEF_ERR;
++  if (err & 0x04) return HD_BAD_CMD;
++  if (err & 0x02) return HD_BAD_SEEK;
++  if (err & 0x01) return HD_BAD_ADDR;
++  return 0xe0;
++}
+ 
+-      if (hd_cylinders > 1024) {
+-        if (hd_cylinders <= 2048) {
+-          cylinder <<= 1;
+-        }
+-        else if (hd_cylinders <= 4096) {
+-          cylinder <<= 2;
+-        }
+-        else if (hd_cylinders <= 8192) {
+-          cylinder <<= 3;
+-        }
+-        else { // hd_cylinders <= 16384
+-          cylinder <<= 4;
+-        }
++  Bit8u
++hd_check_status()
++{
++  Bit8u status;
+ 
+-        ax = head / hd_heads;
+-        cyl_mod = ax & 0xff;
+-        head    = ax >> 8;
+-        cylinder |= cyl_mod;
+-      }
++  status = hd_check_st();
++  if ((status == 0 || status == HD_CORRECTED) && (read_byte(0x0040, 0x008c) & 0x01))
++    status = hd_check_er();
++  return status;
++}
+ 
+-      if ( (cylinder >= hd_cylinders) ||
+-           (sector > hd_sectors) ||
+-           (head >= hd_heads) ) {
+-        SET_AH(1);
+-        SET_DISK_RET_STATUS(1);
+-        SET_CF(); /* error occurred */
+-        return;
+-      }
++  Bit8u
++hd_tst_rdy(sdh)
++  Bit8u sdh;
++{
++  Bit8u status;
+ 
+-      if ( (num_sectors > 128) || (num_sectors == 0) )
+-        BX_PANIC("int13_harddisk: num_sectors out of range!\n");
++  if (hd_not_busy()) return HD_TIME_OUT;
++  outb(HF_PORT + 6, sdh);
++  status = hd_check_st();
++  return (status == HD_CORRECTED) ? 0 : status;
++}
+ 
+-      if (head > 15)
+-        BX_PANIC("hard drive BIOS:(read) head > 15\n");
++  Bit8u
++hd_command(precomp, count, sector, cyl, sdh, cmd)
++  Bit8u precomp;
++  Bit8u count;
++  Bit8u sector;
++  Bit16u cyl;
++  Bit8u sdh;
++  Bit8u cmd;
++{
++  Bit16u tries;
++  Bit8u status;
+ 
+-      status = inb(PORT_ATA1_CMD_BASE + 7);
+-      if (status & 0x80) {
+-        BX_PANIC("hard drive BIOS:(read) BUSY bit set\n");
+-      }
+-// should check for Drive Ready Bit also in status reg
+-      outb(PORT_ATA1_CMD_BASE + 2, num_sectors);
++  for (tries = 0x0600; tries; tries--) {
++    status = hd_tst_rdy(sdh);
++    if (status == 0) break;
++    if (status == HD_TIME_OUT) return HD_BAD_CNTLR;
++  }
++  if (status) return status;
+ 
+-      /* activate LBA? (tomv) */
+-      if (hd_heads > 16) {
+-BX_DEBUG_INT13_HD("CHS (write): %x %x %x\n", cylinder, head, sector);
+-        outLBA(cylinder,hd_heads,head,hd_sectors,sector,GET_ELDL());
+-      }
+-      else {
+-        outb(PORT_ATA1_CMD_BASE + 3, sector);
+-        outb(PORT_ATA1_CMD_BASE + 4, LOBYTE(cylinder));
+-        outb(PORT_ATA1_CMD_BASE + 5, HIBYTE(cylinder));
+-        outb(PORT_ATA1_CMD_BASE + 6, 0xa0 | ((GET_ELDL() & 0x01)<<4) | (head & 0x0f));
+-      }
+-      outb(PORT_ATA1_CMD_BASE + 7, 0x30);
++  write_byte(0x0040, 0x008e, 0);
++  hd_unmask();
++  // retries off for read, write and verify when the control byte asks
++  if ((read_byte(0x0040, 0x0076) & 0xc0) && cmd >= 0x20 && cmd < 0x50) cmd |= 0x01;
++  outb(HF_PORT + 1, precomp);
++  outb(HF_PORT + 2, count);
++  outb(HF_PORT + 3, sector);
++  outb(HF_PORT + 4, cyl & 0xff);
++  outb(HF_PORT + 5, cyl >> 8);
++  outb(HF_PORT + 6, sdh);
++  outb(HF_PORT + 7, cmd);
++  return 0;
++}
+ 
+-      // wait for busy bit to turn off after seeking
+-      while (1) {
+-        status = inb(PORT_ATA1_CMD_BASE + 7);
+-        if (!(status & 0x80)) break;
+-      }
++// sectors must fit in the 64K above ES:000X (IBM PC/AT Technical Reference, CHECK_DMA)
++  Bit8u
++hd_check_dma(count, off, ecc)
++  Bit8u count;
++  Bit16u off;
++  Bit8u ecc;
++{
++  Bit8u max;
+ 
+-      if (!(status & 0x08)) {
+-        BX_DEBUG_INT13_HD("status was %02x\n", (unsigned) status);
+-        BX_PANIC("hard drive BIOS:(write) data-request bit not set\n");
+-      }
++  max = ecc ? 0x7f : 0x80;
++  if (count < max) return 0;
++  if (count == max && off <= (ecc ? 4 : 0)) return 0;
++  return HD_DMA_BOUND;
++}
+ 
+-      sector_count = 0;
+-      tempbx = BX;
++  Bit8u
++hd_read(precomp, count, sector, cyl, sdh, cmd, seg, off)
++  Bit8u precomp;
++  Bit8u count;
++  Bit8u sector;
++  Bit16u cyl;
++  Bit8u sdh;
++  Bit8u cmd;
++  Bit16u seg;
++  Bit16u off;
++{
++  Bit8u status, i, ecc;
+ 
+-ASM_START
+-  sti  ;; enable higher priority interrupts
+-ASM_END
++  ecc = cmd & 0x02;
++  status = hd_check_dma(count, off, ecc);
++  if (status) return status;
++  status = hd_command(precomp, count, sector, cyl, sdh, cmd);
++  if (status) return status;
++  do {
++    status = hd_wait_int();
++    if (status) return status;
++    hd_pio_in(seg, off);
++    off += 512;
++    if (ecc) {
++      status = hd_wait_drq();
++      if (status) return status;
++      for (i = 0; i < 4; i++) write_byte(seg, off++, inb(HF_PORT));
++    }
++    status = hd_check_status();
++    if (status) return status;
++  } while (--count);
++  return 0;
++}
+ 
+-      while (1) {
+-ASM_START
+-        ;; store temp bx in real SI register
+-        push bp
+-        mov  bp, sp
+-        mov  si, _int13_harddisk.tempbx + 2 [bp]
+-        pop  bp
++  Bit8u
++hd_write(precomp, count, sector, cyl, sdh, cmd, seg, off)
++  Bit8u precomp;
++  Bit8u count;
++  Bit8u sector;
++  Bit16u cyl;
++  Bit8u sdh;
++  Bit8u cmd;
++  Bit16u seg;
++  Bit16u off;
++{
++  Bit8u status, i, ecc;
+ 
+-        ;; adjust if there will be an overrun
+-        cmp   si, #0xfe00
+-        jbe   i13_f03_no_adjust
+-i13_f03_adjust:
+-        sub   si, #0x0200 ; sub 512 bytes from offset
+-        mov   ax, es
+-        add   ax, #0x0020 ; add 512 to segment
+-        mov   es, ax
++  ecc = cmd & 0x02;
++  if (cmd != 0x50) {
++    status = hd_check_dma(count, off, ecc);
++    if (status) return status;
++  }
++  status = hd_command(precomp, count, sector, cyl, sdh, cmd);
++  if (status) return status;
++  status = hd_wait_drq();
++  if (status) return status;
++  while (1) {
++    hd_pio_out(seg, off);
++    off += 512;
++    if (ecc) {
++      status = hd_wait_drq();
++      if (status) return status;
++      for (i = 0; i < 4; i++) outb(HF_PORT, read_byte(seg, off++));
++    }
++    status = hd_wait_int();
++    if (status) return status;
++    status = hd_check_status();
++    if (status) return status;
++    if (!(read_byte(0x0040, 0x008c) & 0x08)) break;
++  }
++  return inb(HF_PORT + 2) ? HD_UNDEF_ERR : 0;
++}
+ 
+-i13_f03_no_adjust:
+-        mov  cx, #0x0100   ;; counter (256 words = 512b)
+-        mov  dx, #0x01f0  ;; AT data read port
++  Bit8u
++hd_init_drv(drive, precomp, sector, cyl, sdh)
++  Bit8u drive;
++  Bit8u precomp;
++  Bit8u sector;
++  Bit16u cyl;
++  Bit8u sdh;
++{
++  Bit16u tbl_seg, tbl_off;
++  Bit8u status;
+ 
+-        seg ES
+-        rep
+-          outsw ;; CX words tranferred from ES:[SI] to port(DX)
++  tbl_off = read_word(0x0000, (drive & 1) ? 0x0118 : 0x0104);
++  tbl_seg = read_word(0x0000, (drive & 1) ? 0x011a : 0x0106);
++  sdh = (sdh & 0xf0) | ((read_byte(tbl_seg, tbl_off + 2) - 1) & 0x0f);
++  status = hd_command(precomp, read_byte(tbl_seg, tbl_off + 14), sector, cyl & 0xff00, sdh, 0x91);
++  if (status) return status;
++  status = hd_not_busy();
++  if (status) return status;
++  return hd_check_status();
++}
+ 
+-        ;; store real SI register back to temp bx
+-        push bp
+-        mov  bp, sp
+-        mov  _int13_harddisk.tempbx + 2 [bp], si
+-        pop  bp
+-ASM_END
++  Bit8u
++hd_recal(precomp, sector, cyl, sdh)
++  Bit8u precomp;
++  Bit8u sector;
++  Bit16u cyl;
++  Bit8u sdh;
++{
++  Bit8u status;
+ 
+-        sector_count++;
+-        num_sectors--;
+-        if (num_sectors == 0) {
+-          status = inb(PORT_ATA1_CMD_BASE + 7);
+-          if ((status & 0xe9) != 0x40)
+-            BX_PANIC("no sectors left to write, status is %02x\n", (unsigned) status);
+-          break;
+-        }
+-        else {
+-          status = inb(PORT_ATA1_CMD_BASE + 7);
+-          if ((status & 0xc9) != 0x48)
+-            BX_PANIC("more sectors left to write, status is %02x\n", (unsigned) status);
+-          continue;
+-        }
+-      }
++  status = hd_command(precomp, 0, sector, cyl, sdh, 0x10);
++  if (status) return status;
++  if (hd_wait_int() && hd_wait_int()) return HD_TIME_OUT;
++  status = hd_check_status();
++  return (status == HD_BAD_SEEK) ? 0 : status;
++}
+ 
+-      SET_AH(0);
+-      SET_DISK_RET_STATUS(0);
+-      SET_AL(sector_count);
+-      CLEAR_CF(); /* successful */
+-      return;
+-      break;
++  Bit8u
++hd_reset(precomp, sector, cyl, sdh)
++  Bit8u precomp;
++  Bit8u sector;
++  Bit16u cyl;
++  Bit8u sdh;
++{
++  Bit8u i;
+ 
+-    case 0x05: /* format disk track */
+-BX_DEBUG_INT13_HD("int13_f05\n");
+-      BX_PANIC("format disk track called\n");
+-      /* nop */
+-      SET_AH(0);
+-      SET_DISK_RET_STATUS(0);
+-      CLEAR_CF(); /* successful */
+-      return;
+-      break;
++  hd_unmask();
++  outb(HF_REG_PORT, 0x04);
++  for (i = 0; i < 10; i++) ;
++  outb(HF_REG_PORT, read_byte(0x0040, 0x0076) & 0x0f);
++  if (hd_not_busy()) return HD_BAD_RESET;
++  // the controller's diagnostic code, 01h for no error (IBM PC/AT Technical Reference, DISK_RESET)
++  if (inb(HF_PORT + 1) != 0x01) return HD_BAD_RESET;
++  sdh &= 0xef;
++  hd_init_drv(0, precomp, sector, cyl, sdh);
++  hd_recal(precomp, sector, cyl, sdh);
++  if (read_byte(0x0040, 0x0075) > 1) {
++    sdh |= 0x10;
++    hd_init_drv(1, precomp, sector, cyl, sdh);
++    hd_recal(precomp, sector, cyl, sdh);
++  }
++  return 0;
++}
+ 
+-    case 0x08: /* read disk drive parameters */
+-BX_DEBUG_INT13_HD("int13_f08\n");
++  Bit8u
++hd_diagnostic()
++{
++  Bit8u err;
+ 
+-      drive = GET_ELDL ();
+-      get_hd_geometry(drive, &hd_cylinders, &hd_heads, &hd_sectors);
++  hd_unmask();
++  if (hd_not_busy()) return HD_BAD_CNTLR;
++  outb(HF_PORT + 7, 0x90);
++  if (hd_not_busy()) return HD_TIME_OUT;
++  err = inb(HF_PORT + 1);
++  write_byte(0x0040, 0x008d, err);
++  return (err == 0x01) ? 0 : HD_BAD_CNTLR;
++}
+ 
+-      // translate CHS
+-      //
+-      if (hd_cylinders <= 1024) {
+-        // hd_cylinders >>= 0;
+-        // hd_heads <<= 0;
+-      }
+-      else if (hd_cylinders <= 2048) {
+-        hd_cylinders >>= 1;
+-        hd_heads <<= 1;
+-      }
+-      else if (hd_cylinders <= 4096) {
+-        hd_cylinders >>= 2;
+-        hd_heads <<= 2;
+-      }
+-      else if (hd_cylinders <= 8192) {
+-        hd_cylinders >>= 3;
+-        hd_heads <<= 3;
+-      }
+-      else { // hd_cylinders <= 16384
+-        hd_cylinders >>= 4;
+-        hd_heads <<= 4;
+-      }
++  void
++int13_harddisk(DS, ES, DI, SI, BP, ELDX, BX, DX, CX, AX, IP, CS, FLAGS)
++  Bit16u DS, ES, DI, SI, BP, ELDX, BX, DX, CX, AX, IP, CS, FLAGS;
++{
++  Bit8u  fn, drive, status, precomp, ctl, sdh, sector, count;
++  Bit16u tbl_seg, tbl_off, cyl, seg, off;
++  Bit32u blocks;
+ 
+-      max_cylinder = hd_cylinders - 1; /* 0 based */
+-      SET_AL(0);
+-      SET_CH(max_cylinder & 0xff);
+-      SET_CL(((max_cylinder >> 2) & 0xc0) | (hd_sectors & 0x3f));
+-      SET_DH(hd_heads - 1);
+-      SET_DL(n_drives); /* returns 0, 1, or 2 hard drives */
+-      SET_AH(0);
+-      SET_DISK_RET_STATUS(0);
+-      CLEAR_CF(); /* successful */
++  BX_DEBUG_INT13_HD("int13 harddisk: AX=%04x BX=%04x CX=%04x DX=%04x ES=%04x\n", AX, BX, CX, DX, ES);
+ 
+-      return;
+-      break;
++  fn = GET_AH();
++  drive = GET_ELDL();
++  tbl_off = read_word(0x0000, (drive & 1) ? 0x0118 : 0x0104);
++  tbl_seg = read_word(0x0000, (drive & 1) ? 0x011a : 0x0106);
+ 
+-    case 0x09: /* initialize drive parameters */
+-BX_DEBUG_INT13_HD("int13_f09\n");
+-      SET_AH(0);
+-      SET_DISK_RET_STATUS(0);
+-      CLEAR_CF(); /* successful */
++  if (fn == 0x08) {
++    if ((Bit8u)(drive - 0x80) >= 2) {
++      write_byte(0x0040, 0x0074, HD_INIT_FAIL);
++      AX = HD_INIT_FAIL << 8;
++      CX = 0;
++      DX = 0;
++      SET_CF();
+       return;
+-      break;
++    }
++    write_byte(0x0040, 0x0074, 0);
++    // the last cylinder is left for diagnostics (IBM PC/AT Technical Reference, GET_PARM)
++    cyl = read_word(tbl_seg, tbl_off) - 2;
++    SET_CH(cyl & 0xff);
++    SET_CL(((cyl >> 2) & 0xc0) | read_byte(tbl_seg, tbl_off + 14));
++    SET_DH(read_byte(tbl_seg, tbl_off + 2) - 1);
++    SET_DL(read_byte(0x0040, 0x0075));
++    AX = 0;
++    CLEAR_CF();
++    return;
++  }
+ 
+-    case 0x0a: /* read disk sectors with ECC */
+-BX_DEBUG_INT13_HD("int13_f0a\n");
+-    case 0x0b: /* write disk sectors with ECC */
+-BX_DEBUG_INT13_HD("int13_f0b\n");
+-      BX_PANIC("int13h Functions 0Ah & 0Bh not implemented!\n");
+-      return;
+-      break;
++  if (fn == 0x15) {
++    write_byte(0x0040, 0x0074, 0);
++    if ((drive & 0x7f) >= read_byte(0x0040, 0x0075)) {
++      AX = 0;
++      CX = 0;
++      DX = 0;
++    } else {
++      blocks = (Bit32u)(read_byte(tbl_seg, tbl_off + 2) * read_byte(tbl_seg, tbl_off + 14));
++      blocks *= (Bit32u)(read_word(tbl_seg, tbl_off) - 1);
++      CX = (Bit16u)(blocks >> 16);
++      DX = (Bit16u)blocks;
++      AX = 0x0300;
++    }
++    CLEAR_CF();
++    return;
++  }
+ 
+-    case 0x0c: /* seek to specified cylinder */
+-BX_DEBUG_INT13_HD("int13_f0c\n");
+-      BX_INFO("int13h function 0ch (seek) not implemented!\n");
++  if (fn == 0x00) {
++    hd_reset_floppy();
++    if (drive > 0x81) {
+       SET_AH(0);
+-      SET_DISK_RET_STATUS(0);
+-      CLEAR_CF(); /* successful */
++      CLEAR_CF();
+       return;
+-      break;
++    }
++    drive = 0x80;
++  }
+ 
+-    case 0x0d: /* alternate disk reset */
+-BX_DEBUG_INT13_HD("int13_f0d\n");
+-      SET_AH(0);
+-      SET_DISK_RET_STATUS(0);
+-      CLEAR_CF(); /* successful */
+-      return;
+-      break;
++  if (fn == 0x01) {
++    SET_AL(read_byte(0x0040, 0x0074));
++    write_byte(0x0040, 0x0074, 0);
++    SET_AH(0);
++    CLEAR_CF();
++    return;
++  }
+ 
+-    case 0x10: /* check drive ready */
+-BX_DEBUG_INT13_HD("int13_f10\n");
+-      //SET_AH(0);
+-      //SET_DISK_RET_STATUS(0);
+-      //CLEAR_CF(); /* successful */
+-      //return;
+-      //break;
++  write_byte(0x0040, 0x0074, 0);
++  if ((drive & 0x1f) >= read_byte(0x0040, 0x0075) || fn > 0x14) {
++    status = HD_BAD_CMD;
++    SET_AL(0);
++  } else {
++    if (fn == 0x00) {
++      tbl_off = read_word(0x0000, 0x0104);
++      tbl_seg = read_word(0x0000, 0x0106);
++    }
++    precomp = (Bit8u)(read_word(tbl_seg, tbl_off + 5) >> 2);
++    ctl = read_byte(tbl_seg, tbl_off + 8);
++    outb(HF_REG_PORT, ctl);
++    write_byte(0x0040, 0x0076, (read_byte(0x0040, 0x0076) & 0xc0) | ctl);
++    count = GET_AL();
++    sector = GET_CL() & 0x3f;
++    cyl = ((Bit16u)(GET_CL() >> 6) << 8) | GET_CH();
++    sdh = 0xa0 | ((drive & 0x01) << 4) | (GET_DH() & 0x0f);
++    seg = ES + (BX >> 4);
++    off = BX & 0x000f;
+ 
+-      // should look at 40:8E also???
+-      status = inb(PORT_ATA1_CMD_BASE + 7);
+-      if ((status & 0xc0) == 0x40) {
+-        SET_AH(0);
+-        SET_DISK_RET_STATUS(0);
+-        CLEAR_CF(); // drive ready
+-        return;
+-      }
+-      else {
+-        SET_AH(0xAA);
+-        SET_DISK_RET_STATUS(0xAA);
+-        SET_CF(); // not ready
+-        return;
+-      }
+-      break;
++    switch (fn) {
++      case 0x00:
++      case 0x0d:
++        status = hd_reset(precomp, sector, cyl, sdh);
++        break;
++      case 0x02:
++        status = hd_read(precomp, count, sector, cyl, sdh, 0x20, seg, off);
++        break;
++      case 0x03:
++        status = hd_write(precomp, count, sector, cyl, sdh, 0x30, seg, off);
++        break;
++      case 0x04:
++        status = hd_command(precomp, count, sector, cyl, sdh, 0x40);
++        if (!status) status = hd_wait_int();
++        if (!status) status = hd_check_status();
++        break;
++      case 0x05:
++        count = read_byte(tbl_seg, tbl_off + 14);
++        status = hd_write(precomp, count, sector, cyl, sdh, 0x50, seg, off);
++        break;
++      case 0x09:
++        status = hd_init_drv(drive, precomp, sector, cyl, sdh);
++        break;
++      case 0x0a:
++        status = hd_read(precomp, count, sector, cyl, sdh, 0x22, seg, off);
++        break;
++      case 0x0b:
++        status = hd_write(precomp, count, sector, cyl, sdh, 0x32, seg, off);
++        break;
++      case 0x0c:
++        status = hd_command(precomp, count, sector, cyl, sdh, 0x70);
++        if (!status) status = hd_wait_int();
++        if (!status) status = hd_check_status();
++        if (status == HD_BAD_SEEK) status = 0;
++        break;
++      case 0x10:
++        status = hd_tst_rdy(sdh);
++        break;
++      case 0x11:
++        status = hd_recal(precomp, sector, cyl, sdh);
++        break;
++      case 0x14:
++        status = hd_diagnostic();
++        break;
++      default:
++        status = HD_BAD_CMD;
++        SET_AL(0);
++        break;
++    }
++  }
+ 
+-    case 0x11: /* recalibrate */
+-BX_DEBUG_INT13_HD("int13_f11\n");
+-      SET_AH(0);
+-      SET_DISK_RET_STATUS(0);
+-      CLEAR_CF(); /* successful */
+-      return;
+-      break;
++  write_byte(0x0040, 0x0074, status);
++  SET_AH(status);
++  if (status) SET_CF();
++  else CLEAR_CF();
++}
+ 
+-    case 0x14: /* controller internal diagnostic */
+-BX_DEBUG_INT13_HD("int13_f14\n");
+-      SET_AH(0);
+-      SET_DISK_RET_STATUS(0);
+-      CLEAR_CF(); /* successful */
+-      SET_AL(0);
+-      return;
+-      break;
+-
+-    case 0x15: /* read disk drive size */
+-      drive = GET_ELDL();
+-      get_hd_geometry(drive, &hd_cylinders, &hd_heads, &hd_sectors);
++// INT 13h from POST; returns AH
++  Bit8u
++hd_int13(ax, cx, dx)
++  Bit16u ax;
++  Bit16u cx;
++  Bit16u dx;
++{
+ ASM_START
+-      push bp
+-      mov  bp, sp
+-      mov  al, _int13_harddisk.hd_heads + 2 [bp]
+-      mov  ah, _int13_harddisk.hd_sectors + 2 [bp]
+-      mul  al, ah ;; ax = heads * sectors
+-      mov  bx, _int13_harddisk.hd_cylinders + 2 [bp]
+-      dec  bx     ;; use (cylinders - 1) ???
+-      mul  ax, bx ;; dx:ax = (cylinders -1) * (heads * sectors)
+-      ;; now we need to move the 32bit result dx:ax to what the
+-      ;; BIOS wants which is cx:dx.
+-      ;; and then into CX:DX on the stack
+-      mov  _int13_harddisk.CX + 2 [bp], dx
+-      mov  _int13_harddisk.DX + 2 [bp], ax
+-      pop  bp
++  push bp
++  mov  bp, sp
++    push bx
++    push cx
++    push dx
++    push es
++    xor  bx, bx
++    mov  es, bx
++    mov  bx, #0x0600
++    mov  ax, 4[bp]
++    mov  cx, 6[bp]
++    mov  dx, 8[bp]
++    int  #0x13
++    mov  al, ah
++    xor  ah, ah
++    pop  es
++    pop  dx
++    pop  cx
++    pop  bx
++  pop  bp
+ ASM_END
+-      SET_AH(3);  // hard disk accessible
+-      SET_DISK_RET_STATUS(0); // ??? should this be 0
+-      CLEAR_CF(); // successful
+-      return;
+-      break;
++}
+ 
+-    case 0x18: // set media type for format
+-    case 0x41: // IBM/MS
+-    case 0x42: // IBM/MS
+-    case 0x43: // IBM/MS
+-    case 0x44: // IBM/MS
+-    case 0x45: // IBM/MS lock/unlock drive
+-    case 0x46: // IBM/MS eject media
+-    case 0x47: // IBM/MS extended seek
+-    case 0x49: // IBM/MS extended media change
+-    case 0x50: // IBM/MS send packet command
+-    default:
+-      BX_INFO("int13_harddisk: unsupported AH=%02x\n", GET_AH());
+-
+-      SET_AH(1);  // code=invalid function in AH or invalid parameter
+-      SET_DISK_RET_STATUS(1);
+-      SET_CF(); /* unsuccessful */
+-      return;
++  Bit16u
++hd_type_table(type, ext_reg)
++  Bit8u type;
++  Bit8u ext_reg;
++{
++  if (type == 0) return 0;
++  if (type == 0x0f) {
++    type = inb_cmos(ext_reg);
++    if (type == 0 || type > 47) return 0;
+   }
++  return FD_TBL + (type - 1) * 16;
+ }
+ 
+-static char panic_msg_reg12h[] = "HD%d cmos reg 12h not type F\n";
+-static char panic_msg_reg19h[] = "HD%d cmos reg %02xh not user definable type 47\n";
++// 60 s of BDA ticks (IBM PC/AT Technical Reference, POD_TCHK)
++  Bit8u
++hd_timed_out(start)
++  Bit16u start;
++{
++  return (Bit16u)(read_word(0x0040, 0x006c) - start) >= 1092;
++}
+ 
+   void
+-get_hd_geometry(drive, hd_cylinders, hd_heads, hd_sectors)
+-  Bit8u drive;
+-  Bit16u *hd_cylinders;
+-  Bit8u  *hd_heads;
+-  Bit8u  *hd_sectors;
++hd_fail()
+ {
+-  Bit8u hd_type;
+-  Bit16u cylinders;
+-  Bit8u iobase;
++  outb_cmos(0x0e, inb_cmos(0x0e) | 0x08);
++}
+ 
+-  if (drive == 0x80) {
+-    hd_type = inb_cmos(0x12) & 0xf0;
+-    if (hd_type != 0xf0)
+-      BX_INFO(panic_msg_reg12h,0);
+-    hd_type = inb_cmos(0x19); // HD0: extended type
+-    if (hd_type != 47)
+-      BX_INFO(panic_msg_reg19h,0,0x19);
+-    iobase = 0x1b;
+-  } else {
+-    hd_type = inb_cmos(0x12) & 0x0f;
+-    if (hd_type != 0x0f)
+-      BX_INFO(panic_msg_reg12h,1);
+-    hd_type = inb_cmos(0x1a); // HD1: extended type
+-    if (hd_type != 47)
+-      BX_INFO(panic_msg_reg19h,0,0x1a);
+-    iobase = 0x24;
++  void
++hd_setup_drive(dl, start)
++  Bit8u dl;
++  Bit16u start;
++{
++  Bit16u tbl_off, cyl;
++  Bit8u heads, sector, status;
++
++  while (1) {
++    if (hd_int13(0x0900, 0, dl) == 0 && hd_int13(0x1100, 0, dl) == 0) break;
++    if (hd_timed_out(start)) {
++      if (dl & 1) {
++        printf("1781-Disk 1 Failure\n");
++      } else {
++        printf("1780-Disk 0 Failure\n");
++        hd_fail();
++      }
++      return;
++    }
+   }
+ 
+-  // cylinders
+-  LOBYTE(cylinders) = inb_cmos(iobase);
+-  HIBYTE(cylinders) = inb_cmos(iobase+1);
+-  write_word_SS(hd_cylinders, cylinders);
++  while (1) {
++    if (hd_int13(0x0800, 0, dl)) break;
++    tbl_off = read_word(0x0000, (dl & 1) ? 0x0118 : 0x0104);
++    cyl = read_word(0xf000, tbl_off) - 2;
++    heads = read_byte(0xf000, tbl_off + 2);
++    // verify the last sector, stepping back on errors (IBM PC/AT Technical Reference, HD_RESET_1)
++    for (sector = read_byte(0xf000, tbl_off + 14); sector; sector--) {
++      status = hd_int13(0x0401, ((cyl & 0xff) << 8) | ((cyl >> 2) & 0xc0) | sector,
++                        ((Bit16u)(heads - 1) << 8) | dl);
++      if (status == 0 || status == HD_BAD_SECTOR || status == HD_CORRECTED || status == HD_BAD_ECC)
++        return;
++      if (hd_timed_out(start)) break;
++    }
++    if (sector) break;
++    hd_int13(0x0000, 0, dl);
++  }
++  printf((dl & 1) ? "1791-Disk 1 Error\n" : "1790-Disk 0 Error\n");
++}
+ 
+-  // heads
+-  write_byte_SS(hd_heads, inb_cmos(iobase+2));
++  void
++hard_drive_setup()
++{
++  Bit8u types;
++  Bit16u tbl, start;
+ 
+-  // sectors per track
+-  write_byte_SS(hd_sectors, inb_cmos(iobase+8));
++  write_byte(0x0040, 0x0074, 0);
++  write_byte(0x0040, 0x0075, 0);
++  write_byte(0x0040, 0x0076, 0);
++  write_byte(0x0040, 0x0077, 0);
++  write_word(0x0000, 0x0104, FD_TBL);
++  write_word(0x0000, 0x0106, 0xf000);
++  write_word(0x0000, 0x0118, FD_TBL);
++  write_word(0x0000, 0x011a, 0xf000);
++  hd_unmask();
++
++  if (inb_cmos(0x0e) & 0xc0) return;
++  outb_cmos(0x0e, inb_cmos(0x0e) & 0xf7);
++  types = inb_cmos(0x12);
++  tbl = hd_type_table(types >> 4, 0x19);
++  if (tbl == 0) return;
++  write_word(0x0000, 0x0104, tbl);
++  write_byte(0x0040, 0x0075, 1);
++  tbl = hd_type_table(types & 0x0f, 0x1a);
++  if (tbl != 0 && read_word(0xf000, tbl) != 0) {
++    write_word(0x0000, 0x0118, tbl);
++    write_byte(0x0040, 0x0075, 2);
++  }
++
++  if (hd_int13(0x1400, 0, 0x0080)) {
++    printf("1782-Disk Controller Failure\n");
++    hd_fail();
++    return;
++  }
++  start = read_word(0x0040, 0x006c);
++  hd_setup_drive(0x80, start);
++  if (read_byte(0x0040, 0x0075) > 1) hd_setup_drive(0x81, start);
+ }
+ 
+ #endif //else BX_USE_ATADRV
+@@ -8623,11 +8756,18 @@
+   bootdev = seq_nr;
+ #endif
+ 
++#if BX_ELTORITO_BOOT || BX_PNPBIOS
+   /* Read the boot device from the IPL table */
+   if (get_boot_vector(bootdev, &e) == 0) {
+     BX_INFO("Invalid boot device (0x%x)\n", bootdev);
+     return;
+   }
++#else
++  e.type = bootdev ? IPL_TYPE_HARDDISK : IPL_TYPE_FLOPPY;
++  e.flags = 0; e.vector = 0; e.description = 0; e.reserved = 0;
++  // POST's HF_FAIL bit keeps C: from booting (IBM PC/AT Technical Reference, BOOT_STRAP)
++  if (bootdev && (inb_cmos(0x0e) & 0x08)) return;
++#endif
+ 
+   /* Do the loading, and set up vector as a far pointer to the boot
+    * address, and bootdrv as the boot drive */
+@@ -9069,6 +9209,7 @@
+ 
+ 
+ ASM_START
++#if BX_USE_PS2_MOUSE
+ ;------------------------------------------
+ ;- INT74h : PS/2 mouse hardware interrupt -
+ ;------------------------------------------
+@@ -9100,6 +9241,7 @@
+   pop ds          ;; restore DS
+   popa
+   iret
++#endif
+ 
+ 
+ ;; This will perform an IRET, but will retain value of current CF
+@@ -9284,27 +9426,19 @@
+ ;----------
+ ;- INT18h -
+ ;----------
+-int18_handler: ;; Boot Failure recovery: try the next device.
++int18_handler: ;; Boot Failure: no ROM BASIC, so no more boot devices.
+ 
+   ;; Reset SP and SS
+   mov  ax, #0xfffe
+   mov  sp, ax
+   xor  ax, ax
+   mov  ss, ax
++  mov  ds, ax
+ 
+-  ;; Get the boot sequence number out of the IPL memory
+-  mov  bx, #IPL_SEG
+-  mov  ds, bx                     ;; Set segment
+-  mov  bx, IPL_SEQUENCE_OFFSET    ;; BX is now the sequence number
+-  inc  bx                         ;; ++
+-  mov  IPL_SEQUENCE_OFFSET, bx    ;; Write it back
+-  mov  ds, ax                     ;; and reset the segment to zero.
+-
+-  ;; Carry on in the INT 19h handler, using the new sequence number
++  mov  bx, #0x0002
+   push bx
++  call _int19_function
+ 
+-  jmp  int19_next_boot
+-
+ ;----------
+ ;- INT19h -
+ ;----------
+@@ -9322,18 +9456,15 @@
+   xor  ax, ax
+   mov  ss, ax
+ 
+-  ;; Start from the first boot device (0, in AX)
+-  mov  bx, #IPL_SEG
+-  mov  ds, bx                     ;; Set segment to write to the IPL memory
+-  mov  IPL_SEQUENCE_OFFSET, ax    ;; Save the sequence number
+-  mov  ds, ax                     ;; and reset the segment.
++  mov  ds, ax
+ 
++  ;; A:, then C:
+   push ax
+-
+-int19_next_boot:
+-
+-  ;; Call the C code for the next boot device
+   call _int19_function
++  pop  ax
++  inc  ax
++  push ax
++  call _int19_function
+ 
+   ;; Boot failed: invoke the boot recovery function
+   int  #0x18
+@@ -9418,315 +9549,13 @@
+ ;--------------------
+ ; relocated here because the primary POST area isnt big enough.
+ hard_drive_post:
+-  // IRQ 14 = INT 76h
+-  // INT 76h calls INT 15h function ax=9100
+-
+-  mov  al, #0x0a   ; 0000 1010 = reserved, disable IRQ 14
+-  mov  dx, #0x03f6
+-  out  dx, al
+-
+   xor  ax, ax
+   mov  ds, ax
+-  mov  0x0474, al /* hard disk status of last operation */
+-  mov  0x0477, al /* hard disk port offset (XT only ???) */
+-  mov  0x048c, al /* hard disk status register */
+-  mov  0x048d, al /* hard disk error register */
+-  mov  0x048e, al /* hard disk task complete flag */
+-  mov  al, #0x01
+-  mov  0x0475, al /* hard disk number attached */
+-  mov  al, #0xc0
+-  mov  0x0476, al /* hard disk control byte */
+   SET_INT_VECTOR(0x13, #0xF000, #int13_handler)
+   SET_INT_VECTOR(0x76, #0xF000, #int76_handler)
+-  ;; INT 41h: hard disk 0 configuration pointer
+-  ;; INT 46h: hard disk 1 configuration pointer
+-  SET_INT_VECTOR(0x41, #EBDA_SEG, #0x003D)
+-  SET_INT_VECTOR(0x46, #EBDA_SEG, #0x004D)
+-
+-  ;; move disk geometry data from CMOS to EBDA disk parameter table(s)
+-  mov  al, #0x12
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  and  al, #0xf0
+-  cmp  al, #0xf0
+-  je   post_d0_extended
+-  jmp check_for_hd1
+-post_d0_extended:
+-  mov  al, #0x19
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  cmp  al, #47  ;; decimal 47 - user definable
+-  je   post_d0_type47
+-  HALT(__LINE__)
+-post_d0_type47:
+-  ;; CMOS  purpose                  param table offset
+-  ;; 1b    cylinders low            0
+-  ;; 1c    cylinders high           1
+-  ;; 1d    heads                    2
+-  ;; 1e    write pre-comp low       5
+-  ;; 1f    write pre-comp high      6
+-  ;; 20    retries/bad map/heads>8  8
+-  ;; 21    landing zone low         C
+-  ;; 22    landing zone high        D
+-  ;; 23    sectors/track            E
+-
+-  mov  ax, #EBDA_SEG
+-  mov  ds, ax
+-
+-  ;;; Filling EBDA table for hard disk 0.
+-  mov  al, #0x1f
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov  ah, al
+-  mov  al, #0x1e
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov   (0x003d + 0x05), ax ;; write precomp word
+-
+-  mov  al, #0x20
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov   (0x003d + 0x08), al ;; drive control byte
+-
+-  mov  al, #0x22
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov  ah, al
+-  mov  al, #0x21
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov   (0x003d + 0x0C), ax ;; landing zone word
+-
+-  mov  al, #0x1c   ;; get cylinders word in AX
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA   ;; high byte
+-  mov  ah, al
+-  mov  al, #0x1b
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA   ;; low byte
+-  mov  bx, ax      ;; BX = cylinders
+-
+-  mov  al, #0x1d
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov  cl, al      ;; CL = heads
+-
+-  mov  al, #0x23
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov  dl, al      ;; DL = sectors
+-
+-  cmp  bx, #1024
+-  jnbe hd0_post_logical_chs ;; if cylinders > 1024, use translated style CHS
+-
+-hd0_post_physical_chs:
+-  ;; no logical CHS mapping used, just physical CHS
+-  ;; use Standard Fixed Disk Parameter Table (FDPT)
+-  mov   (0x003d + 0x00), bx ;; number of physical cylinders
+-  mov   (0x003d + 0x02), cl ;; number of physical heads
+-  mov   (0x003d + 0x0E), dl ;; number of physical sectors
+-  jmp check_for_hd1
+-
+-hd0_post_logical_chs:
+-  ;; complies with Phoenix style Translated Fixed Disk Parameter Table (FDPT)
+-  mov   (0x003d + 0x09), bx ;; number of physical cylinders
+-  mov   (0x003d + 0x0b), cl ;; number of physical heads
+-  mov   (0x003d + 0x04), dl ;; number of physical sectors
+-  mov   (0x003d + 0x0e), dl ;; number of logical sectors (same)
+-  mov al, #0xa0
+-  mov   (0x003d + 0x03), al ;; A0h signature, indicates translated table
+-
+-  cmp bx, #2048
+-  jnbe hd0_post_above_2048
+-  ;; 1024 < c <= 2048 cylinders
+-  shr bx, #0x01
+-  shl cl, #0x01
+-  jmp hd0_post_store_logical
+-
+-hd0_post_above_2048:
+-  cmp bx, #4096
+-  jnbe hd0_post_above_4096
+-  ;; 2048 < c <= 4096 cylinders
+-  shr bx, #0x02
+-  shl cl, #0x02
+-  jmp hd0_post_store_logical
+-
+-hd0_post_above_4096:
+-  cmp bx, #8192
+-  jnbe hd0_post_above_8192
+-  ;; 4096 < c <= 8192 cylinders
+-  shr bx, #0x03
+-  shl cl, #0x03
+-  jmp hd0_post_store_logical
+-
+-hd0_post_above_8192:
+-  ;; 8192 < c <= 16384 cylinders
+-  shr bx, #0x04
+-  shl cl, #0x04
+-
+-hd0_post_store_logical:
+-  mov   (0x003d + 0x00), bx ;; number of physical cylinders
+-  mov   (0x003d + 0x02), cl ;; number of physical heads
+-  ;; checksum
+-  mov   cl, #0x0f     ;; repeat count
+-  mov   si, #0x003d   ;; offset to disk0 FDPT
+-  mov   al, #0x00     ;; sum
+-hd0_post_checksum_loop:
+-  add   al, [si]
+-  inc   si
+-  dec   cl
+-  jnz hd0_post_checksum_loop
+-  not   al  ;; now take 2s complement
+-  inc   al
+-  mov   [si], al
+-;;; Done filling EBDA table for hard disk 0.
+-
+-
+-check_for_hd1:
+-  ;; is there really a second hard disk?  if not, return now
+-  mov  al, #0x12
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  and  al, #0x0f
+-  jnz   post_d1_exists
++  call _hard_drive_setup
+   ret
+-post_d1_exists:
+-  ;; check that the hd type is really 0x0f.
+-  cmp al, #0x0f
+-  jz post_d1_extended
+-  HALT(__LINE__)
+-post_d1_extended:
+-  ;; check that the extended type is 47 - user definable
+-  mov  al, #0x1a
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  cmp  al, #47  ;; decimal 47 - user definable
+-  je   post_d1_type47
+-  HALT(__LINE__)
+-post_d1_type47:
+-  ;; Table for disk1.
+-  ;; CMOS  purpose                  param table offset
+-  ;; 0x24    cylinders low            0
+-  ;; 0x25    cylinders high           1
+-  ;; 0x26    heads                    2
+-  ;; 0x27    write pre-comp low       5
+-  ;; 0x28    write pre-comp high      6
+-  ;; 0x29    heads>8                  8
+-  ;; 0x2a    landing zone low         C
+-  ;; 0x2b    landing zone high        D
+-  ;; 0x2c    sectors/track            E
+-;;; Fill EBDA table for hard disk 1.
+-  mov  ax, #EBDA_SEG
+-  mov  ds, ax
+-  mov  al, #0x28
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov  ah, al
+-  mov  al, #0x27
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov   (0x004d + 0x05), ax ;; write precomp word
+ 
+-  mov  al, #0x29
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov   (0x004d + 0x08), al ;; drive control byte
+-
+-  mov  al, #0x2b
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov  ah, al
+-  mov  al, #0x2a
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov   (0x004d + 0x0C), ax ;; landing zone word
+-
+-  mov  al, #0x25   ;; get cylinders word in AX
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA   ;; high byte
+-  mov  ah, al
+-  mov  al, #0x24
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA   ;; low byte
+-  mov  bx, ax      ;; BX = cylinders
+-
+-  mov  al, #0x26
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov  cl, al      ;; CL = heads
+-
+-  mov  al, #0x2c
+-  out  PORT_CMOS_INDEX, al
+-  in   al, PORT_CMOS_DATA
+-  mov  dl, al      ;; DL = sectors
+-
+-  cmp  bx, #1024
+-  jnbe hd1_post_logical_chs ;; if cylinders > 1024, use translated style CHS
+-
+-hd1_post_physical_chs:
+-  ;; no logical CHS mapping used, just physical CHS
+-  ;; use Standard Fixed Disk Parameter Table (FDPT)
+-  mov   (0x004d + 0x00), bx ;; number of physical cylinders
+-  mov   (0x004d + 0x02), cl ;; number of physical heads
+-  mov   (0x004d + 0x0E), dl ;; number of physical sectors
+-  ret
+-
+-hd1_post_logical_chs:
+-  ;; complies with Phoenix style Translated Fixed Disk Parameter Table (FDPT)
+-  mov   (0x004d + 0x09), bx ;; number of physical cylinders
+-  mov   (0x004d + 0x0b), cl ;; number of physical heads
+-  mov   (0x004d + 0x04), dl ;; number of physical sectors
+-  mov   (0x004d + 0x0e), dl ;; number of logical sectors (same)
+-  mov al, #0xa0
+-  mov   (0x004d + 0x03), al ;; A0h signature, indicates translated table
+-
+-  cmp bx, #2048
+-  jnbe hd1_post_above_2048
+-  ;; 1024 < c <= 2048 cylinders
+-  shr bx, #0x01
+-  shl cl, #0x01
+-  jmp hd1_post_store_logical
+-
+-hd1_post_above_2048:
+-  cmp bx, #4096
+-  jnbe hd1_post_above_4096
+-  ;; 2048 < c <= 4096 cylinders
+-  shr bx, #0x02
+-  shl cl, #0x02
+-  jmp hd1_post_store_logical
+-
+-hd1_post_above_4096:
+-  cmp bx, #8192
+-  jnbe hd1_post_above_8192
+-  ;; 4096 < c <= 8192 cylinders
+-  shr bx, #0x03
+-  shl cl, #0x03
+-  jmp hd1_post_store_logical
+-
+-hd1_post_above_8192:
+-  ;; 8192 < c <= 16384 cylinders
+-  shr bx, #0x04
+-  shl cl, #0x04
+-
+-hd1_post_store_logical:
+-  mov   (0x004d + 0x00), bx ;; number of physical cylinders
+-  mov   (0x004d + 0x02), cl ;; number of physical heads
+-  ;; checksum
+-  mov   cl, #0x0f     ;; repeat count
+-  mov   si, #0x004d   ;; offset to disk0 FDPT
+-  mov   al, #0x00     ;; sum
+-hd1_post_checksum_loop:
+-  add   al, [si]
+-  inc   si
+-  dec   cl
+-  jnz hd1_post_checksum_loop
+-  not   al  ;; now take 2s complement
+-  inc   al
+-  mov   [si], al
+-;;; Done filling EBDA table for hard disk 1.
+-
+-  ret
+-
+ ;--------------------
+ ;- POST: EBDA segment
+ ;--------------------
+@@ -9736,10 +9565,23 @@
+   mov ax, #EBDA_SEG
+   mov ds, ax
+   mov byte ptr [0x0], #EBDA_SIZE
+-#endif
+   xor ax, ax            ; mov EBDA seg into 0x40E
+   mov ds, ax
+   mov word ptr [0x40E], #EBDA_SEG
++  mov ax, #BASE_MEM_IN_K
++#else
++  ;; base memory from CMOS 15h/16h (IBM PC/AT Technical Reference, CMOS map)
++  xor ax, ax
++  mov ds, ax
++  mov al, #0x16
++  out PORT_CMOS_INDEX, al
++  in  al, PORT_CMOS_DATA
++  mov ah, al
++  mov al, #0x15
++  out PORT_CMOS_INDEX, al
++  in  al, PORT_CMOS_DATA
++#endif
++  mov 0x0413, ax
+   ret;;
+ 
+ ;--------------------
+@@ -11172,6 +11014,7 @@
+   add  sp, #2   ;; Pop offset value
+   pop  cx       ;; Pop seg value (restore CX)
+ 
++#if BX_PNPBIOS
+   ;; Look at the ROM's PnP Expansion header.  Properly, we're supposed
+   ;; to init all the ROMs and then go back and build an IPL table of
+   ;; all the bootable devices, but we can get away with one pass.
+@@ -11232,6 +11075,7 @@
+   shr  bx, #0x4                ;; Turn the offset back into a count
+   inc  bx                      ;; We have one more entry now
+   mov  IPL_COUNT_OFFSET, bx    ;; Remember that.
++#endif
+ 
+ no_bev:
+   pop  di       ;; Restore DI
+@@ -11466,9 +11310,7 @@
+ 
+   call post_init_ivt
+ 
+-  ;; base memory in K 40:13 (word)
+-  mov  ax, #BASE_MEM_IN_K
+-  mov  0x0413, ax
++  ;; base memory in K 40:13 (word), set by ebda_post
+ 
+   ;; Manufacturing Test 40:12
+   ;;   zerod out above
+@@ -11573,8 +11415,10 @@
+   ;; IRQ9 (IRQ2 redirect) setup
+   SET_INT_VECTOR(0x71, #0xF000, #int71_handler)
+ 
++#if BX_USE_PS2_MOUSE
+   ;; PS/2 mouse setup
+   SET_INT_VECTOR(0x74, #0xF000, #int74_handler)
++#endif
+ 
+   ;; IRQ13 (FPU exception) setup
+   SET_INT_VECTOR(0x75, #0xF000, #int75_handler)
+@@ -11653,7 +11497,9 @@
+   ;;
+ #endif // BX_ELTORITO_BOOT
+ 
++#if BX_ELTORITO_BOOT || BX_PNPBIOS
+   call _init_boot_vectors
++#endif
+ 
+   mov  cx, #0xc800  ;; init option roms
+   mov  ax, #0xe000
+@@ -11691,6 +11537,163 @@
+   jmp int13_relocated
+ 
+ .org 0xe401 ; Fixed Disk Parameter Table
++;; types 1-23, 24-47 reserved (IBM PC/AT Technical Reference 6183355, FD_TBL)
++fd_tbl:
++  dw 306 ;; type 1
++  db 4
++  dw 0
++  dw 0x0080
++  db 0, 0x00, 0, 0, 0
++  dw 305
++  db 17, 0
++  dw 615 ;; type 2
++  db 4
++  dw 0
++  dw 0x012c
++  db 0, 0x00, 0, 0, 0
++  dw 615
++  db 17, 0
++  dw 615 ;; type 3
++  db 6
++  dw 0
++  dw 0x012c
++  db 0, 0x00, 0, 0, 0
++  dw 615
++  db 17, 0
++  dw 940 ;; type 4
++  db 8
++  dw 0
++  dw 0x0200
++  db 0, 0x00, 0, 0, 0
++  dw 940
++  db 17, 0
++  dw 940 ;; type 5
++  db 6
++  dw 0
++  dw 0x0200
++  db 0, 0x00, 0, 0, 0
++  dw 940
++  db 17, 0
++  dw 615 ;; type 6
++  db 4
++  dw 0
++  dw 0xffff
++  db 0, 0x00, 0, 0, 0
++  dw 615
++  db 17, 0
++  dw 462 ;; type 7
++  db 8
++  dw 0
++  dw 0x0100
++  db 0, 0x00, 0, 0, 0
++  dw 511
++  db 17, 0
++  dw 733 ;; type 8
++  db 5
++  dw 0
++  dw 0xffff
++  db 0, 0x00, 0, 0, 0
++  dw 733
++  db 17, 0
++  dw 900 ;; type 9
++  db 15
++  dw 0
++  dw 0xffff
++  db 0, 0x08, 0, 0, 0
++  dw 901
++  db 17, 0
++  dw 820 ;; type 10
++  db 3
++  dw 0
++  dw 0xffff
++  db 0, 0x00, 0, 0, 0
++  dw 820
++  db 17, 0
++  dw 855 ;; type 11
++  db 5
++  dw 0
++  dw 0xffff
++  db 0, 0x00, 0, 0, 0
++  dw 855
++  db 17, 0
++  dw 855 ;; type 12
++  db 7
++  dw 0
++  dw 0xffff
++  db 0, 0x00, 0, 0, 0
++  dw 855
++  db 17, 0
++  dw 306 ;; type 13
++  db 8
++  dw 0
++  dw 0x0080
++  db 0, 0x00, 0, 0, 0
++  dw 319
++  db 17, 0
++  dw 733 ;; type 14
++  db 7
++  dw 0
++  dw 0xffff
++  db 0, 0x00, 0, 0, 0
++  dw 733
++  db 17, 0
++  db 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 ;; type 15
++  dw 612 ;; type 16
++  db 4
++  dw 0
++  dw 0x0000
++  db 0, 0x00, 0, 0, 0
++  dw 663
++  db 17, 0
++  dw 977 ;; type 17
++  db 5
++  dw 0
++  dw 0x012c
++  db 0, 0x00, 0, 0, 0
++  dw 977
++  db 17, 0
++  dw 977 ;; type 18
++  db 7
++  dw 0
++  dw 0xffff
++  db 0, 0x00, 0, 0, 0
++  dw 977
++  db 17, 0
++  dw 1024 ;; type 19
++  db 7
++  dw 0
++  dw 0x0200
++  db 0, 0x00, 0, 0, 0
++  dw 1023
++  db 17, 0
++  dw 733 ;; type 20
++  db 5
++  dw 0
++  dw 0x012c
++  db 0, 0x00, 0, 0, 0
++  dw 732
++  db 17, 0
++  dw 733 ;; type 21
++  db 7
++  dw 0
++  dw 0x012c
++  db 0, 0x00, 0, 0, 0
++  dw 732
++  db 17, 0
++  dw 733 ;; type 22
++  db 5
++  dw 0
++  dw 0x012c
++  db 0, 0x00, 0, 0, 0
++  dw 733
++  db 17, 0
++  dw 306 ;; type 23
++  db 4
++  dw 0
++  dw 0x0000
++  db 0, 0x00, 0, 0, 0
++  dw 336
++  db 17, 0
+ 
+ ;----------
+ ;- INT19h -
+diff -ru a/rombios.h b/rombios.h
+--- a/rombios.h
++++ b/rombios.h
+@@ -96,14 +96,14 @@
+ #define BX_CPU           2
+ #define BX_USE_PS2_MOUSE 0
+ #define BX_CALL_INT15_4F 1
+-#define BX_USE_EBDA      1
++#define BX_USE_EBDA      0
+ #define BX_SUPPORT_FLOPPY 1
+ #define BX_FLOPPY_ON_CNT 37   /* 2 seconds */
+ #define BX_PCIBIOS       0
+ #define BX_APM           0
+ #define BX_PNPBIOS       0
+ 
+-#define BX_USE_ATADRV    1
++#define BX_USE_ATADRV    0
+ #define BX_ELTORITO_BOOT 0
+ 
+ #define BX_MAX_ATA_INTERFACES   4

@@ -52,7 +52,7 @@ check() {
   shift
   find "$dir" \( \
       -path '*/tests/build' -o -path '*/tests/build-cov' -o -path '*/tests/coverage-cpp' \
-      -o -path '*/vendor' -o -path '*/web/shared' -o -path '*/node_modules' \
+      -o -path '*/vendor' -o -path '*/web/shared' -o -path '*/node_modules' -o -path '*/bochs-bios' \
     \) -prune -o -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \) \
     ! -name 'hwtest_roms.h' -print | sort >"$files"
   # shellcheck disable=SC2086

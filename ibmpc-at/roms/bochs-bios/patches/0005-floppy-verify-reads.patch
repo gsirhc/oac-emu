@@ -1,0 +1,33 @@
+diff -ru a/rombios.c b/rombios.c
+--- a/rombios.c
++++ b/rombios.c
+@@ -7678,12 +7678,6 @@
+         }
+       }
+ 
+-      if(ah == 0x04) {
+-        // Verify Diskette Sectors
+-
+-        goto floppy_return_success;
+-      }
+-
+       //-----------------------------------
+       // set up DMA controller for transfer
+       //-----------------------------------
+@@ -7723,12 +7717,12 @@
+       outb(PORT_DMA_CNT_2, base_count);
+       outb(PORT_DMA_CNT_2, HIBYTE(base_count));
+ 
+-      if (ah == 0x02) {
+-        // Read Diskette Sectors
++      if (ah != 0x03) {
++        // Read or Verify Diskette Sectors: verify reads without writing memory
+ 
+         // port 0b: DMA-1 Mode Register
+-        mode_register = 0x46; // single mode, increment, autoinit disable,
+-                              // transfer type=write, channel 2
++        mode_register = (ah == 0x02) ? 0x46 : 0x42; // single mode, increment, autoinit disable,
++                              // transfer type=write or verify, channel 2
+   BX_DEBUG_INT13_FL("setting mode register\n");
+         outb(PORT_DMA1_MODE_REG, mode_register);
+ 

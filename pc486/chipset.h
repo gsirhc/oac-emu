@@ -30,7 +30,11 @@ namespace pc486 {
 
 class Chipset {
 public:
-    Chipset() { reset(); }
+    // The prebuilt BIOS-bochs-legacy never seeks, sends SPECIFY or writes 3F7h.
+    Chipset() {
+        fdc.lenient_media = true;
+        reset();
+    }
 
     void reset();
 

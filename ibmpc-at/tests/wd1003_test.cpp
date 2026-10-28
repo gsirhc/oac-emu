@@ -21,90 +21,25 @@ protected:
     void SetUp() override { hdd.reset(); }
 };
 
-TEST_F(Wd1003Test, ScratchRegisterSignatureDetection) {
-    // BIOS detection (rombios.c ata_detect()): write a scratch pattern and read it back.
-    hdd.out(0x1F6, 0xA0);  // select device 0
-    hdd.out(0x1F2, 0x55);
-    hdd.out(0x1F3, 0xAA);
-    hdd.out(0x1F2, 0xAA);
-    hdd.out(0x1F3, 0x55);
+TEST_F(Wd1003Test, TaskFileRegistersReadBack) {
+    hdd.out(0x1F6, 0xA0);
     hdd.out(0x1F2, 0x55);
     hdd.out(0x1F3, 0xAA);
     EXPECT_EQ(hdd.in(0x1F2), 0x55);
     EXPECT_EQ(hdd.in(0x1F3), 0xAA);
 }
 
-TEST_F(Wd1003Test, SoftResetReassertsPostResetSignature) {
-    // Soft reset (SRST) restores the post-reset signature: count/number = 1, cylinder = 0, status non-zero.
+TEST_F(Wd1003Test, SoftResetLeavesTheNoErrorDiagnosticCode) {
     hdd.out(0x1F2, 0x55);
     hdd.out(0x1F3, 0xAA);
     hdd.out(0x3F6, 0x04);  // assert SRST
-    hdd.out(0x3F6, 0x00);  // reset happens on this edge
+    hdd.out(0x3F6, 0x00);
+    EXPECT_EQ(hdd.in(0x1F1), 0x01);  // IBM PC/AT Technical Reference, DISK_RESET
     EXPECT_EQ(hdd.in(0x1F2), 0x01);
     EXPECT_EQ(hdd.in(0x1F3), 0x01);
-    EXPECT_EQ(hdd.in(0x1F4), 0x00);  // cylinder low
-    EXPECT_EQ(hdd.in(0x1F5), 0x00);  // cylinder high
-    EXPECT_NE(hdd.in(0x3F6) /* alt status, doesn't clear IRQ */, 0x00);
-}
-
-TEST_F(Wd1003Test, SoftResetSignalsAbsenceForTheSlaveViaFloatedCylinderRegisters) {
-    // ata_detect() tells a real device from none by Cylinder Low/High after reset:
-    // 0x00/0x00 present, 0xFF/0xFF floated. Getting it wrong made the absent slave
-    // look real and the BIOS panicked after a ~32s timeout (IBM_PCAT_REVIEW.md).
-    hdd.out(0x1F6, 0xB0);  // select drive 1 (slave, never mounted)
-    hdd.out(0x3F6, 0x04);  // assert SRST
-    hdd.out(0x3F6, 0x00);  // release it
-    EXPECT_EQ(hdd.in(0x1F2), 0x01);  // sector count/number still read back 1/1...
-    EXPECT_EQ(hdd.in(0x1F3), 0x01);
-    EXPECT_EQ(hdd.in(0x1F4), 0xFF);  // ...but cylinder low/high floats, signaling absence
-    EXPECT_EQ(hdd.in(0x1F5), 0xFF);
-
-    // The master keeps its real 0x00/0x00 signature after the slave-selected reset.
-    hdd.out(0x1F6, 0xA0);
-    hdd.out(0x3F6, 0x04);
-    hdd.out(0x3F6, 0x00);
     EXPECT_EQ(hdd.in(0x1F4), 0x00);
     EXPECT_EQ(hdd.in(0x1F5), 0x00);
-}
-
-TEST_F(Wd1003Test, FloatedSignatureIsATwoReadWindowNotAPersistentState) {
-    // The float lasts only the two Cylinder Low/High reads ata_detect() makes. The
-    // boot loader later reads Status with the slave still selected and needs the
-    // master's value (IBM_PCAT_REVIEW.md).
-    hdd.out(0x1F6, 0xB0);  // select drive 1 (slave, never mounted)
-    hdd.out(0x3F6, 0x04);  // assert SRST
-    hdd.out(0x3F6, 0x00);  // release it, arms the two-read floating window
-    // Status was never floated.
-    EXPECT_TRUE(hdd.in(0x1F7) & 0x40);  // DRDY, the real master, not floating
-
-    hdd.in(0x1F4);  // consume both floating reads, exactly as ata_detect() does
-    hdd.in(0x1F5);
-    // With the window spent, Cylinder Low/High read the master's values.
-    EXPECT_EQ(hdd.in(0x1F4), 0x00);
-    EXPECT_EQ(hdd.in(0x1F5), 0x00);
-    EXPECT_TRUE(hdd.in(0x1F7) & 0x40);
-}
-
-TEST_F(Wd1003Test, IdentifyDeviceReportsRealGeometry) {
-    auto img = MakeImage(733, 5, 17);
-    hdd.mount(0, img.data(), img.size());
-    hdd.out(0x1F6, 0xA0);
-    hdd.out(0x1F7, 0xEC);  // IDENTIFY DEVICE
-    ASSERT_TRUE(hdd.in(0x1F7) & 0x08);  // DRQ: data ready
-    hdd.data_in16();                   // word 0: general configuration, not checked here
-    uint16_t word1 = hdd.data_in16();  // cylinders
-    hdd.data_in16();                   // word 2: unused
-    uint16_t word3 = hdd.data_in16();  // heads
-    hdd.data_in16();                   // word 4: unused
-    uint16_t word5 = hdd.data_in16();  // bytes per sector
-    EXPECT_EQ(word1, 733);
-    EXPECT_EQ(word3, 5);
-    // The BIOS reads this field to size its PIO loop. Zero broke the FreeDOS
-    // installer's auto-partition step (IBM_PCAT_REVIEW.md).
-    EXPECT_EQ(word5, 512);
-    // Drain the rest of the 512-byte block.
-    for (int i = 0; i < (256 - 6); ++i) hdd.data_in16();
-    EXPECT_FALSE(hdd.in(0x1F7) & 0x08);  // DRQ cleared once fully drained
+    EXPECT_TRUE(hdd.in(0x3F6) & 0x40);
 }
 
 TEST_F(Wd1003Test, ReadSectorsAfterPacingReturnsRealBytes) {
@@ -126,48 +61,9 @@ TEST_F(Wd1003Test, ReadSectorsAfterPacingReturnsRealBytes) {
     EXPECT_EQ(hdd.data_in16() & 0xFF, 2);
 }
 
-TEST_F(Wd1003Test, ReadSectorsUsesLbaAddressingWhenDriveHeadBitSixIsSet) {
-    // The BIOS issues all I/O in 28-bit LBA mode (Drive/Head bit 6). Treating the
-    // registers as CHS only worked for LBA 0 (IBM_PCAT_REVIEW.md).
-    auto img = MakeImage(733, 5, 17);
-    hdd.mount(0, img.data(), img.size());
-
-    // LBA 40 would be out of range as CHS (17 sectors/track), proving LBA is used.
-    hdd.out(0x1F6, 0xA0 | 0x40);  // drive 0, LBA mode (bit6), LBA[27:24]=0
-    hdd.out(0x1F2, 1);            // 1 sector
-    hdd.out(0x1F3, 40);           // LBA[7:0] = 40
-    hdd.out(0x1F4, 0);            // LBA[15:8] = 0
-    hdd.out(0x1F5, 0);            // LBA[23:16] = 0
-    hdd.out(0x1F7, 0x20);         // READ SECTORS
-
-    for (uint64_t c = 0; c < 10'000'000 && (hdd.in(0x3F6) & 0x80); c += 100) hdd.tick(c);
-    ASSERT_TRUE(hdd.in(0x3F6) & 0x08);  // DRQ: data ready (not an IDNF error)
-    EXPECT_EQ(hdd.data_in16() & 0xFF, 40);  // LBA sector 40 is the 40th 512-byte block
-}
-
-TEST_F(Wd1003Test, WriteSectorsAcceptsDataImmediatelyThenCommitsSynchronously) {
-    // Unlike READ SECTORS, a write commits when the last byte arrives, with no
-    // tick() pacing. rombios.c ata_cmd_data_io() never awaits BSY after a write.
-    // See pio_write_byte().
-    auto img = MakeImage(733, 5, 17);
-    hdd.mount(0, img.data(), img.size());
-    hdd.out(0x1F6, 0xA0);
-    hdd.out(0x1F2, 1);
-    hdd.out(0x1F3, 1);
-    hdd.out(0x1F4, 0); hdd.out(0x1F5, 0);
-    hdd.out(0x1F7, 0x30);  // WRITE SECTORS
-
-    ASSERT_TRUE(hdd.in(0x1F7) & 0x08);  // DRQ set immediately, no seek delay for the CPU side
-    for (int i = 0; i < 255; ++i) hdd.data_out16(0xABCD);
-    EXPECT_TRUE(hdd.in(0x1F7) & 0x08);  // still mid-transfer: DRQ still set, not yet BSY/done
-    hdd.data_out16(0xABCD);  // the 256th and last word completes the sector
-    EXPECT_TRUE(hdd.in(0x3F6) & 0x40);  // DRDY, done, synchronously, no tick() needed
-    EXPECT_FALSE(hdd.in(0x3F6) & 0x80);  // and NOT still BSY
-    EXPECT_TRUE(hdd.irq_pending());
-}
-
-TEST_F(Wd1003Test, RecalibrateAndInitializeDeviceParametersCompleteImmediately) {
+TEST_F(Wd1003Test, RestoreAtTrackZeroAndSetParametersCompleteAtOnce) {
     hdd.out(0x1F7, 0x10);  // RECALIBRATE
+    hdd.tick(100);
     EXPECT_TRUE(hdd.irq_pending());
     EXPECT_TRUE(hdd.in(0x1F7) & 0x40);  // DRDY
 
@@ -177,31 +73,24 @@ TEST_F(Wd1003Test, RecalibrateAndInitializeDeviceParametersCompleteImmediately) 
     EXPECT_TRUE(hdd.irq_pending());
 }
 
-TEST_F(Wd1003Test, AbsentSlaveDriveOnlyRefusesToExecuteCommands) {
-    // Drive 1 is permanently absent. Only command-register writes (0x1F7) are gated
-    // on selection, so IDENTIFY to the "absent" drive does nothing (a phantom
-    // all-zero geometry caused a divide-by-zero in the BIOS). Other task-file
-    // writes and all reads are ungated, as the BIOS programs CHS before reselecting
-    // the master. See IBM_PCAT_REVIEW.md.
+TEST_F(Wd1003Test, CommandsToTheMissingDrive1Abort) {
     auto img = MakeImage(733, 5, 17);
     hdd.mount(0, img.data(), img.size());
-
-    hdd.out(0x1F6, 0xB0);  // select drive 1 (bit4 set -> slave, never mounted)
-    hdd.out(0x1F2, 0x55);
-    hdd.out(0x1F3, 0xAA);
-    // These writes land: the one real device absorbs them whatever DEV says.
-    EXPECT_EQ(hdd.in(0x1F2), 0x55);
-    EXPECT_EQ(hdd.in(0x1F3), 0xAA);
-
-    hdd.out(0x1F7, 0xEC);  // IDENTIFY DEVICE sent to the "absent" drive
-    EXPECT_FALSE(hdd.irq_pending());  // nothing answers -> no command actually ran
-    EXPECT_FALSE(hdd.in(0x1F7) & 0x08);  // and DRQ never got set, no IDENTIFY data to read
-
-    // Drive 0 runs the same command, so the gate is per command issue.
-    hdd.out(0x1F6, 0xA0);
-    hdd.out(0x1F7, 0xEC);
+    hdd.out(0x1F6, 0xB0);
+    hdd.out(0x1F2, 1);
+    hdd.out(0x1F3, 1);
+    hdd.out(0x1F7, 0x20);
     EXPECT_TRUE(hdd.irq_pending());
-    EXPECT_TRUE(hdd.in(0x1F7) & 0x08);
+    uint8_t st = hdd.in(0x1F7);
+    EXPECT_EQ(st & 0x01, 0x01);
+    EXPECT_EQ(st & 0x40, 0x00) << "drive 1 isn't ready";
+    EXPECT_EQ(hdd.in(0x1F1), 0x04);
+    EXPECT_FALSE(st & 0x08);
+
+    hdd.out(0x1F6, 0xA0);
+    hdd.out(0x1F7, 0x10);
+    hdd.tick(100);
+    EXPECT_EQ(hdd.in(0x1F7) & 0x41, 0x40);
 }
 
 TEST_F(Wd1003Test, BusyReflectsAnInFlightTransfer) {
@@ -233,7 +122,20 @@ protected:
     void SetUp() override {
         Wd1003Test::SetUp();
         hdd.mount(0, img.data(), img.size());
+        Chs(0, 0, 1, 1);
+        hdd.out(0x1F7, 0x70);  // sets the step rate; no move, so done at cycle 0
+        hdd.tick(0);
+        hdd.in(0x1F7);
     }
+    // SEEK at 35 us steps, which also sets the implied-seek rate
+    uint64_t SeekTo(int cyl, uint8_t cmd = 0x70) {
+        Chs(cyl, 0, 1, 1);
+        hdd.out(0x1F7, cmd);
+        uint64_t took = RunWhileBusy();
+        hdd.in(0x1F7);
+        return took;
+    }
+    static double Ms(double ms) { return ms * 8000.0; }
     void Chs(int cyl, int head, int sector, int count) {
         hdd.out(0x1F6, uint8_t(0xA0 | head));
         hdd.out(0x1F2, uint8_t(count));
@@ -249,6 +151,12 @@ protected:
         while ((hdd.in(0x3F6) & 0x80) && now - start < 100'000'000) hdd.tick(now += 100);
         return now - start;
     }
+    void WriteWhileDrq(uint16_t w) {
+        while (hdd.in(0x3F6) & 0x08) {
+            for (int i = 0; i < 256; ++i) hdd.data_out16(w);
+            RunWhileBusy();
+        }
+    }
     void Format(int cyl, int head, const uint8_t (&table)[34]) {
         Chs(cyl, head, 1, 17);
         hdd.out(0x1F7, 0x50);
@@ -261,11 +169,53 @@ protected:
     }
 };
 
-TEST_F(Wd1003CommandTest, SeekCompletesWithAnInterrupt) {
+TEST_F(Wd1003CommandTest, SeekHoldsBsyThenInterrupts) {
     Chs(400, 0, 1, 1);
     hdd.out(0x1F7, 0x7F);
+    EXPECT_TRUE(hdd.in(0x3F6) & 0x80);
+    EXPECT_FALSE(hdd.irq_pending());
+    EXPECT_NEAR(double(RunWhileBusy()), Ms(55.0), 200.0);
     EXPECT_TRUE(hdd.irq_pending());
-    EXPECT_EQ(hdd.in(0x1F7) & 0x51, 0x50);
+    EXPECT_EQ(hdd.in(0x1F7) & 0xD1, 0x50);
+}
+
+TEST_F(Wd1003CommandTest, BufferedSeeksMeetTheSt4038Maximums) {
+    EXPECT_NEAR(double(SeekTo(1)), Ms(11.0), 200.0);
+    EXPECT_NEAR(double(SeekTo(244)), Ms(40.0), 200.0);
+    EXPECT_NEAR(double(SeekTo(1)), Ms(40.0), 200.0) << "outward the same";
+    EXPECT_NEAR(double(SeekTo(733)), Ms(85.0), 200.0);
+    EXPECT_EQ(SeekTo(733), 100u) << "no move, no wait";
+}
+
+TEST_F(Wd1003CommandTest, SlowStepRatesStepAtTheirOwnPace) {
+    EXPECT_NEAR(double(SeekTo(10, 0x7D)), Ms(9 * 6.5 + 11.0), 200.0);
+    EXPECT_NEAR(double(SeekTo(14, 0x76)), Ms(3 * 3.0 + 11.0), 200.0);
+}
+
+TEST_F(Wd1003CommandTest, RestoreWaitsForSeekCompleteOnEveryStep) {
+    SeekTo(100);
+    hdd.out(0x1F7, 0x10);
+    EXPECT_NEAR(double(RunWhileBusy()), Ms(100 * 11.0), 200.0);
+    EXPECT_TRUE(hdd.irq_pending());
+}
+
+TEST_F(Wd1003CommandTest, ReadsSeekToTheirCylinderFirst) {
+    Chs(243, 0, 1, 1);
+    hdd.out(0x1F7, 0x20);
+    uint64_t took = RunWhileBusy();
+    EXPECT_GE(double(took), Ms(40.0));
+    EXPECT_LE(double(took), Ms(40.0) + kRev + kSlot + 100);
+}
+
+TEST_F(Wd1003CommandTest, ATransferBeforeAnyStepRateRecalibratesFirst) {
+    SeekTo(50);
+    hdd.out(0x3F6, 0x04);
+    hdd.out(0x3F6, 0x00);
+    Chs(0, 0, 1, 1);
+    hdd.out(0x1F7, 0x20);
+    uint64_t took = RunWhileBusy();
+    EXPECT_GE(double(took), Ms(50 * 11.0));
+    EXPECT_LE(double(took), Ms(50 * 11.0) + kRev + kSlot + 100);
 }
 
 TEST_F(Wd1003CommandTest, WritePrecompDoesNotLandInTheErrorRegister) {
@@ -308,6 +258,32 @@ TEST_F(Wd1003CommandTest, MultiSectorReadInterruptsPerSectorAndNotAtTheEnd) {
     EXPECT_EQ(hdd.in(0x1F7) & 0xC8, 0x40);
 }
 
+TEST_F(Wd1003CommandTest, WriteHoldsBsyUntilEachSectorPassesTheHeadThenInterrupts) {
+    const auto& d = hdd.drives[0];
+    std::size_t s1 = std::size_t(d.offset_for(3, 0, 1)), s2 = std::size_t(d.offset_for(3, 0, 2));
+    SeekTo(3);
+    Chs(3, 0, 1, 2);
+    hdd.out(0x1F7, 0x30);
+    EXPECT_EQ(hdd.in(0x3F6) & 0x88, 0x08);
+    EXPECT_FALSE(hdd.irq_pending());
+    for (int i = 0; i < 256; ++i) hdd.data_out16(0xABCD);
+    EXPECT_EQ(hdd.in(0x3F6) & 0x88, 0x80);
+    EXPECT_NE(d.image[s1], 0xCD);
+    uint64_t took = RunWhileBusy();
+    EXPECT_GT(took, 0u);
+    EXPECT_LE(double(took), kRev + kSlot + 100);
+    EXPECT_EQ(d.image[s1], 0xCD);
+    EXPECT_NE(d.image[s2], 0xCD);
+    EXPECT_TRUE(hdd.irq_pending());
+    EXPECT_EQ(hdd.in(0x1F7) & 0x88, 0x08);
+    EXPECT_FALSE(hdd.irq_pending());
+    for (int i = 0; i < 256; ++i) hdd.data_out16(0xABCD);
+    RunWhileBusy();
+    EXPECT_EQ(d.image[s2], 0xCD);
+    EXPECT_TRUE(hdd.irq_pending());
+    EXPECT_EQ(hdd.in(0x1F7) & 0xC9, 0x40);
+}
+
 TEST_F(Wd1003CommandTest, BadBlockMarkFailsReadVerifyAndWrite) {
     uint8_t table[34] = {};
     for (int i = 0; i < 17; ++i) table[i * 2 + 1] = uint8_t(i + 1);
@@ -332,7 +308,7 @@ TEST_F(Wd1003CommandTest, BadBlockMarkFailsReadVerifyAndWrite) {
 
     Chs(10, 2, 4, 2);
     hdd.out(0x1F7, 0x30);
-    for (int i = 0; i < 512; ++i) hdd.data_out16(0x7777);
+    WriteWhileDrq(0x7777);
     EXPECT_EQ(hdd.in(0x1F1), 0x80);
     const auto& d = hdd.drives[0];
     EXPECT_EQ(d.image[std::size_t(d.offset_for(10, 2, 4))], 0x77);
@@ -360,6 +336,7 @@ TEST_F(Wd1003CommandTest, ReformattingClearsABadBlockAndRemountForgetsThem) {
 TEST_F(Wd1003CommandTest, InterruptHeldWhileIenIsOffFiresWhenEnabled) {
     hdd.out(0x3F6, 0x02);
     hdd.out(0x1F7, 0x10);
+    RunWhileBusy();
     EXPECT_FALSE(hdd.irq_pending());
     hdd.out(0x3F6, 0x00);
     EXPECT_TRUE(hdd.irq_pending());
@@ -395,13 +372,15 @@ TEST_F(Wd1003CommandTest, NextSectorIsBusyUntilItsSlotPasses) {
 TEST_F(Wd1003CommandTest, FormatTrackStartsAtIndexAndZeroesTheTrack) {
     img.assign(img.size(), 0xE5);
     hdd.mount(0, img.data(), img.size());
-    RunTo(50'000);
+    SeekTo(2);
+    RunTo(now + 50'000);
     Chs(2, 1, 1, 17);
     hdd.out(0x1F7, 0x50);
     EXPECT_TRUE(hdd.in(0x1F7) & 0x08);
     for (int i = 0; i < 256; ++i) hdd.data_out16(i < 17 ? uint16_t((i + 1) << 8) : 0);
+    double start = double(now);
     RunWhileBusy();
-    EXPECT_NEAR(double(now), 2 * kRev, 200.0);
+    EXPECT_NEAR(double(now), (std::floor(start / kRev) + 2) * kRev, 200.0) << "next index, then one turn";
     EXPECT_TRUE(hdd.irq_pending());
     const auto& d = hdd.drives[0];
     for (int r = 1; r <= 17; ++r) EXPECT_EQ(d.image[std::size_t(d.offset_for(2, 1, r)) + 100], 0) << r;
@@ -414,7 +393,7 @@ TEST_F(Wd1003CommandTest, DirtyRangesCoverOnlyTheWrittenSectorsUntilCleared) {
     EXPECT_TRUE(hdd.dirty_ranges(0).empty());
     Chs(10, 2, 4, 2);
     hdd.out(0x1F7, 0x30);
-    for (int i = 0; i < 512; ++i) hdd.data_out16(0x7777);
+    WriteWhileDrq(0x7777);
     auto ranges = hdd.dirty_ranges(0);
     ASSERT_EQ(ranges.size(), 1u);
     long off = hdd.drives[0].offset_for(10, 2, 4);
@@ -497,6 +476,7 @@ protected:
         hdd.out(0x1F7, 0x32);
         for (std::size_t i = 0; i < 512; i += 2) hdd.data_out16(uint16_t(data[i] | (data[i + 1] << 8)));
         for (int i = 3; i >= 0; --i) hdd.out(0x1F0, uint8_t(ecc >> (8 * i)));
+        RunWhileBusy();
         hdd.in(0x1F7);
     }
     std::vector<uint8_t> Pattern() {
@@ -608,7 +588,7 @@ TEST_F(Wd1003EccTest, ReadLongReturnsTheWrittenEccAndANormalWriteReplacesIt) {
 
     Chs(5, 0, 1, 1);
     hdd.out(0x1F7, 0x30);
-    for (int i = 0; i < 256; ++i) hdd.data_out16(0);
+    WriteWhileDrq(0);
     EXPECT_TRUE(hdd.drives[0].ecc_override.empty());
     hdd.mount(0, img.data(), img.size());
     WriteLong(data, 0x12345678);
@@ -617,7 +597,7 @@ TEST_F(Wd1003EccTest, ReadLongReturnsTheWrittenEccAndANormalWriteReplacesIt) {
 }
 
 TEST_F(Wd1003CommandTest, UnknownCommandsAbort) {
-    for (uint8_t cmd : {0xE0, 0x00, 0xA0}) {
+    for (uint8_t cmd : {0xEC, 0xE0, 0x00, 0xA0}) {
         Chs(0, 0, 1, 1);
         hdd.out(0x1F7, cmd);
         EXPECT_EQ(hdd.in(0x1F7) & 0x01, 0x01) << int(cmd);

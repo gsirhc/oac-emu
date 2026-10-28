@@ -1,7 +1,7 @@
 // Native harness: boots BIOS-bochs-legacy (+ optional EGA BIOS and floppy)
 // against this chipset and reports POST codes, HLT, and the screen text.
 // Screen text is captured by logging each char passed to the BIOS wrch()
-// helper (F000:0679 in this build).
+// helper (F000:063D in this build).
 //
 // Usage: bios_host <BIOS-bochs-legacy> [max_steps] [egabios] [floppy-image]
 
@@ -54,7 +54,7 @@ int main(int argc, char **argv) {
     const int64_t kStep = 1;  // fine-grained so the wrch() capture below can't miss a call
     for (uint64_t total = 0; total < max_steps; total += kStep) {
         uint16_t cs = m.cpu.cs, ip = m.cpu.ip;
-        if (cs == 0xF000 && ip == 0x0679 && !(last_cs == 0xF000 && last_ip == 0x0679)) {
+        if (cs == 0xF000 && ip == 0x063D && !(last_cs == 0xF000 && last_ip == 0x063D)) {
             char c = char(m.cpu.ax & 0xFF);
             screen.push_back(c == '\r' ? '\n' : ((c >= 32 && c < 127) ? c : '.'));
         }

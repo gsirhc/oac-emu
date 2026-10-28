@@ -1,12 +1,6 @@
-// Intel 80286 CPU core, real mode only, plus an 80386 compatibility layer:
-// 32-bit registers via the 0x66 prefix, Jcc rel16, SETcc, two-operand IMUL,
-// MOVZX/MOVSX. None of that exists on a real 286. BIOS-bochs-legacy assumes
-// a 386+ baseline (IBM_PCAT_REVIEW.md §6), so the layer runs only for code
-// fetched where firmware_at() says firmware lives; anywhere else it is #UD.
-//
-// Protected mode: 286 descriptors, gates, privilege and limit checks, 286
-// TSS task switches. LMSW sets PE and can't clear it; only RESET, or the
-// firmware layer's MOV CR0 below, does. LOADALL is not implemented.
+// Intel 80286 CPU core: real mode, and protected mode with 286 descriptors,
+// gates, privilege and limit checks and 286 TSS task switches. LMSW sets PE
+// and can't clear it; only RESET does. LOADALL is not implemented.
 //
 // The core talks only through Bus. Addresses are 24 bits and never wrapped at
 // 1MB here, because the A20 gate is motherboard logic (8042 P21) in the chipset.
@@ -82,8 +76,8 @@ struct Bus {
 
 class Cpu {
 public:
-    // Stored as 32-bit for the 0x66 386 concession. AX/AL/AH are the low bits;
-    // writing AX leaves EAX's upper 16 bits alone.
+    // 32-bit storage, only the low 16 bits are architectural. AX/AL/AH are the low bits;
+    // writing AX leaves the upper 16 bits alone.
     uint32_t ax = 0, bx = 0, cx = 0, dx = 0;
     uint32_t sp = 0, bp = 0, si = 0, di = 0;
 
@@ -107,13 +101,8 @@ public:
     Perf perf{};
 #endif
 
-    // Called with (CS, IP, opcode-word) on an opcode firmware runs that this
-    // core skips as a no-op: 0x00xx single-byte, 0x0Fxx two-byte. Also LOADALL.
+    // Called with (CS, IP, 0F05h) when LOADALL runs, which this core skips as a no-op.
     std::function<void(uint16_t cs, uint16_t ip, uint16_t opcode_word)> on_unimplemented;
-
-    // True for physical addresses holding firmware that may use the 386 layer.
-    // Unset means none does.
-    std::function<bool(uint32_t addr)> firmware_at;
 
     // A REP string op hands back to the caller after this many cycles so
     // devices advance and interrupts land between iterations. 0 never yields.
@@ -154,9 +143,6 @@ public:
     // Upper 16 bits are preserved.
     uint16_t get_reg16(int idx) const;
     void     set_reg16(int idx, uint16_t v);
-    // 32-bit form (0x66 prefix).
-    uint32_t get_reg32(int idx) const;
-    void     set_reg32(int idx, uint32_t v);
 
 private:
     Bus bus_;
@@ -166,8 +152,6 @@ private:
     enum { SEG_ES = 0, SEG_CS = 1, SEG_SS = 2, SEG_DS = 3 };
     enum RepMode { REP_NONE, REP_Z, REP_NZ };
     RepMode rep_ = REP_NONE;
-    // 0x67 address-size is unsupported: only 32-bit operands are observed.
-    bool opsize32_ = false;
 
     uint16_t &seg_reg(int idx);   // ES/CS/SS/DS by the indices above
 
@@ -307,14 +291,6 @@ private:
     int  fetch_progress_ = 0;  // clocks already spent on the word being fetched
     bool flushed_ = true;
     int  prefetch(int exec_clocks);
-    uint32_t rd(int si, uint16_t off) {
-        check(si, off, 4, false);
-        return uint32_t(rw(si, off)) | (uint32_t(rw(si, uint16_t(off + 2))) << 16);
-    }
-    void     wd(int si, uint16_t off, uint32_t v) {
-        check(si, off, 4, true);
-        ww(si, off, uint16_t(v & 0xFFFF)); ww(si, uint16_t(off + 2), uint16_t(v >> 16));
-    }
 
     // The 286 faults an instruction over 10 bytes or one that runs past FFFFh.
     int  fetched_ = 0;
@@ -325,14 +301,10 @@ private:
         return fault_ ? uint8_t(0xFF) : bus_.read(code_base() + ip++);
     }
     uint16_t fetch16() { uint16_t lo = fetch8(); return uint16_t(lo | (uint16_t(fetch8()) << 8)); }
-    uint32_t fetch32() { uint32_t lo = fetch16(); return lo | (uint32_t(fetch16()) << 16); }
 
-    // Stack is always SS. 32-bit push/pop moves SP by 4.
+    // Stack is always SS.
     void     push16(uint16_t v) { sp = uint16_t(sp - 2); ww(SEG_SS, uint16_t(sp), v); }
     uint16_t pop16()            { uint16_t v = rw(SEG_SS, uint16_t(sp)); sp = uint16_t(sp + 2); return v; }
-    // sp wraps at 64KB even for 32-bit operands (no 0x67 / big real mode).
-    void     push32(uint32_t v) { sp = (sp - 4) & 0xFFFF; wd(SEG_SS, uint16_t(sp), v); }
-    uint32_t pop32()            { uint32_t v = rd(SEG_SS, uint16_t(sp)); sp = (sp + 4) & 0xFFFF; return v; }
 
     // Register state at the start of the instruction (or REP iteration) a
     // fault rolls back to.
@@ -352,7 +324,6 @@ private:
     void save_regs();
     void restore_regs();
 
-    bool firmware() const { return firmware_at && firmware_at(code_base() + instr_start_ip_); }
 
     uint32_t code_base() const { return sc_[SEG_CS].base; }
     void ud() { raise(EXC_UD); }
@@ -459,8 +430,6 @@ private:
     void     rm_write8(const RM &rm, uint8_t v)  { if (rm.is_mem) wb(rm.seg, rm.off, v); else set_reg8(rm.reg, v); }
     uint16_t rm_read16(const RM &rm)             { return rm.is_mem ? rw(rm.seg, rm.off) : get_reg16(rm.reg); }
     void     rm_write16(const RM &rm, uint16_t v){ if (rm.is_mem) ww(rm.seg, rm.off, v); else set_reg16(rm.reg, v); }
-    uint32_t rm_read32(const RM &rm)             { return rm.is_mem ? rd(rm.seg, rm.off) : get_reg32(rm.reg); }
-    void     rm_write32(const RM &rm, uint32_t v){ if (rm.is_mem) wd(rm.seg, rm.off, v); else set_reg32(rm.reg, v); }
     // Offset:segment pair (LES/LDS/far CALL/JMP/BOUND). Memory only; a register is #UD.
     bool     far_operand(const RM &rm, uint16_t &lo, uint16_t &hi) {
         if (!rm.is_mem) { ud(); return false; }
@@ -473,7 +442,6 @@ private:
     // flag helpers
     void set_pzs8(uint8_t r);
     void set_pzs16(uint16_t r);
-    void set_pzs32(uint32_t r);
     static bool parity_even(uint8_t v);
 
     // ALU primitives set CF/OF/AF/PF/ZF/SF per the Intel flag tables.
@@ -487,21 +455,13 @@ private:
     uint16_t or16(uint16_t a, uint16_t b);
     uint8_t  xor8(uint8_t a, uint8_t b);
     uint16_t xor16(uint16_t a, uint16_t b);
-    // 32-bit forms (0x66).
-    uint32_t add32(uint32_t a, uint32_t b, bool carry_in);
-    uint32_t sub32(uint32_t a, uint32_t b, bool borrow_in);
-    uint32_t and32(uint32_t a, uint32_t b);
-    uint32_t or32(uint32_t a, uint32_t b);
-    uint32_t xor32(uint32_t a, uint32_t b);
 
     uint8_t  alu_apply8(int alu, uint8_t a, uint8_t b);   // alu: ADD/OR/ADC/SBB/AND/SUB/XOR/CMP = 0-7
     uint16_t alu_apply16(int alu, uint16_t a, uint16_t b);
-    uint32_t alu_apply32(int alu, uint32_t a, uint32_t b);
 
     // Shift/rotate group; `count` is already masked mod 32.
     uint8_t  shiftrot8(int op, uint8_t v, int count);
     uint16_t shiftrot16(int op, uint16_t v, int count);
-    uint32_t shiftrot32(int op, uint32_t v, int count);
 
     // BCD adjust and single-purpose instructions.
     void daa(); void das(); void aaa(); void aas(); void aam(); void aad();
@@ -509,7 +469,6 @@ private:
     void pusha(); void popa();      // 286-native PUSHA/POPA
     void bound();                   // 286-native BOUND r16, m16&16
     void imul_imm16(int dst_reg, const RM &rm, uint16_t imm);  // 286 IMUL r16,r/m16,imm
-    void imul_imm32(int dst_reg, const RM &rm, uint32_t imm);  // 0x66-prefixed 32-bit form
     // enter() returns the nesting level; ENTER cost is 11 / 15 / 12+4*(lex-1) for level 0 / 1 / >1.
     int  enter(); void leave();
 

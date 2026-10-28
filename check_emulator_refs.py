@@ -13,6 +13,7 @@ ALLOWED_LINES = (
     '"retroweb.arcadeArt", "MAME"',
     "qemu/vgabios",
     "DosBox/QEMU/VirtualBox/VMware",
+    "ROM BIOS for use with Bochs/Plex86/QEMU emulation environment",
 )
 
 

@@ -19,29 +19,9 @@ void Machine::configure_factory_cmos() {
     c.poke(0x18, uint8_t(ext >> 8));
     c.poke(0x30, uint8_t(ext));
     c.poke(0x31, uint8_t(ext >> 8));
-    // Boot sequence (BX_ELTORITO_BOOT style, rombios.c): low nibble of 0x3D is
-    // the 1st device, high nibble the 2nd; 1=floppy, 2=hard disk. The BIOS panics
-    // "No bootable device" without a 1st device. 0x21 = A: then C:
-    // (IBM_PCAT_REVIEW.md §8).
-    c.poke(0x3D, 0x21);
-    // bit 0 skips the stand-in BIOS's "Press F12 for boot menu" pause, which a real AT doesn't have
-    // (BIOS-bochs-legacy F000:13AB reads CMOS 3Fh before printing it)
-    c.poke(0x3F, 0x01);
 
-    // Fixed-disk Type 47 geometry (0x12, 0x19, 0x1B-0x23), read by hard_drive_post
-    // separately from ata_detect() (wd1003.h), same ST-4038 geometry. 0x12 high
-    // nibble must be 0xF and 0x19 must be 47, or POST skips the block or halts.
-    c.poke(0x12, 0xF0);  // drive C: = extended type; no drive D:
-    c.poke(0x19, 47);
-    c.poke(0x1B, 0xDD);  // cylinders low  (733 = 0x2DD)
-    c.poke(0x1C, 0x02);  // cylinders high
-    c.poke(0x1D, 5);     // heads
-    c.poke(0x1E, 0xFF);  // write precomp low , 0xFFFF = "none", this drive doesn't need it
-    c.poke(0x1F, 0xFF);  // write precomp high
-    c.poke(0x20, 0x00);  // control byte (heads <= 8, no special flags)
-    c.poke(0x21, 0xDD);  // landing zone low  (733, same as max cylinder)
-    c.poke(0x22, 0x02);  // landing zone high
-    c.poke(0x23, 17);    // sectors per track
+    // Fixed disk types (0x12): C: is type 8, the ST-4038's 733/5/17 (IBM PC/AT Technical Reference, FD_TBL)
+    c.poke(0x12, 0x80);
 
     // CMOS checksum over 0x10-0x2D, big-endian at 0x2E/0x2F.
     uint16_t sum = 0;

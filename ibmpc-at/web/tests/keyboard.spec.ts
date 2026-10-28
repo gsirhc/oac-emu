@@ -87,6 +87,11 @@ test.describe("keyboard", () => {
       await expect
         .poll(() => page.evaluate(() => (window as any).__sent), { message: key })
         .toEqual(bytes);
+      if (key === "PrintScreen") {
+        await expect(page.locator("#lptDialog")).toBeVisible();
+        await page.locator("#lptDiscardBtn").click();
+        await expect(page.locator("#lptDialog")).toBeHidden();
+      }
     }
   });
 

@@ -94,7 +94,7 @@ test.describe("preset workflows — an expert session, end to end", () => {
     await page.click("#ptr .ptr-load");
     await waitForScreen(page, /\bOK\b/, 90_000);
     await send(page, "PRINT 6*7\r");
-    await waitForScreen(page, /\b42\b/, 30_000); // BASIC is alive
+    await waitForScreen(page, /\b42\s+OK\b/, 30_000); // BASIC is alive
 
     // 2. load Super Star Trek off the cassette: type the command, then press PLAY
     await clearScreen(page);

@@ -18,7 +18,9 @@ void Fdc765::reset() {
     irq_pending_ = false;
     transfer_ready_ = false;
     xfer_active_ = false;
+    xfer_failed_ = false;
     formatting_ = false;
+    srt_ = 0;
     prev_cycles_ = 0;
     // Mounted media survives a controller reset.
     for (auto &d : drives) {
@@ -41,9 +43,9 @@ void Fdc765::mount(int drive, const uint8_t *data, std::size_t len) {
     // geometry makes the DMA path silently move zero bytes instead of returning
     // a controller error.
     if (len <= std::size_t(t.dd_cylinders) * 2 * 9 * Drive::kBytesPerSector) {
-        // 360KB or 720KB: 9 sec/track, 250 kbit/s.
+        // 360KB or 720KB: 9 sec/track, 250 kbit/s, or 300 kbit/s in a 360 RPM drive.
         d.cylinders = t.dd_cylinders; d.heads = 2; d.sectors_per_track = 9;
-        d.bytes_per_sec = 31250.0;
+        d.bytes_per_sec = t.rpm > 330.0 ? 37500.0 : 31250.0;
         d.cycles_per_track_step = t.dd_step_s * cpu_hz_;
     } else {
         // 1.2MB or 1.44MB: 80 cyl, 500 kbit/s, ~3ms/track step.
@@ -120,6 +122,7 @@ void Fdc765::out(uint16_t port, uint8_t v) {
                 irq_pending_ = false;
                 transfer_ready_ = false;
                 xfer_active_ = false;
+                xfer_failed_ = false;
                 formatting_ = false;
             }
             break;
@@ -156,6 +159,60 @@ void Fdc765::start_command(uint8_t first_byte) {
     else phase_ = Phase::kCommand;
 }
 
+// 0 = 500, 1 = 300, 2 = 250 kbit/s: HD media at 500, DD at 300 in a 360 RPM drive and 250 at 300 RPM.
+// -1: an HD disk in a DD-only drive.
+int Fdc765::rate_for_media(int drive) const {
+    const Drive &d = drives[drive];
+    const DriveType &t = types_[drive];
+    if (d.sectors_per_track > 9) return t.hd ? 0 : -1;
+    return t.rpm > 330.0 ? 1 : 2;
+}
+
+// The media track whose IDs the head can read, or -1. A 96 tpi head reads 48 tpi media
+// only on every second track, so the BIOS double-steps.
+int Fdc765::media_track(int drive) const {
+    const Drive &d = drives[drive];
+    if (!d.present || data_rate_ != rate_for_media(drive)) return -1;
+    int step = types_[drive].tracks / d.cylinders;
+    if (step < 1 || d.current_cylinder % step != 0) return -1;
+    int c = d.current_cylinder / step;
+    return c < d.cylinders ? c : -1;
+}
+
+// SRT is 16 - n ms at 500 kbit/s and stretches as the data rate drops (NEC uPD765A data sheet, SPECIFY).
+double Fdc765::step_cycles(int drive) const {
+    if (lenient_media) return drives[drive].cycles_per_track_step;
+    static constexpr double kKbps[4] = {500.0, 300.0, 250.0, 125.0};
+    return double(16 - srt_) * 0.001 * (500.0 / kKbps[data_rate_ & 3]) * cpu_hz_;
+}
+
+// No usable ID: the command ends after the index hole passes twice (NEC uPD765A data sheet).
+void Fdc765::fail_command(int drive, int head, uint8_t st1, uint8_t st2) {
+    result_[0] = uint8_t(0x40 | (head << 2) | drive);
+    result_[1] = st1;
+    result_[2] = st2;
+    result_[3] = params_[1];
+    result_[4] = params_[2];
+    result_[5] = params_[3];
+    result_[6] = params_[4];
+    xfer_drive_ = drive;
+    xfer_failed_ = true;
+    xfer_active_ = true;
+    transfer_ready_ = false;
+    formatting_ = false;
+    xfer_credit_ = 0.0;
+    xfer_target_ = 2.0 * 60.0 / types_[drive].rpm * cpu_hz_;
+    phase_ = Phase::kExecution;
+}
+
+void Fdc765::end_failed_command() {
+    xfer_active_ = false;
+    xfer_failed_ = false;
+    result_count_ = 7; result_sent_ = 0;
+    phase_ = Phase::kResult;
+    irq_pending_ = true;
+}
+
 void Fdc765::begin_transfer(bool is_write) {
     int drive = params_[0] & 1;
     int head = (params_[0] >> 2) & 1;
@@ -164,6 +221,21 @@ void Fdc765::begin_transfer(bool is_write) {
     int eot = params_[5];
 
     Drive &d = drives[drive];
+    if (!lenient_media) {
+        int track = media_track(drive);
+        if (track < 0) {
+            fail_command(drive, head, 0x01, 0x00);  // MA
+            return;
+        }
+        if (track != cyl) {
+            fail_command(drive, head, 0x04, cyl == 0xFF ? 0x02 : 0x10);  // ND, BC or WC
+            return;
+        }
+        if (sector < 1 || sector > d.sectors_per_track) {
+            fail_command(drive, head, 0x04, 0x00);  // ND
+            return;
+        }
+    }
     int count_sectors = eot - sector + 1;
     if (count_sectors < 1) count_sectors = 1;
     transfer_len_ = std::size_t(count_sectors) * Drive::kBytesPerSector;
@@ -193,7 +265,8 @@ void Fdc765::run_command() {
         return;
     }
     switch (base) {
-        case 0x03:  // SPECIFY: accepted, not used
+        case 0x03:  // SPECIFY: SRT steps; HUT and HLT aren't modelled
+            srt_ = uint8_t(params_[0] >> 4);
             phase_ = Phase::kIdle;
             break;
         case 0x04: {  // SENSE DRIVE STATUS
@@ -215,7 +288,7 @@ void Fdc765::run_command() {
             seek_drive_ = drive;
             seeking_ = true;
             seek_credit_ = 0.0;
-            seek_target_ = double(std::max(1, steps)) * drives[drive].cycles_per_track_step;
+            seek_target_ = double(std::max(1, steps)) * step_cycles(drive);
             phase_ = Phase::kIdle;  // completion is signaled later via IRQ
             break;
         }
@@ -235,13 +308,19 @@ void Fdc765::run_command() {
         case 0x0A: {  // READ ID
             int drive = params_[0] & 1;
             int head = (params_[0] >> 2) & 1;
-            result_[0] = 0; result_[1] = 0; result_[2] = 0;
-            result_[3] = uint8_t(drives[drive].current_cylinder);
+            int track = lenient_media ? drives[drive].current_cylinder : media_track(drive);
+            if (track < 0) {
+                fail_command(drive, head, 0x01, 0x00);  // MA
+                break;
+            }
+            result_[0] = uint8_t((head << 2) | drive); result_[1] = 0; result_[2] = 0;
+            result_[3] = uint8_t(track);
             result_[4] = uint8_t(head);
             result_[5] = 1;
             result_[6] = 2;
             result_count_ = 7; result_sent_ = 0;
             phase_ = Phase::kResult;
+            irq_pending_ = true;
             break;
         }
         case 0x05: case 0x09: begin_transfer(true); break;
@@ -299,7 +378,7 @@ uint8_t *Fdc765::transfer_image_ptr() {
 void Fdc765::finish_transfer(std::size_t actual_len) {
     xfer_active_ = false;
     transfer_ready_ = false;
-    result_[0] = 0;  // ST0: normal termination
+    result_[0] = uint8_t(((result_[4] & 1) << 2) | xfer_drive_);  // ST0: normal termination
     result_[1] = 0;
     result_[2] = 0;
     result_count_ = 7; result_sent_ = 0;

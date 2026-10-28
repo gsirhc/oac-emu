@@ -1,0 +1,11 @@
+--- a/rombios.c
++++ b/rombios.c
+@@ -3205,7 +3205,7 @@
+     current++;
+     write_word_DS(&EbdaData->ata.trsfsectors,current);
+     count--;
+-    if(ioflag == 0) await_ide(NOT_BSY, iobase1, IDE_TIMEOUT);
++    await_ide(NOT_BSY, iobase1, IDE_TIMEOUT);
+     status = inb(iobase1 + ATA_CB_STAT);
+     if(ioflag == 0)
+     {

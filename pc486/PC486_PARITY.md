@@ -73,6 +73,12 @@ page, a Playwright test, in the same commit.
 - ~~**S2. FORMAT TRACK leaves old sector data.**~~ Done (PC486_REVIEW.md
   §56): the floppy controller is `shared/pc/fdc765`, ibmpc-at's version,
   which fills the named sectors after one revolution.
+- **S3. The floppy controller skips its media checks.** `lenient_media`
+  (PC486_REVIEW.md §58) because the prebuilt BIOS never seeks, sends
+  SPECIFY or writes 3F7h. Building this BIOS with the AT's patches
+  (`ibmpc-at/roms/bochs-bios/`) 0001-0003 and 0005, not 0004 (286-only),
+  0006 (A: then C:) or 0007 (CMOS drive types, no EBDA), would let it go. A 720KB disk would then
+  need 250 kbit/s. Source: NEC uPD765A data sheet.
 
 ## 5. Keyboard
 

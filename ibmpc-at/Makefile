@@ -1,7 +1,7 @@
 # Top-level targets for the IBM PC/AT (5170-339) emulator.
 #
 #   make test        build + run the GoogleTest suite
-#   make bios        fetch + verify the freely-licensed BIOS, assemble the EGA BIOS (needs nasm)
+#   make bios        fetch + verify, then build the freely-licensed BIOS and the EGA BIOS (needs nasm)
 #   make bios-check   boot the real BIOS against this chipset natively, report progress
 #   make hdd-image   build the shipped FreeDOS HDD image (see below, SLOW)
 #   make render_screen   build the screen-to-BMP diagnostic tool (see below)
@@ -40,6 +40,7 @@ test: bios egabios
 # --- freely-licensed BIOS (IBM_PCAT_REVIEW.md §6) ---
 bios:
 	bash roms/fetch-bios.sh
+	$(MAKE) -C roms/bochs-bios
 	$(MAKE) -C roms/egabios
 
 egabios:
@@ -117,5 +118,6 @@ check: test
 
 clean:
 	rm -rf tests/build tests/build-cov tests/coverage-cpp bios_host disks/build_freedos_hdd render_screen
+	$(MAKE) -C roms/bochs-bios clean
 	$(MAKE) -C roms/egabios clean
 	$(MAKE) -C web clean

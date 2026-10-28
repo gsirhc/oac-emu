@@ -78,12 +78,9 @@ not bugs):
 
 ## 4. Opcode coverage gaps
 
-Undefined opcodes raise #UD (INT 6) outside the firmware, and are a
-reported no-op inside it (§44.3). Beyond that:
-- The 386 layer (`0x66`, `0x0F 0x80-0x8F` Jcc rel16, SETcc, MOVZX/MOVSX,
-  two-operand IMUL) runs only from the system BIOS ROM window
-  (`addr >= 0xE0000`, §44.3 / §63.3), where `BIOS-bochs-legacy` needs it.
-  Anywhere else it's #UD. The EGA stand-in at C0000 does not get the layer.
+Undefined opcodes raise #UD (INT 6) everywhere, ROM included, and so do
+`0x66` and the 386 `0x0F` opcodes. The BIOS is built for a 286 (§70).
+Beyond that:
 - `0x0F 0x05` (LOADALL) is a reported no-op (C14). Descriptor caches exist
   (§63.1); the open question is a primary-source layout of the 286 LOADALL
   table at 800h.
@@ -134,11 +131,12 @@ a silent one, per this repo's fidelity conventions (`CLAUDE.md`).
 
 ## 6. BIOS integration: resolved on prebuilt pinned binaries
 
-(§48.1 replaces the VGABIOS-lgpl plan below.) The system BIOS is still
-pinned `BIOS-bochs-legacy` from this section's fetch script. The video
-BIOS shipped today is the from-scratch EGA stand-in `roms/egabios/`
-(nasm), not `VGABIOS-lgpl-latest.bin`. The 486 keeps VGABIOS-lgpl.
-`roms/fetch-bios.sh` fetches only `BIOS-bochs-legacy` and the
+(§48.1 replaces the VGABIOS-lgpl plan below, and §68.1 the prebuilt
+system BIOS: it's now built from the pinned source with patches.) The
+system BIOS is `BIOS-bochs-legacy`. The video BIOS shipped today is the
+from-scratch EGA stand-in `roms/egabios/` (nasm), not
+`VGABIOS-lgpl-latest.bin`. The 486 keeps VGABIOS-lgpl.
+`roms/fetch-bios.sh` fetches the BIOS source, dev86 and the
 `fntcol16.zip` fonts egabios needs.
 
 Phase 2's plan called for building **SeaBIOS** from a pinned source commit.
@@ -226,7 +224,8 @@ comment's promise; `bios_host.cpp` (the lasting diagnostic harness) stays.
 - **WD1003 `IDENTIFY DEVICE` vs. CMOS fixed-disk-parameter-table**: whether
   the chosen BIOS's ATA driver needs an `IDENTIFY DEVICE` (`0xEC`) response
   or can be steered onto an old-style CMOS type-table path is unresolved
-  until Phase 4, once the actual BIOS source is read.
+  until Phase 4, once the actual BIOS source is read. (§71 settles it: the
+  CMOS type table.)
 
 ## 7. Phase 3: FDC + EGA text mode + real-boot debugging
 
@@ -361,6 +360,8 @@ worth a few more minutes of the same tracing approach to confirm the INT
 bootable disk, real BIOS, and the exact CMOS bytes it needs) is now done
 and verified.
 
+(§70.4: the BIOS now boots A: then C: without CMOS 3Dh.)
+
 **Wired into the permanent build**: `Machine::configure_factory_cmos()`
 (called once, automatically, by `Machine`'s constructor) seeds the factory
 CMOS — base memory size, floppy types (`0x10=0x21`: A: 1.2MB, B: 360KB),
@@ -479,6 +480,9 @@ Phase 3's original goal -- floppy + EGA text mode + booting to a prompt --
 is not just met, it's demonstrated with real, unmodified software.
 
 ## 11. Phase 4: WD1003 hard disk controller
+
+(§71 replaces the ATA detection, IDENTIFY, LBA and Type 47 parts of this
+section.)
 
 Read the real `rombios.c` (Bochs BIOS, pinned commit
 `ff17a0c2bbabccf96d33af4e08ba8061889b079d`) *before* writing any of
@@ -2445,6 +2449,8 @@ downstream. The code stays; its comment and test now say it's correct.
 
 ### 44.3 The 386 layer runs only from ROM
 
+§70 removes the layer; the BIOS is built for a 286.
+
 The `0x66` prefix with 32-bit registers, Jcc rel16, SETcc, MOVZX/MOVSX and
 two-operand IMUL ran everywhere because `BIOS-bochs-legacy` needs them
 (§7). A 286 raises #UD (INT 6) on all of them, and programs probe for a
@@ -3349,7 +3355,8 @@ the write landed in the error register and read back as an error code.
 
 **IDENTIFY.** ECh is an ATA command, and a real WD1003 aborts it. It stays
 because the stand-in BIOS's `ata_detect()` sizes the drive with it. The
-code says so where the command is dispatched.
+code says so where the command is dispatched. (§71 replaces this: ECh
+aborts.)
 
 **Long mode.** The L bit (22h, 23h, 32h, 33h) sends 512 data bytes plus 4
 ECC bytes. The manual gives the polynomial but not the seed or the bit
@@ -3547,7 +3554,8 @@ next sector in the very next slot, the host can't empty the buffer in
 time, and a two-sector read costs a whole extra revolution.
 
 Writes still commit at once, for the BIOS reason in §51.2. Seeks are still
-instant, which is the other half of S8 and stays open.
+instant, which is the other half of S8 and stays open. (§72 replaces this
+for seeks, §68 for writes.)
 
 ### 52.5 FreeDOS FORMAT (S5)
 
@@ -4063,7 +4071,7 @@ It now takes about 29 s, and the CPU, disk and floppy timing are untouched.
 | 34-52 s | FDAUTO.BAT runs `MEM /C /N` twice on a 286 | both REMmed out |
 | 52-55 s | `cdrom.bat display`, though the AT has no CD-ROM | REMmed out |
 
-- **F12 pause.** The Bochs BIOS prints "Press F12 for boot menu." and waits
+- **F12 pause.** (§70.4 builds the BIOS without the prompt.) The Bochs BIOS prints "Press F12 for boot menu." and waits
   unless bit 0 of CMOS 3Fh is set (BIOS-bochs-legacy disassembly, F000:13AB
   reads 3Fh through ports 70h/71h and returns early when the bit is set). A
   5170 has no such prompt, so `configure_factory_cmos()` sets the bit.
@@ -4185,6 +4193,8 @@ a bad TSS selector reports #GP rather than #TS.
 
 ### 63.3 The stand-in BIOS leaves protected mode with MOV CR0
 
+§70.2 replaces this with the 8042 reset and shutdown code 09h.
+
 `BIOS-bochs-legacy` INT 15h AH=87h (F000:3F40) and AH=89h enter protected
 mode with `MOV EAX,CR0 / OR AL,1 / MOV CR0,EAX` and AH=87h leaves it with
 `AND AL,FEh / MOV CR0,EAX`. A 286 can't clear PE; IBM's own AT BIOS
@@ -4211,7 +4221,7 @@ CMOS matched it; writing CMOS directly stands in for that.
 Base memory stays 640KB. The stand-in's POST writes 639KB (027Fh) to BDA
 40:13 at F000:E0CC without reading CMOS 15h/16h, and INT 12h returns that
 word, so a 512KB board would leave DOS using RAM that isn't there. A
-512KB base needs a BIOS that sizes memory.
+512KB base needs a BIOS that sizes memory. (§71 replaces this.)
 
 The page offers none, 1MB, 1.5MB, 2MB, 3MB and 4MB, chosen while
 powered off and remembered in the browser. With extended memory fitted the
@@ -4347,3 +4357,377 @@ gated by control bit 4. POST writes 378h into BDA 40:08.
 - `bios_test` PostFillsCom1AndLpt1InTheBda.
 - `mouse.spec.ts` (UI plus CuteMouse INT 33h mickeys after inject),
   `lpt.spec.ts` (including `ECHO …>PRN` and Print Screen → LPT1).
+
+## 68. The BIOS built from source, and paced hard disk writes
+
+Parity item S10. Sources: WD1003-WA2 OEM manual (Write Sector), the
+pinned `rombios.c` (bochs-emu/Bochs@ff17a0c2), dev86 0.16.21
+(lkundrak/dev86@c6f36cba).
+
+### 68.1 Building BIOS-bochs-legacy
+
+§6 chose the prebuilt binary to avoid a toolchain. Fixing the parity items
+that live in the BIOS means changing it, so `roms/bochs-bios/` now builds
+it. `fetch-bios.sh` fetches `rombios.c`, `rombios.h`, `apmbios.S`,
+`biossums.c` and the dev86 tarball, all SHA-256 pinned. The Makefile builds
+bcc and as86 from that tarball with the host compiler, applies
+`patches/*.patch` in order, and runs Makefile.in's `BIOS-bochs-legacy`
+rule (`-DLEGACY`, `bcc -0`, `as86 -j -O`, `biossums`) with the build date
+fixed at the pinned binary's `08/23/26`. The 486 keeps the prebuilt pin.
+
+The unpatched rebuild isn't byte-identical to the pin. as86's branch
+relaxation picks a 2-byte `EB` jump at 9FAh where the pinned build used the
+3-byte `E9` form, and everything after it shifts by one. dev86 0.16.17,
+0.16.21 and the current linux86 source all give the same result here, so the
+pinned binary came from a different as86 build. The disassemblies match
+apart from that jump, and the unpatched rebuild passes all 655 native tests.
+
+Patch 0001 is the LGPL 2.1 §2(a) change notice in `rombios.c`.
+`publish_sources.sh` ships `bochs-bios/Makefile` and `patches/` in the
+third-party-sources release.
+
+### 68.2 Writes wait for the platter (S10)
+
+The WD1003 takes one sector into its buffer, holds BSY while that sector's
+slot comes under the head, then raises DRQ and IRQ14 for the next one, or
+completes. `Wd1003` now does that with the same `sector_due()` timing reads
+use (§52.4). Bad blocks, IDNF and WRITE LONG's stored ECC are handled per
+sector as before.
+
+`ata_cmd_data_io()` waited for BSY to clear only after a read, and on a
+write read status straight after `outsw`, so a busy controller failed it
+(§51.2). Patch 0002 makes it wait in both directions.
+
+A full FreeDOS install under the patched BIOS and paced writes completes
+and leaves the same 1,399 files on C:.
+
+### 68.3 Checks
+
+- `wd1003_test` WriteHoldsBsyUntilEachSectorPassesTheHeadThenInterrupts.
+- `bios_test` Int13h03hWritesThroughThePacedController: a real INT 13h
+  AH=03h through the patched BIOS. Without patch 0002 it returns AH=0Ch
+  with CF set. The test loads the EGA BIOS, since POST stops at "No
+  VGABIOS ROM" before it detects the disk.
+
+## 69. Floppy data rate, the head position, and SPECIFY
+
+Parity items S7 and S9. Sources: NEC uPD765A data sheet (READ DATA, READ
+ID, SPECIFY, status registers), WD1003-WA2 OEM manual (Floppy Control and
+Digital Input registers).
+
+### 69.1 The controller
+
+`fdc765` reads only what the drive under it can:
+
+- **Data rate.** HD media reads at 500 kbit/s. DD media reads at 300 in
+  the 360 RPM 1.2MB drive and 250 in the 300 RPM 360KB drive, and is paced
+  at that rate (a 360KB disk in A: was paced at 250). An HD disk never
+  reads in the 360KB drive. At the wrong rate no address mark decodes, so
+  the command ends with ST1 MA after the index hole passes twice.
+- **Head position.** READ DATA and READ ID see the track under the head,
+  not the command's C. The 1.2MB drive's 96 tpi head reads 48 tpi media on
+  even tracks only: physical track 2N is media track N. An odd track ends
+  with MA, which is a choice, since the head sits between two 48 tpi tracks
+  there. An ID whose C differs from the command's ends with ND and WC (BC
+  for C = FFh), and a sector past the track's last ends with ND.
+- **SPECIFY.** SRT steps at 16 - SRT ms at 500 kbit/s, stretched by
+  500 / rate at the lower rates. HUT and HLT aren't modelled.
+- ST0 carries the head and unit bits on every termination, and READ ID
+  raises INT when its result is ready.
+
+FORMAT TRACK still places sectors by their IDs wherever the head is.
+pc486 keeps the old behaviour behind `lenient_media` (PC486_REVIEW.md
+§58).
+
+### 69.2 The BIOS (patch 0003)
+
+`rombios.c` never seeked, never sent SPECIFY, never wrote 3F7h, and
+"sensed" media by assuming it matched the CMOS drive type, with a 500
+kbit/s rate for every type. Patch 0003:
+
+- `floppy_prepare_controller()` sends SPECIFY from the INT 1Eh table and
+  writes the media's rate (media state bits 7-6) to 3F7h.
+- `floppy_media_sense()` recalibrates and issues READ ID. The 1.2MB drive
+  tries 500 kbit/s, then 300 with double stepping (media state 15h, then
+  74h). The 360KB drive uses 250 (93h). A timeout means no disk, and
+  INT 13h returns 80h (not ready), as before. No rate that reads gives 0Ch.
+- `floppy_seek()` seeks before every read, write and format, doubling the
+  cylinder when media state bit 5 is set, and skips the seek when 40:94h
+  already holds it.
+- `floppy_media_known()` re-senses when DSKCHG is set, so swapping a 360KB
+  disk for a 1.2MB one in A: works.
+- A failed read or write returns 02h, 03h, 04h, 40h or 20h from ST1/ST2
+  and clears "media established". A write error used to halt in
+  `BX_PANIC`, and every read error was 20h.
+- INT 13h AH=00h (diskette or fixed disk) clears the recalibrated bits
+  rather than writing 0 to 40:94h without moving the head. The read and
+  format paths no longer write 40:94h.
+
+The INT 1Eh table is still Bochs's: SRT/HUT AFh, so 6 ms a step at 500
+kbit/s and 10 ms at 300, against the old fixed 3 ms and 6 ms. IBM's AT
+table value isn't checked against the Technical Reference yet. AH=04h
+(verify) reads since §70.3.
+
+### 69.3 Checks
+
+- `fdc765_test`: EachMediaReadsAtItsOwnDataRate,
+  TheWrongDataRateFindsNoAddressMarkAfterTwoRevolutions,
+  A360KDiskInTheHighDensityDriveReadsOnlyOnEvenTracks,
+  ReadIdReportsTheMediaTrackNotTheHeadPosition,
+  AHighDensityDiskInThe360KDriveNeverReads,
+  SpecifyStepRateStretchesAtLowerDataRates.
+- `bios_test` BiosFloppyTest: 1.2MB and 360KB media in A:, 360KB in B:,
+  a 360KB-to-1.2MB swap, a 1.2MB disk in B: (0Ch) and an empty drive
+  (80h), all through INT 13h AH=02h. Without patch 0003 the five reads
+  fail.
+
+## 70. A 286-only BIOS, verify that reads, and boot order
+
+Parity items D1, D4 and S12, and the 386 layer from §44.3 and §63.3.
+Sources: Intel iAPX 286 Programmer's Reference Manual (LMSW, SMSW; only
+RESET leaves protected mode), IBM PC/AT Technical Reference (CMOS shutdown
+byte 0Fh, 8042 command FEh, BOOT_STRAP), Intel 8237A-5 data sheet (verify
+transfer).
+
+### 70.1 Patch 0004: 286 code only
+
+`BIOS-bochs-legacy` was built for a 386. The 286 core ran its 32-bit code
+through a ROM-only 386 layer (§44.3). Patch 0004 builds it for a 286
+instead, and the layer is gone from `cpu80286`:
+
+- `rombios.h`: `BX_CPU` 2; PS/2 mouse, PCI BIOS, APM, PnP BIOS, SMM and
+  El Torito off.
+- bcc's long helpers (`lcmp`, `lmul`, `ldivul`, shifts, `linc`/`ldec`,
+  `ltst`) are written with 16-bit registers, as are `_write_dword`, the
+  IVT setup and `timer_tick_post`. INT 08h's tick moves out of the fixed
+  `.org FEA5h` block into `int08_tick`, since the 16-bit form is longer.
+- INT 15h AH=86h waits on port 61h bit 4 (refresh) toggles, CX:DX
+  microseconds at 15 us a toggle. E820h and E801h are compiled out and
+  answer 86h, as on the AT.
+- INT 15h AH=89h sets PE with `SMSW`/`LMSW`. INT 70h saves registers with
+  `PUSHA`. Both used 386 forms, so an RTC interrupt or a protected-mode
+  switch would have hit #UD.
+- ATA detection always picks 16-bit PIO, INT 13h DL >= E0h no longer
+  reaches the CD-ROM code, and no `$PnP` header is built or handed to
+  option ROMs.
+
+`short_jcc.py` assembles until as86's `-j` leaves no `0F 8x` Jcc rel16:
+each becomes a short inverted Jcc over a near JMP, with the bytes spelled
+out, since as86 makes any forward branch long. It also fails the build when
+code runs into a later `.org`, which as86 accepts silently.
+
+Left in the binary but unreachable: `memcpyd` (no callers) and the 32-bit
+ATA PIO and ATAPI loops (mode is never PIO32). A scan of the listing for
+66h, 67h and the 386-only 0Fh opcodes finds nothing else.
+
+### 70.2 Leaving protected mode (D1)
+
+AH=87h saves SS:SP at 40:67h, writes 09h to CMOS 0Fh, enters protected
+mode with `LMSW`, copies with `REP MOVSW`, then pulses reset through the
+8042 (`OUT 64h,FEh`). POST checks the shutdown byte first. On 09h it
+restores SS:SP from 40:67h and returns to `block_move_return`, which pops
+the caller's registers. This is the IBM sequence (§63.3).
+
+The core now treats `66h` as an invalid opcode. The 386 0Fh opcodes and
+every unknown one-byte opcode raise #UD wherever they run, ROM included.
+
+### 70.3 INT 13h verify reads (S12)
+
+AH=04h used to return success at once. Patch 0005 runs it through the read
+path with DMA mode 42h (verify) instead of 46h: the controller reads the
+sectors and the 8237 counts them without writing memory. A missing sector
+returns 04h, the wrong rate 02h, as for a read.
+
+### 70.4 Boot order (D4)
+
+With El Torito off, the BIOS's "Press F12 for boot menu" prompt and its
+CMOS 3Dh boot sequence are gone. The remaining path picked C: first unless
+CMOS 2Dh bit 5 was set. Patch 0006 tries A:, then C:, with no setting. So
+`configure_factory_cmos()` no longer writes 3Dh or 3Fh, which are reserved
+bytes on the AT.
+
+### 70.5 Checks
+
+- `bios_test`: Int15h87hBlockMove... (through the 8042 reset),
+  Int15h89hReturnsInProtectedModeThroughLmsw,
+  Int15h83hPostsItsFlagFromTheRtcInterrupt, Int15hE801IsUnsupported,
+  VerifyReadsTheSectorWithoutTouchingMemory, VerifyOfAMissingSectorFails,
+  BootsFromDriveABeforeTheHardDisk, BootsTheHardDiskWithDriveAEmpty.
+- Mutations: putting back `PUSHAD` in INT 70h and `MOV CR0` in AH=89h
+  fails both new INT 15h tests. Without patch 0005 both verify tests fail.
+  Without patch 0006 the A:-first test fails.
+- `cpu80286_test` Opcodes386RaiseInvalidOpcode and `machine_test`
+  Opcodes386RaiseInvalidOpcodeEvenFromRom.
+- A full FreeDOS install on the final BIOS completes with the same 1,399
+  files on C: and an identical COMMAND.COM, and the Playwright suite
+  passes.
+
+## 71. Fixed disk BIOS from CMOS drive types, and no EBDA
+
+Parity items P13 and D2. Sources: IBM PC/AT Technical Reference 6183355
+(Mar 1986, bitsavers `pdf/ibm/pc/at/`): the CMOS map and fixed disk type
+tables (pp. 1-62 to 1-65), the 11/15/85 DISK module (DISK_SETUP, DISK_IO,
+CHECK_ST, CHECK_ER, CHECK_DMA, WAIT, HD_INT), FD_TBL in ORGS, and
+BOOT_STRAP. WD1003-WA2 OEM manual (Mar 1986) for the command set.
+
+### 71.1 Patch 0007: the IBM fixed disk interface
+
+`BIOS-bochs-legacy` found the disk with ATA IDENTIFY, kept its state in a
+1KB EBDA at 9FC0:0, built the INT 41h/46h tables there from CMOS type 47,
+kept its boot-device table at 9FF0:0, and told DOS it had 639KB. Patch
+0007 turns the ATA driver and the EBDA off and replaces the hard disk code
+with the interface the TR's DISK module documents, written fresh in the
+BIOS's C:
+
+- **Drive types.** CMOS 12h holds C: and D: in its nibbles, Fh meaning
+  the extended byte at 19h/1Ah (16-47). The table sits at F000:E401 as on
+  IBM's ROM, 16 bytes a type, types 1-23 from the TR and 15, 24-47 zero.
+  INT 41h/46h point into it. `configure_factory_cmos()` writes 80h: the
+  ST-4038's 733/5/17 with no precompensation and landing zone 733 is IBM's
+  type 8. The type-47 bytes at 1Bh-23h are gone; the TR marks 1Bh-2Dh
+  reserved.
+- **INT 13h, DL >= 80h.** Functions 00h-05h, 08h-0Dh, 10h, 11h, 14h and
+  15h, and 01h (bad command) for the rest, as in DISK_IO's table. Each
+  call reads the parameters through INT 41h/46h, sends the precomp
+  cylinder / 4 and the control byte, and writes the task file in CHS.
+  Reads, writes and seeks wait on IRQ 14 through INT 15h AX=9000h and the
+  40:8E flag, which INT 76h sets before INT 15h AX=9100h. Status and the
+  error register map to IBM's codes, highest error bit first. AH=08h
+  leaves the last cylinder for diagnostics (731 for type 8), AH=15h counts
+  cylinders - 1, AH=01h returns the last status in AL and clears it.
+  Sectors that would cross 64KB return 09h. AH=00h also resets the
+  diskette controller. Read and write long move the 4 ECC bytes.
+- **POST.** Disk state lives in the BDA (40:74-40:77, 40:8C-40:8E). POST
+  reads 12h, sets the vectors and 40:75, runs the controller diagnostic
+  (1782 on failure), then per drive INT 13h 09h and 11h, retried for 60
+  seconds (1780/1781), and a verify of the last sector, stepping back on
+  errors (1790/1791). A failure on C: sets the HF_FAIL bit in CMOS 0Eh,
+  and INT 19h then skips C:.
+- **Memory.** POST writes CMOS 15h/16h to 40:13, so DOS sees 640KB, and
+  512KB in CMOS gives 512KB. 40:0E stays 0, INT 15h AH=C1h answers 86h,
+  and the PS/2 mouse IRQ 12 handler is compiled out.
+- **Boot.** INT 19h tries A: then C: with no table in RAM, and INT 18h,
+  ROM BASIC on the AT, prints "No more boot devices" as before. The rest
+  of the Bochs INT 19h stays: one try a drive, the 55AA check on floppies,
+  its messages. IBM's BOOT_STRAP retries, checks the first byte and fill
+  pattern instead, and prints nothing (parity D7).
+
+### 71.2 The WD1003 is a WD1003 again (D2)
+
+With the BIOS speaking CHS, the ATA concessions in `wd1003.cpp` went: ECh
+(IDENTIFY) aborts like any unknown command, Drive/Head bit 6 no longer
+selects LBA, and the cylinder registers no longer float after a reset
+with drive 1 selected. A command to drive 1 aborts with DRDY clear, as the
+manual gives for a drive without DRIVE READY-.
+
+Two changes come from what IBM's code expects of the board:
+
+- After a soft reset the error register holds 01h, the no-error
+  diagnostic code. DISK_RESET fails with 05h otherwise.
+- The sector count counts down as each sector is done, and FORMAT TRACK
+  leaves it 0. The write path reads it after the last interrupt and
+  reports BBh for anything left.
+
+### 71.3 Checks
+
+- `bios_test`: PostTakesBaseMemoryFromCmos, Int41hPointsAtType8InTheRomTable,
+  AnExtendedDriveTypeComesFromCmos19h,
+  Int13h08hLeavesTheLastCylinderForDiagnostics,
+  Int13h15hCountsAllButOneCylinder, Int13h01hReturnsTheLastStatusInAl,
+  Int13hReadLongReturnsTheEccBytes, Int15hC1hIsUnsupportedWithoutAnEbda,
+  and the earlier INT 13h write and boot-order tests, now through the new
+  code. Tests that boot with no disk clear CMOS 12h first, as an owner
+  would, since a type with no drive retries for 60 seconds.
+- `wd1003_test`: SoftResetLeavesTheNoErrorDiagnosticCode,
+  CommandsToTheMissingDrive1Abort, ECh in UnknownCommandsAbort.
+  `machine_test` checks 12h is 80h and 19h-2Dh are 0.
+- Mutation: without patch 0007 the eight new BIOS tests fail, with the
+  three older disk tests.
+- A full FreeDOS install on the new BIOS and controller completes with the
+  same 1,399 files on C: and an identical COMMAND.COM. The Playwright suite
+  passes with the old image and with the new one.
+
+## 72. Hard disk seeks take time (S8)
+
+Sources: Seagate ST4038 product manual (36012-001D, Mar 1986, bitsavers
+`pdf/seagate/mfm/ST-4038/`) 1.2 and 4.3; WD1003-WA2 OEM manual (Mar 1986)
+Table 5-2, 5.2.1 and 5.2.3. CheckIt's hard disk benchmark showed 0.8 ms
+average and track seeks before this, both just INT 13h overhead.
+
+### 72.1 The drive
+
+The ST4038 is a voice-coil drive with a servo surface. With step pulses
+10-70 us apart it buffers them and seeks in one move. The manual gives
+three numbers for that, all maximums: 11 ms track to track, 40 ms average
+over a 243-track (one-third stroke) seek, and 85 ms full stroke. It gives
+no curve. `Wd1003::seek_cycles()` uses a + b*sqrt(n) + c*n through those
+three points (a = 10.17 ms, b = 0.755 ms, c = 0.0743 ms a track): the
+square root for the acceleration-bound short seeks, the linear term for
+the coast on long ones. It is fitted to maximums, so it is a slow drive
+within spec, not a measured one. A measured profile from a real ST4038
+would replace it.
+
+Pulses 3 ms or more apart are slow-step: each settles within 11 ms, and a
+multi-track move follows the pulse rate. That is modelled as (n - 1) x
+the rate + 11 ms. The manual says pulses 70 us to 3 ms apart may be lost;
+those rates (0.5-2.5 ms) are treated as slow-step instead. Head switches
+cost nothing, as before.
+
+### 72.2 The controller
+
+- The low nibble of RESTORE and SEEK sets the step rate for implied seeks
+  (Table 5-2): 0 is 35 us, 1-Dh are 0.5-6.5 ms, Eh 3.2 us and Fh 16 us.
+  0, Eh and Fh are buffered. IBM's BIOS sends 10h and 70h, so it gets
+  buffered seeks.
+- SEEK holds BSY for the seek, then interrupts. Reads, verifies, writes
+  and formats seek to their cylinder first, and a multi-sector transfer
+  that crosses a cylinder steps one track. The sector wait starts where
+  the platter is when the seek ends.
+- RESTORE issues each step only after SEEK COMPLETE (5.2.1), so it takes
+  11 ms a cylinder back to track 0.
+- After reset or DIAGNOSE the rate is 6.5 ms, and a transfer before any
+  RESTORE or SEEK recalibrates first (5.2.3). IBM's POST sends RESTORE,
+  so this only shows on software that resets the controller and reads
+  straight away.
+- Heads start at cylinder 0 at power-on and stay put across a soft reset.
+
+### 72.3 Checks
+
+- `wd1003_test`: SeekHoldsBsyThenInterrupts,
+  BufferedSeeksMeetTheSt4038Maximums, SlowStepRatesStepAtTheirOwnPace,
+  RestoreWaitsForSeekCompleteOnEveryStep, ReadsSeekToTheirCylinderFirst,
+  ATransferBeforeAnyStepRateRecalibratesFirst. The rotation tests seek to
+  their cylinder first so they still measure only the platter.
+- Mutation: with seeks and RESTORE instant again, the first five fail.
+
+## 73. A CPU reset keeps the cycle clock
+
+The EGA grants CPU slots against `Cpu::cycles`. The 286 BIOS returns
+from an INT 15h AH=87h block move through shutdown code 09h, so the board
+resets the CPU (patch 0004). `Cpu::reset()` zeroed `cycles`, but the
+EGA kept the slot it last granted on the old timeline. The next video
+access waited out the whole gap. Under about 268 s of uptime the clock
+jumped forward that far. Past 2^31 cycles the wait overflowed `int`,
+`total_cycles_` went backwards, and the EGA raster loop spun on a
+2^64-cycle delta. The page froze, as seen at the end of the Oregon Trail
+install.
+
+RESET doesn't stop the system clock, so `Cpu::reset()` leaves `cycles`
+alone now. `machine_test`
+ACpuResetKeepsTheClockTheEgaSlotsAgainst resets through the 8042 after
+two minutes of uptime and checks the next EGA write costs a few cycles.
+With the counter zeroed again it jumps 1.04G cycles and fails.
+
+## 74. Floppy lever under the Subtle theme, and PrintScreen in the keyboard spec
+
+- The Subtle theme's `button:active` nudge (`translateY(1px)`) replaced
+  the closed lever's `rotate(90deg)` while the mouse was down. Pressing
+  the lever's lower half swung it open and shut before the click landed.
+  The loaded lever keeps its rotation under `:active` too.
+  `floppy.spec.ts` "pressing the lever's far end keeps it closed until the
+  click ejects" presses at 90% of its height under Subtle and checks the
+  transform; it fails without the rule.
+- The drawn PrintScreen key makes DOS print the screen, and LPT1 capture
+  (§67) then opens its modal dialog, which blocked every later key click
+  in `keyboard.spec.ts`. The spec now expects that dialog and discards
+  it.

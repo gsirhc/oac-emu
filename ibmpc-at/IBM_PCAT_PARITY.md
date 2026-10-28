@@ -5,7 +5,7 @@ IBM EGA, plus the test gaps against the repo rules in `CLAUDE.md`. Shared
 chips live in `shared/pc/` and also drive `pc486`; their tests are under
 `shared/pc/tests/` and build into this machine's `make check`. Where a 486
 fix ports, the item cites its `PC486_REVIEW.md` section. Checked against
-the code through `IBM_PCAT_REVIEW.md` §67 (2026-10-27). When an item is
+the code through `IBM_PCAT_REVIEW.md` §74 (2026-10-28). When an item is
 fixed, write it up in `IBM_PCAT_REVIEW.md` as usual (fact, why it matters,
 what it fixed, source) and delete it here.
 
@@ -18,20 +18,26 @@ addressing, latches and the monochrome ports, E15-E17 (§49), the full
 and S8's rotation (§52), the keyboard and RTC, K1-K5 and R1 (§53), test
 parity X1-X4 and X5 (§54, §0 / §66), CPU test coverage (§55), the last
 flat instruction costs, T10-T12 (§56), and protected mode and extended
-memory (§63; original C10 and P8), and COM1 serial mouse plus LPT1 print
-capture (§67; original P7). Front-end shared modules and the Performance
-panel are in §64-§65; they are not tracked as hardware parity.
+memory (§63; original C10 and P8), COM1 serial mouse plus LPT1 print
+capture (§67; original P7), paced hard disk writes, S10 (§68), and the
+floppy data rate, head position and step rate, S7 and S9 (§69), and a
+286-only BIOS with the 8042-reset block move, a reading verify and A:
+then C: boot order, D1, D4 and S12 (§70), and IBM's fixed disk interface
+from CMOS drive types with no EBDA and no ATA in the WD1003, P13 and D2
+(§71), and hard disk seek time, S8 (§72).
+Front-end shared modules and the Performance panel are in §64-§65; they
+are not tracked as hardware parity.
 
 Rough parity today: **~94%** (mean of the table rows).
 
 | Area | Parity | Biggest gap |
 |------|--------|-------------|
-| CPU (real mode) | 99% | no STOREALL; `FE /2`-`/7` unverified (C13) |
+| CPU (real mode) | 99% | no STOREALL; `FE /2`-`/7` unverified (C13); no 10-byte instruction limit (C15) |
 | CPU (protected mode) | 85% | no LOADALL (C14); two fault codes approximated (§63.2) |
 | Timing | 95% | fetch-bound code runs 5-7% fast against TOPBENCH |
 | EGA | 91% | memory-cycle length unsourced (VidMem -9% on the Enhanced Display) |
-| Chipset (PIT, PIC, DMA, memory) | 92% | no game port; base memory fixed at 640KB |
-| Storage (WD1003, floppy) | 92% | floppy data rate and SPECIFY ignored; hard disk seeks and writes are instant |
+| Chipset (PIT, PIC, DMA, memory) | 94% | no game port; no 512KB choice on the page |
+| Storage (WD1003, floppy) | 97% | INT 1Eh table is Bochs's; seek curve fitted to spec maximums |
 | Keyboard, RTC | 95% | no keylock control, BAT arrives without its self-test delay |
 | Speaker | 100% | — |
 
@@ -55,6 +61,14 @@ page, a Playwright test, in the same commit.
   Descriptor caches exist (§63.1); what is still needed is a primary-source
   layout of the 286 LOADALL table at 800h. Source: Intel iAPX 286 PRM (it
   is undocumented there, so the layout source is the open question).
+
+- **C15. No 10-byte instruction limit.** The 286 raises #GP when an
+  instruction runs past 10 bytes, which only a run of redundant prefixes
+  can do. The core loops on prefixes with no limit, so code that runs
+  into memory full of prefix bytes (`26`, `2E`, `36`, `3E`, `F0`-`F3`)
+  hangs the page inside one `step()` instead of faulting. Source: Intel
+  iAPX 286 PRM, exception 13 (verify the real-mode wording before
+  coding).
 
 ## 2. Timing
 
@@ -119,54 +133,38 @@ page, a Playwright test, in the same commit.
   (`CmosRtc::nmi_masked`), aren't wired. Nothing here raises them, so the
   readback of bits 2-3 is the visible part. Source: IBM PC/AT Technical
   Reference, port 061h.
-- **P13. Base memory is fixed at 640KB.** The 339 had 512KB on the system
-  board and 640KB took the 128KB option. BIOS-bochs-legacy's POST writes
-  639KB to BDA 40:13 without reading CMOS 15h/16h (§63.4), so a 512KB
-  choice needs a BIOS that sizes memory. Source: IBM PC/AT Technical
-  Reference, system memory map.
+- **P14. No 512KB choice.** POST sizes base memory from CMOS 15h/16h
+  (§71), and the 339 shipped with 512KB on the system board, but the page
+  only builds 640KB. Needs a control and its copy. Source: IBM PC/AT
+  Technical Reference, system memory map.
 
 ## 5. Storage
 
-- **S7. The floppy data rate isn't enforced.** 3F7h is latched (§51.4),
-  but a mismatch with the media still reads, because the stand-in BIOS
-  never writes the register. On a real AT, a 360KB disk reads only at
-  300 kbps in A: and 250 kbps in B:. Needs a BIOS that sets the rate (a
-  patch to the Bochs BIOS's media sense, or a different stand-in), then
-  the check. Source: WD1003-WA2 OEM manual, Floppy Control register.
-- **S8. Hard disk seeks are instant.** The platter turns (§52.4), but
-  SEEK, RESTORE and implied seeks take no time. The ST4038 gives 11 ms
-  track to track, 40 ms average and 85 ms full stroke, all maximums, and a
-  real drive is usually quicker. Needs a seek profile, or a measurement
-  from a real drive, not a curve fitted to maximums. Source: Seagate
-  ST4038 product manual 1.2.
-- **S9. SPECIFY doesn't set the floppy step rate.** `Fdc765` takes SPECIFY
-  and drops it. Seeks use a fixed 3 ms a track on A: and 6 ms on B:,
-  chosen by drive, where the chip steps at the SRT the BIOS programmed,
-  scaled by the data rate. Head load time is ignored too. Lands with S7,
-  since the step time depends on the rate. A change here also affects
-  `pc486` via `shared/pc/`. Source: NEC uPD765A data sheet, SPECIFY.
-- **S10. Hard disk writes don't wait for the platter.** WRITE SECTORS takes
-  every sector's data, then commits and interrupts at once. A real
-  WD1003 holds BSY while each sector reaches its slot. The Bochs BIOS
-  reads status straight after each `outsw` and fails on BSY, so this
-  waits on the same BIOS work as S7. Source: WD1003-WA2 OEM manual,
-  Write Sector.
+- **S11. The INT 1Eh table is Bochs's 1.44MB one.** SRT/HUT AFh, 18
+  sectors a track. SPECIFY now takes its step rate from it (§69.2), so
+  floppy seeks follow that value, not IBM's. Needs the AT table from the
+  IBM PC/AT Technical Reference BIOS listing (DISK_BASE, DISKETTE module),
+  as data, in a BIOS patch. The 6183355 listing (bitsavers) has it.
+- **S13. The seek curve is fitted, not measured.** It passes through the
+  ST4038's three maximums (§72.1), so seeks are as slow as the spec
+  allows. A measured seek profile from a real ST4038, or CheckIt/Coretest
+  numbers from a real 5170 with one, would replace the curve. Source:
+  Seagate ST4038 product manual 1.2.
 
 ## 6. Stand-in departures (labelled, not silent)
 
 These are intentional substitutions, not missing silicon. Tracked so they
 don't look like forgotten gaps:
 
-- **D1. Stand-in BIOS leaves protected mode with MOV CR0.** IBM's AT BIOS
-  uses the 8042 reset and CMOS shutdown byte. §63.3.
-- **D2. WD1003 answers ATA IDENTIFY (0xEC).** A concession for
-  BIOS-bochs-legacy's ATA path. §11.
 - **D3. INT 16h AH=03h unsupported.** `MODE CON RATE=` does nothing.
   §53.2.
-- **D4. F12 prompt suppressed via CMOS 3Fh.** Boot-speed labelled
-  departure. §61.
 - **D5. Shipped FreeDOS image edits.** `MEM /C /N` and the CD-ROM probe
   removed; CTMOUSE left on for COM1. §61.
+- **D7. INT 19h is Bochs's, not IBM's BOOT_STRAP.** One try a drive, a
+  55AA check on floppies, "Booting from..." messages, and "No more boot
+  devices" where the AT has ROM BASIC. IBM retries A: four times and C:
+  three, checks a floppy's first byte and fill pattern instead, and prints
+  nothing. §71.1.
 - **D6. egabios hooks INT 15h AH=4Fh + INT 1Ch for Print Screen.**
   BIOS-bochs-legacy never issues INT 5 on PrtSc (E0 37 becomes keypad `*`).
   egabios swallows the sequence on AH=4Fh and runs INT 5 from INT 1Ch.
