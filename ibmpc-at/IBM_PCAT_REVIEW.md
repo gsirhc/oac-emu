@@ -74,7 +74,7 @@ not bugs):
   INT/string costs. The core now charges per-opcode appendix timings, a
   prefetch-queue refill tax, AT bus wait states, refresh, and EGA memory
   contention. Remaining TOPBENCH gaps are T9 and E20 in
-  `IBM_PCAT_PARITY.md`.
+  `IBM_PCAT_PARITY.md` (§75 drops T9).
 
 ## 4. Opcode coverage gaps
 
@@ -2881,7 +2881,7 @@ MemTest 874 (-5%), MemEA 476 (-7%), Opcodes 380 (-4%), VidMem 643 (-56%),
   514, so the real 286 leaves its bus idle about 0.85 clocks an
   instruction somewhere the data sheet doesn't describe. Opcodes (-5%)
   and 3DGames (-4%) are likely the same thing. That's T9 in the parity
-  doc. A fitted constant would close it but isn't a source.
+  doc. A fitted constant would close it but isn't a source. (§75 drops T9.)
 
 | Test | Real 339 | Emulator | |
 |------|---------:|---------:|--:|
@@ -3954,7 +3954,7 @@ shipped HDD image, its Realtime screen read from a native probe.
 
 The corrections go both ways, and POP's two clocks outweigh the rest:
 the machine is slightly faster than before. So T9's gap isn't the flat
-costs. It stays open as a bus-unit question.
+costs. It stays open as a bus-unit question. (§75 drops T9.)
 
 ### 56.5 Checks
 
@@ -4134,7 +4134,7 @@ Reference:
 
 MemTest is already inside ~2%. MemEA, Opcodes, VidMem and 3DGames are not,
 and no primary source found closes them without a fitted constant. They
-stay open as T9 and E20 in `IBM_PCAT_PARITY.md`.
+stay open as T9 and E20 in `IBM_PCAT_PARITY.md`. (§75 drops T9.)
 
 ## 63. Protected mode and extended memory
 
@@ -4731,3 +4731,63 @@ With the counter zeroed again it jumps 1.04G cycles and fails.
   (§67) then opens its modal dialog, which blocked every later key click
   in `keyboard.spec.ts`. The spec now expects that dialog and discards
   it.
+
+## 75. Gaps only real hardware could close
+
+Dropped from the parity backlog: nobody here will measure a real 5170,
+286 or EGA, so these stay as they are.
+
+- Old T9: fetch-bound code runs 5-7% fast against TOPBENCH's 5170-339
+  (§47.4, §56.4, §62).
+- Old E18: write mode 3 runs as VGA's; the EGA TR calls it not valid.
+- Old S13: the ST4038 seek curve is fitted to its three spec maximums
+  (§72.1), not measured.
+
+## 76. IBM's diskette tables, and a 512KB board
+
+### 76.1 Patch 0008: DISK_BASE and the media tables (S11)
+
+The IBM PC/AT Technical Reference 6183355 BIOS listing has DISK_BASE at
+`ORG 0EFC7H` in the ORGS module: `DF 02 25 02 0F 1B FF 54 F6 0F 08`
+(SRT D, head unload F, DMA, motor-off 25h, 512-byte sectors, EOT 15, gap
+1Bh, DTL FFh, format gap 54h, fill F6h, 15 ms settle, 1 s motor start).
+Bochs had a 1.44MB table there (AFh, 18 sectors, 6Ch) and pointed INT 1Eh
+at a second copy. Patch 0008 puts IBM's bytes at EFC7 and points INT 1Eh
+at them, as the AT does.
+
+The DISKETTE module's MD_TBL1-6 are the 13-byte per-media tables (the 11
+bytes plus max track and data rate). DISK_PARMS (AH=08h) returns the one
+for the drive's CMOS type, 1.2MB-in-1.2MB for type 2 and 360KB-in-360KB
+for type 1. SET_MEDIA (AH=18h) returns the one for the requested format,
+so 360KB in the 1.2MB drive gets MD_TBL2 (300 kb/s, gap 2Ah, format gap
+50h). Bochs returned its 1.44MB table for both. Its acceptance rules for
+AH=18h are unchanged; only ES:DI follows IBM. Types IBM's table lacks
+get ES:DI = 0, as DISK_PARMS's no-drive path does.
+
+SPECIFY reads the INT 1Eh table (§69.2), so floppy steps now use IBM's
+SRT D: 3 ms at 500 kb/s, 5 ms for 360KB media at 300 kb/s.
+
+### 76.2 A 512KB board (P14, machine side)
+
+`Chipset` and `Machine` take a base memory size of 512 or 640KB. At 512KB,
+80000h-9FFFFh is an empty bus: reads return FFh, writes are lost, and the
+pages are timed as 8-bit like any unfitted address. CMOS 15h/16h follow
+the size, and POST takes base memory from them (§71). The wasm
+`Machine(extKb, baseKb)` takes both. The Memory panel's Base memory
+select (512 KB or 640 KB, default 640) is locked while the machine runs
+and remembered in this browser, and the specs line reads "512 or 640 KB
+conventional".
+
+### 76.3 Checks
+
+- `bios_test`: Int1EhPointsAtIbmsDiskBase,
+  Int13h08hReturnsEachDrivesOwnMediaTable,
+  Int13h18hPointsAtTheTableForTheFormat. All three fail with the BIOS
+  built without 0008.
+- `chipset_test` A512KbBoardLeavesItsTopBankEmpty, `machine_test`
+  CmosReportsA512KbBoard, and `bios_test` PostTakesBaseMemoryFromCmos
+  on a real 512KB board. All three fail with the size ignored.
+- `memory.spec.ts`: the base memory choice is locked and remembered, an
+  unknown saved value falls back to 640KB, and a 512KB board shows
+  `Conventional 512K` in MEM. The last fails with the page passing 640.
+- The full Playwright suite passes with the new BIOS.

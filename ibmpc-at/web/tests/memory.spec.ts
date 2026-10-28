@@ -2,6 +2,7 @@ import { test, expect } from "./fixtures";
 import { boot, waitForScreen, setPowerSwitch, typeStr } from "./helpers";
 
 const EXT_MEM_KEY = "retro8080.ibmpcatExtMemKb";
+const BASE_MEM_KEY = "retro8080.ibmpcatBaseMemKb";
 
 test.describe("memory", () => {
   test("the extended memory choice is locked while running and remembered in this browser", async ({ page }) => {
@@ -23,6 +24,34 @@ test.describe("memory", () => {
     await page.addInitScript((k) => localStorage.setItem(k, "640"), EXT_MEM_KEY);
     await boot(page, { expectScreen: null });
     await expect(page.locator("#extMemSelect")).toHaveValue("0");
+  });
+
+  test("the base memory choice is locked while running and remembered in this browser", async ({ page }) => {
+    await boot(page, { expectScreen: null });
+    const select = page.locator("#baseMemSelect");
+    await expect(select).toHaveValue("640");
+    await expect(select).toBeDisabled();
+    await setPowerSwitch(page, false);
+    await expect(select).toBeEnabled();
+    await select.selectOption("512");
+    expect(await page.evaluate((k) => localStorage.getItem(k), BASE_MEM_KEY)).toBe("512");
+    await setPowerSwitch(page, true);
+    await expect(select).toBeDisabled();
+    await page.reload();
+    await expect(page.locator("#baseMemSelect")).toHaveValue("512");
+  });
+
+  test("an unknown saved base memory falls back to 640KB", async ({ page }) => {
+    await page.addInitScript((k) => localStorage.setItem(k, "256"), BASE_MEM_KEY);
+    await boot(page, { expectScreen: null });
+    await expect(page.locator("#baseMemSelect")).toHaveValue("640");
+  });
+
+  test("a 512KB board reaches DOS through CMOS and POST", async ({ page }) => {
+    await page.addInitScript((k) => localStorage.setItem(k, "512"), BASE_MEM_KEY);
+    await boot(page);
+    await typeStr(page, "MEM", { pressEnterAfter: true });
+    await waitForScreen(page, /Conventional\s+512K/, 30_000);
   });
 
   test("with no extended memory, MEM shows none and DOS stays low", async ({ page }) => {

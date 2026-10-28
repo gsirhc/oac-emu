@@ -41,6 +41,16 @@ TEST(MachineTest, CmosReportsTheFittedExtendedMemory) {
     EXPECT_EQ(m.chipset.cmos.peek(0x2F), uint8_t(sum & 0xFF));
 }
 
+TEST(MachineTest, CmosReportsA512KbBoard) {
+    Machine m(0, 512);
+    EXPECT_EQ(m.chipset.cmos.peek(0x15), 0x00);
+    EXPECT_EQ(m.chipset.cmos.peek(0x16), 0x02);
+    uint16_t sum = 0;
+    for (uint16_t reg = 0x10; reg <= 0x2D; ++reg) sum = uint16_t(sum + m.chipset.cmos.peek(uint8_t(reg)));
+    EXPECT_EQ(m.chipset.cmos.peek(0x2E), uint8_t(sum >> 8));
+    EXPECT_EQ(m.chipset.cmos.peek(0x2F), uint8_t(sum & 0xFF));
+}
+
 TEST(MachineTest, FactoryCmosSurvivesAnExplicitResetCall) {
     // CMOS is battery-backed and must survive reset (IBM_PCAT_REVIEW.md §8).
     Machine m;

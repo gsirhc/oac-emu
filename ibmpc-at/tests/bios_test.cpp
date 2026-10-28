@@ -19,13 +19,14 @@ class BiosTest : public ::testing::Test {
 protected:
     std::unique_ptr<Machine> m;
     std::vector<std::pair<uint8_t, uint8_t>> cmos;  // applied before POST
+    uint32_t base_kb = 640;
 
     void boot(uint32_t ext_kb, const std::vector<uint8_t>* hdd = nullptr, bool vga = false,
               const std::vector<uint8_t>* fd = nullptr) {
         std::ifstream f(BIOS_PATH, std::ios::binary);
         std::vector<uint8_t> rom((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         ASSERT_EQ(rom.size(), 65536u) << "make -C ibmpc-at bios";
-        m = std::make_unique<Machine>(ext_kb);
+        m = std::make_unique<Machine>(ext_kb, base_kb);
         m->chipset.load_rom(0xF0000, rom.data(), rom.size());
         if (hdd || vga) {
             // POST halts at "No VGABIOS ROM" before it sets up the disks.
@@ -78,7 +79,7 @@ protected:
         c.poke(0x2F, uint8_t(sum & 0xFF));
     }
 
-    struct Regs { uint16_t ax, cx, dx; bool cf; };
+    struct Regs { uint16_t ax, cx, dx; bool cf; uint16_t es, di; };
     // INT 13h with ES:BX = 0:0800
     Regs int13(uint16_t ax, uint16_t cx = 0, uint16_t dx = 0x0080) {
         run_stub({0xB8, uint8_t(ax), uint8_t(ax >> 8),
@@ -90,8 +91,10 @@ protected:
                   0x89, 0x0E, 0x02, 0x06,              // MOV [0602h],CX
                   0x89, 0x16, 0x04, 0x06,              // MOV [0604h],DX
                   0x9C, 0x8F, 0x06, 0x06, 0x06,        // PUSHF ; POP [0606h]
+                  0x8C, 0x06, 0x08, 0x06,              // MOV [0608h],ES
+                  0x89, 0x3E, 0x0A, 0x06,              // MOV [060Ah],DI
                   0xFA, 0xF4});
-        return {word(kOut), word(kOut + 2), word(kOut + 4), (word(kOut + 6) & 1) != 0};
+        return {word(kOut), word(kOut + 2), word(kOut + 4), (word(kOut + 6) & 1) != 0, word(kOut + 8), word(kOut + 10)};
     }
 
     uint16_t word(uint32_t a) const { return uint16_t(m->chipset.mem[a] | (m->chipset.mem[a + 1] << 8)); }
@@ -245,9 +248,54 @@ std::vector<uint8_t> HardDisk() { return std::vector<uint8_t>(std::size_t(733) *
 TEST_F(BiosTest, PostTakesBaseMemoryFromCmos) {
     boot(0);
     EXPECT_EQ(word(0x413), 640) << "no 1KB reserved at the top";
-    cmos = {{0x15, 0x00}, {0x16, 0x02}};
+    base_kb = 512;
     boot(0);
     EXPECT_EQ(word(0x413), 512);
+}
+
+TEST_F(BiosTest, Int1EhPointsAtIbmsDiskBase) {
+    boot(0);
+    EXPECT_EQ(word(0x1E * 4), 0xEFC7);
+    EXPECT_EQ(word(0x1E * 4 + 2), 0xF000);
+    const uint8_t disk_base[] = {0xDF, 0x02, 0x25, 0x02, 0x0F, 0x1B, 0xFF, 0x54, 0xF6, 0x0F, 0x08};
+    for (unsigned i = 0; i < sizeof disk_base; ++i) EXPECT_EQ(m->chipset.mem[0xFEFC7 + i], disk_base[i]) << i;
+}
+
+TEST_F(BiosTest, Int13h08hReturnsEachDrivesOwnMediaTable) {
+    boot(0);
+    Regs a = int13(0x0800, 0, 0x0000);
+    ASSERT_FALSE(a.cf);
+    EXPECT_EQ(a.cx, 0x4F0F);
+    ASSERT_EQ(a.es, 0xF000);
+    uint32_t t = 0xF0000 + a.di;
+    EXPECT_EQ(m->chipset.mem[t], 0xDF);
+    EXPECT_EQ(m->chipset.mem[t + 4], 15) << "1.2MB in a 1.2MB drive";
+    EXPECT_EQ(m->chipset.mem[t + 11], 79);
+    EXPECT_EQ(m->chipset.mem[t + 12], 0x00) << "500 kb/s";
+
+    Regs b = int13(0x0800, 0, 0x0001);
+    ASSERT_FALSE(b.cf);
+    EXPECT_EQ(b.cx, 0x2709);
+    t = 0xF0000 + b.di;
+    EXPECT_EQ(m->chipset.mem[t + 4], 9) << "360KB in a 360KB drive";
+    EXPECT_EQ(m->chipset.mem[t + 5], 0x2A);
+    EXPECT_EQ(m->chipset.mem[t + 11], 39);
+    EXPECT_EQ(m->chipset.mem[t + 12], 0x80) << "250 kb/s";
+}
+
+TEST_F(BiosTest, Int13h18hPointsAtTheTableForTheFormat) {
+    std::vector<uint8_t> fd(std::size_t(80) * 2 * 15 * 512, 0);
+    boot(0, nullptr, false, &fd);
+    Regs hd = int13(0x1800, 0x4F0F, 0x0000);
+    ASSERT_FALSE(hd.cf);
+    EXPECT_EQ(hd.es, 0xF000);
+    EXPECT_EQ(m->chipset.mem[0xF0000 + hd.di + 4], 15);
+    EXPECT_EQ(m->chipset.mem[0xF0000 + hd.di + 7], 0x54);
+    Regs dd = int13(0x1800, 0x2709, 0x0000);
+    ASSERT_FALSE(dd.cf);
+    EXPECT_EQ(m->chipset.mem[0xF0000 + dd.di + 4], 9) << "360KB in a 1.2MB drive";
+    EXPECT_EQ(m->chipset.mem[0xF0000 + dd.di + 7], 0x50);
+    EXPECT_EQ(m->chipset.mem[0xF0000 + dd.di + 12], 0x40) << "300 kb/s";
 }
 
 TEST_F(BiosTest, Int41hPointsAtType8InTheRomTable) {

@@ -634,6 +634,13 @@
     <div class="panel" id="memoryCard">
       <h2>Memory</h2>
       <div class="row">
+        <label for="baseMemSelect">Base memory</label>
+        <select id="baseMemSelect">
+          <option value="512">512 KB</option>
+          <option value="640" selected>640 KB</option>
+        </select>
+      </div>
+      <div class="row">
         <label for="extMemSelect">Extended memory</label>
         <select id="extMemSelect">
           <option value="0" selected>None</option>
@@ -686,7 +693,7 @@
       <h2>System specs</h2>
       <table class="media-table">
         <tr><td>CPU</td><td>80286 (8 MHz)</td></tr>
-        <tr><td>RAM</td><td>640 KB conventional, plus up to 4 MB extended (see Memory)</td></tr>
+        <tr><td>RAM</td><td>512 or 640 KB conventional, plus up to 4 MB extended (see Memory)</td></tr>
         <tr><td>Modes</td><td>Real and protected mode (80286)</td></tr>
         <tr><td>Graphics</td><td>EGA</td></tr>
         <tr><td>Sound</td><td>PC speaker</td></tr>

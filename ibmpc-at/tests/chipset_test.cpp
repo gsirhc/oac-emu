@@ -92,6 +92,20 @@ TEST(ChipsetTest, ExtendedMemoryIsSixteenBitAdapterTiming) {
     EXPECT_EQ(cs.mem_clocks[0x180000 >> 12], Chipset::kClocks8) << "nothing fitted past 1.5MB";
 }
 
+TEST(ChipsetTest, A512KbBoardLeavesItsTopBankEmpty) {
+    Chipset cs(0, 512);
+    auto bus = cs.make_bus();
+    EXPECT_EQ(cs.base_kb(), 512u);
+    bus.write(0x7FFFF, 0x5A);
+    bus.write(0x80000, 0x5A);
+    bus.write(0x9FFFF, 0x5A);
+    EXPECT_EQ(bus.read(0x7FFFF), 0x5A);
+    EXPECT_EQ(bus.read(0x80000), 0xFF);
+    EXPECT_EQ(bus.read(0x9FFFF), 0xFF);
+    EXPECT_EQ(cs.mem_clocks[0x7F000 >> 12], Chipset::kClocks16);
+    EXPECT_EQ(cs.mem_clocks[0x80000 >> 12], Chipset::kClocks8) << "an empty slot, like any unfitted address";
+}
+
 TEST(ChipsetTest, ExtendedMemoryStopsBelowTheRomAlias) {
     Chipset cs(16 * 1024);
     EXPECT_EQ(cs.ext_kb(), Chipset::kMaxExtKb);

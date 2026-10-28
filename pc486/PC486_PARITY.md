@@ -77,7 +77,8 @@ page, a Playwright test, in the same commit.
   (PC486_REVIEW.md §58) because the prebuilt BIOS never seeks, sends
   SPECIFY or writes 3F7h. Building this BIOS with the AT's patches
   (`ibmpc-at/roms/bochs-bios/`) 0001-0003 and 0005, not 0004 (286-only),
-  0006 (A: then C:) or 0007 (CMOS drive types, no EBDA), would let it go. A 720KB disk would then
+  0006 (A: then C:), 0007 (CMOS drive types, no EBDA) or 0008 (the AT's diskette
+  tables), would let it go. A 720KB disk would then
   need 250 kbit/s. Source: NEC uPD765A data sheet.
 
 ## 5. Keyboard

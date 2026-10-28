@@ -9,9 +9,10 @@ void Machine::configure_factory_cmos() {
     // Equipment byte (0x14): bits 7-6 = drives - 1, 5-4 = 0 for an EGA, bit0 = diskettes fitted.
     // rombios.c copies it straight into BDA 40:10.
     c.poke(0x14, 0x41);
-    // Base memory 640KB, word at 0x15/0x16.
-    c.poke(0x15, 0x80);
-    c.poke(0x16, 0x02);
+    // Base memory in KB, word at 0x15/0x16.
+    uint32_t base = chipset.base_kb();
+    c.poke(0x15, uint8_t(base));
+    c.poke(0x16, uint8_t(base >> 8));
     // Extended memory in KB: Setup's copy at 0x17/0x18, POST's at 0x30/0x31, which
     // is the one BIOS-bochs-legacy's INT 15h AH=88h returns.
     uint32_t ext = chipset.ext_kb();

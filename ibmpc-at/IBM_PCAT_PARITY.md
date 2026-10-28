@@ -5,7 +5,7 @@ IBM EGA, plus the test gaps against the repo rules in `CLAUDE.md`. Shared
 chips live in `shared/pc/` and also drive `pc486`; their tests are under
 `shared/pc/tests/` and build into this machine's `make check`. Where a 486
 fix ports, the item cites its `PC486_REVIEW.md` section. Checked against
-the code through `IBM_PCAT_REVIEW.md` §74 (2026-10-28). When an item is
+the code through `IBM_PCAT_REVIEW.md` §76 (2026-10-28). When an item is
 fixed, write it up in `IBM_PCAT_REVIEW.md` as usual (fact, why it matters,
 what it fixed, source) and delete it here.
 
@@ -24,7 +24,8 @@ floppy data rate, head position and step rate, S7 and S9 (§69), and a
 286-only BIOS with the 8042-reset block move, a reading verify and A:
 then C: boot order, D1, D4 and S12 (§70), and IBM's fixed disk interface
 from CMOS drive types with no EBDA and no ATA in the WD1003, P13 and D2
-(§71), and hard disk seek time, S8 (§72).
+(§71), hard disk seek time, S8 (§72), IBM's diskette tables, S11, and
+the 512KB board, P14 (§76).
 Front-end shared modules and the Performance panel are in §64-§65; they
 are not tracked as hardware parity.
 
@@ -34,10 +35,10 @@ Rough parity today: **~94%** (mean of the table rows).
 |------|--------|-------------|
 | CPU (real mode) | 99% | no STOREALL; `FE /2`-`/7` unverified (C13); no 10-byte instruction limit (C15) |
 | CPU (protected mode) | 85% | no LOADALL (C14); two fault codes approximated (§63.2) |
-| Timing | 95% | fetch-bound code runs 5-7% fast against TOPBENCH |
+| Timing | 95% | fetch-bound code runs 5-7% fast against TOPBENCH (§62, not tracked) |
 | EGA | 91% | memory-cycle length unsourced (VidMem -9% on the Enhanced Display) |
-| Chipset (PIT, PIC, DMA, memory) | 94% | no game port; no 512KB choice on the page |
-| Storage (WD1003, floppy) | 97% | INT 1Eh table is Bochs's; seek curve fitted to spec maximums |
+| Chipset (PIT, PIC, DMA, memory) | 95% | no game port (P10) |
+| Storage (WD1003, floppy) | 99% | seek curve fitted to spec maximums (§75, not tracked) |
 | Keyboard, RTC | 95% | no keylock control, BAT arrives without its self-test delay |
 | Speaker | 100% | — |
 
@@ -52,8 +53,8 @@ page, a Playwright test, in the same commit.
   on a byte. The core decodes the ModRM byte and returns without reading
   the operand. `FF /7` raises #UD here, and the 286 raises #UD for
   undefined encodings in general, but no source found says what a 286 does
-  with these six. Needs the iAPX 286 PRM opcode map or a test on a real
-  286. No test pins the current behaviour (§55.4).
+  with these six. Needs the iAPX 286 PRM opcode map. No test pins the
+  current behaviour (§55.4).
 
 - **C14. No LOADALL / STOREALL.** `0F 05` is a reported no-op. HIMEM 2.x
   and RAMDRIVE used LOADALL on 286s; FDXMS286 on the shipped image uses
@@ -70,24 +71,8 @@ page, a Playwright test, in the same commit.
   iAPX 286 PRM, exception 13 (verify the real-mode wording before
   coding).
 
-## 2. Timing
+## 2. EGA
 
-- **T9. Fetch-bound code runs fast.** Against the real 5170-339 in
-  TOPBENCH's database, MemEA is 7% fast, Opcodes 5%, 3DGames 5% (§47.4,
-  §56.4, §62).
-  MemEA sits on the bus limit the data sheet and §46.1 allow, so the real
-  286 leaves its bus idle about 0.85 clocks per instruction somewhere the
-  published timings don't describe. §62 re-checked EA Note 1, prefetch
-  idle accounting, and code-fetch wait states against the 80C286 data
-  sheet and the iAPX 286 HRM; still no source. Needs a logic-analyzer
-  trace of a real 286 bus unit or a cycle-level 286 model, not a fitted
-  constant.
-
-## 3. EGA
-
-- **E18. Write mode 3 on a real EGA.** GR05 bits 0-1 = 3 is VGA's write
-  mode 3; the EGA TR lists it as not valid and doesn't say what the card
-  does. `Ega` runs it as VGA does. Needs a test on a real IBM EGA.
 - **E19. No 9x14 alternate glyphs.** In mode 7, IBM's ROM patches the 8x14
   font with 9-dot versions of about a dozen characters. The only open set
   found is GPL and looks copied from IBM's ROM, so it can't go in the
@@ -100,8 +85,7 @@ page, a Playwright test, in the same commit.
   colour display it reads 1514 (+3%). The real run didn't record its
   monitor (§47.4). §62 confirmed the AT's 6-clock 8-bit floor is already
   applied and that the EGA TR still does not give the cycle length.
-  Needs a VidMem reading from a 5170 with an EGA and a 5154, or the
-  cycle timing from the EGA's sequencer documentation.
+  Needs the cycle timing from the EGA's sequencer documentation.
 - **E21. The palette address source bit is dropped.** Bit 5 of the 3C0h
   index is PAS: clear, the CPU owns the palette and the screen goes
   blank; set, the display reads it. `Ega::out` masks the index to 5 bits,
@@ -112,7 +96,7 @@ page, a Playwright test, in the same commit.
   IBM's EGA POST and some adapter-detection code read them. Low priority.
   Source: IBM EGA Technical Reference, Input Status Register One.
 
-## 4. Chipset
+## 3. Chipset
 
 - **P10. No game port.** The IBM Game Control Adapter at 201h was an
   option, not standard. Low priority. Port from the 486 if it lands
@@ -133,25 +117,8 @@ page, a Playwright test, in the same commit.
   (`CmosRtc::nmi_masked`), aren't wired. Nothing here raises them, so the
   readback of bits 2-3 is the visible part. Source: IBM PC/AT Technical
   Reference, port 061h.
-- **P14. No 512KB choice.** POST sizes base memory from CMOS 15h/16h
-  (§71), and the 339 shipped with 512KB on the system board, but the page
-  only builds 640KB. Needs a control and its copy. Source: IBM PC/AT
-  Technical Reference, system memory map.
 
-## 5. Storage
-
-- **S11. The INT 1Eh table is Bochs's 1.44MB one.** SRT/HUT AFh, 18
-  sectors a track. SPECIFY now takes its step rate from it (§69.2), so
-  floppy seeks follow that value, not IBM's. Needs the AT table from the
-  IBM PC/AT Technical Reference BIOS listing (DISK_BASE, DISKETTE module),
-  as data, in a BIOS patch. The 6183355 listing (bitsavers) has it.
-- **S13. The seek curve is fitted, not measured.** It passes through the
-  ST4038's three maximums (§72.1), so seeks are as slow as the spec
-  allows. A measured seek profile from a real ST4038, or CheckIt/Coretest
-  numbers from a real 5170 with one, would replace the curve. Source:
-  Seagate ST4038 product manual 1.2.
-
-## 6. Stand-in departures (labelled, not silent)
+## 4. Stand-in departures (labelled, not silent)
 
 These are intentional substitutions, not missing silicon. Tracked so they
 don't look like forgotten gaps:

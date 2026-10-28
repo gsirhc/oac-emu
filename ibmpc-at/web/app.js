@@ -993,17 +993,24 @@
   });
 
   // ---- memory ----
-  // An extended-memory adapter is fitted at power-on, so the choice is locked while running.
+  // Memory is fitted at power-on, so the choices are locked while running.
   const EXT_MEM_KEY = "retro8080.ibmpcatExtMemKb";
+  const BASE_MEM_KEY = "retro8080.ibmpcatBaseMemKb";
   const extMemSelect = document.getElementById("extMemSelect");
-  try {
-    const v = localStorage.getItem(EXT_MEM_KEY);
-    if (v !== null && [...extMemSelect.options].some((o) => o.value === v)) extMemSelect.value = v;
-  } catch {}
-  function refreshMemoryControls() { extMemSelect.disabled = poweredOn; }
-  extMemSelect.addEventListener("change", () => {
-    try { localStorage.setItem(EXT_MEM_KEY, extMemSelect.value); } catch {}
-  });
+  const baseMemSelect = document.getElementById("baseMemSelect");
+  for (const [select, key] of [[extMemSelect, EXT_MEM_KEY], [baseMemSelect, BASE_MEM_KEY]]) {
+    try {
+      const v = localStorage.getItem(key);
+      if (v !== null && [...select.options].some((o) => o.value === v)) select.value = v;
+    } catch {}
+    select.addEventListener("change", () => {
+      try { localStorage.setItem(key, select.value); } catch {}
+    });
+  }
+  function refreshMemoryControls() {
+    extMemSelect.disabled = poweredOn;
+    baseMemSelect.disabled = poweredOn;
+  }
 
   function remountPendingFloppies() {
     for (let d = 0; d < 2; d++) {
@@ -1030,7 +1037,7 @@
     if (poweredOn || !firmware) return;
     const factoryC = !savedHdd;
     if (!machine) {
-      machine = new firmware.Module.Machine(Number(extMemSelect.value));
+      machine = new firmware.Module.Machine(Number(extMemSelect.value), Number(baseMemSelect.value));
       if (perfRequested) startPerfPanel();
       machine.loadRom(0x100000 - firmware.bios.byteLength, new Uint8Array(firmware.bios));
       machine.loadRom(0xC0000, new Uint8Array(firmware.videoBios));

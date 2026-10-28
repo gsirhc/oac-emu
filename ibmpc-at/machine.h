@@ -16,7 +16,7 @@ class Machine {
 public:
     // Powering on: the CPU goes to its reset vector (Cpu's default members do
     // not equal it) and the factory CMOS configuration is already set.
-    explicit Machine(uint32_t ext_kb = 0) : chipset(ext_kb), cpu(chipset.make_bus()) {
+    explicit Machine(uint32_t ext_kb = 0, uint32_t base_kb = 640) : chipset(ext_kb, base_kb), cpu(chipset.make_bus()) {
         cpu.reset();
         start_refresh();
         // One PIT clock, so a long REP doesn't hold off IRQ0.

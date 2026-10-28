@@ -2,13 +2,13 @@
 // builds the cpu80286::Bus. The A20 gate lives here, not in the CPU.
 //
 // Memory map:
-//   0x00000-0x9FFFF  640KB conventional RAM
+//   0x00000-0x9FFFF  512KB or 640KB conventional RAM
 //   0xA0000-0xBFFFF  EGA video RAM window (routed to `ega`, not `mem`)
 //   0xC0000-0xC7FFF  EGA video BIOS extension ROM window
 //   0xF0000-0xFFFFF  system BIOS ROM
 //   0x100000-        extended memory on an adapter, if fitted
 //   0xFF0000-        system ROM alias
-// Unpopulated addresses above 1MB read 0xFF and discard writes.
+// Unpopulated addresses read 0xFF and discard writes.
 #ifndef IBMPCAT_CHIPSET_H
 #define IBMPCAT_CHIPSET_H
 
@@ -37,9 +37,10 @@ namespace ibmpcat {
 
 class Chipset {
 public:
-    // `ext_kb` of extended memory from 1MB up, below the ROM alias.
-    explicit Chipset(uint32_t ext_kb = 0)
-        : mem(0x100000 + std::size_t(std::min(ext_kb, kMaxExtKb)) * 1024, 0) { reset(); }
+    // `ext_kb` of extended memory from 1MB up, below the ROM alias; `base_kb` 512 or 640.
+    explicit Chipset(uint32_t ext_kb = 0, uint32_t base_kb = 640)
+        : mem(0x100000 + std::size_t(std::min(ext_kb, kMaxExtKb)) * 1024, 0),
+          base_end_(base_kb == 512 ? 0x80000u : 0xA0000u) { reset(); }
 
     void reset();
 
@@ -48,6 +49,7 @@ public:
 
     std::vector<uint8_t> mem;
     uint32_t ext_kb() const { return uint32_t((mem.size() - 0x100000) / 1024); }
+    uint32_t base_kb() const { return base_end_ / 1024; }
     // Marks [addr, addr+len) read-only and copies `data` in.
     void load_rom(uint32_t addr, const uint8_t *data, std::size_t len);
     bool is_rom(uint32_t addr) const {
@@ -125,6 +127,7 @@ public:
     const std::string &debug_console() const { return debug_console_; }
 
 private:
+    uint32_t base_end_;
     std::array<bool, 0x100000> rom_{};
     uint8_t port61_ = 0x00;
     bool refresh_toggle_ = false;

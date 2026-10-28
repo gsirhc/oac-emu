@@ -1,6 +1,6 @@
 // Emscripten wrapper: binds the 80286 core + AT chipset into one Machine for the browser.
 // JS surface via embind:
-//   const m = new Module.Machine(extKb); // KB of extended memory, fixed for this power-on
+//   const m = new Module.Machine(extKb, baseKb); // memory in KB, fixed for this power-on
 //   m.loadRom(0xF0000, biosBytes);       // BIOS-bochs-legacy at the reset vector
 //   m.loadRom(0xC0000, egaBiosBytes);    // egabios.bin extension ROM
 //   m.mountHdd(hddBytes);                // C: image, chosen before power-on
@@ -31,7 +31,7 @@ using ibmpcat::Machine;
 
 class WasmMachine {
 public:
-    explicit WasmMachine(double ext_kb) : m_(uint32_t(ext_kb)) { m_.reset(); }
+    WasmMachine(double ext_kb, double base_kb) : m_(uint32_t(ext_kb), uint32_t(base_kb)) { m_.reset(); }
 
     // CMOS is battery-backed and survives
     void reset() { m_.reset(); }
@@ -274,7 +274,7 @@ private:
 
 EMSCRIPTEN_BINDINGS(ibmpcat_machine) {
     emscripten::class_<WasmMachine>("Machine")
-        .constructor<double>()
+        .constructor<double, double>()
         .function("reset", &WasmMachine::reset)
         .function("loadRom", &WasmMachine::loadRom)
         .function("runCycles", &WasmMachine::runCycles)

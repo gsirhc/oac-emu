@@ -1,0 +1,145 @@
+diff -ru a/rombios.c b/rombios.c
+--- a/rombios.c
++++ b/rombios.c
+@@ -6520,7 +6520,7 @@
+ ASM_START
+       push bp
+       mov  bp, sp
+-      mov ax, #diskette_param_table2
++      mov ax, #md_tbl+65
+       mov _int13_cdemu.DI+2[bp], ax
+       mov _int13_cdemu.ES+2[bp], cs
+       pop  bp
+@@ -8228,15 +8228,22 @@
+           BX_PANIC("floppy: int13: bad floppy type\n");
+         }
+ 
+-      /* set es & di to point to 11 byte diskette param table in ROM */
++      // ES:DI to the drive's own media table, none for a type IBM's DR_TYPE lacks (DISK_PARMS)
+ ASM_START
+       push bp
+       mov  bp, sp
+-      mov ax, #diskette_param_table2
++      mov ax, #md_tbl
+       mov _int13_diskette_function.DI+2[bp], ax
+       mov _int13_diskette_function.ES+2[bp], cs
+       pop  bp
+ ASM_END
++      switch (drive_type) {
++        case 1: break;
++        case 2: DI += 26; break;
++        case 3: DI += 39; break;
++        case 4: DI += 65; break;
++        default: ES = 0; DI = 0; break;
++      }
+       CLEAR_CF(); // success
+       /* disk status not changed upon success */
+       return;
+@@ -8530,16 +8537,18 @@
+       // Update media status
+       write_byte_DS(base_address, val8);
+ 
+-      // set es & di to point to 11 byte diskette param table in ROM
+-      // Note that we do not update the table, as I don't see it being used anywhere...
++      // ES:DI to the media table for this drive and format (SET_MEDIA)
+ ASM_START
+       push bp
+       mov bp, sp
+-      mov ax, #diskette_param_table2
++      mov ax, #md_tbl
+       mov _int13_diskette_function.DI+2[bp], ax
+       mov _int13_diskette_function.ES+2[bp], cs
+       pop bp
+ ASM_END
++      if (drive_type == 2) DI += (maxCyl == 39) ? 13 : 26;
++      else if (drive_type == 3) DI += 39;
++      else if (drive_type == 4) DI += (spt == 9) ? 52 : 65;
+ 
+       // return success!
+       set_diskette_ret_status(0);
+@@ -9537,7 +9546,7 @@
+   mov  al, #0x02
+   out  PORT_DMA1_MASK_REG, al   ;; clear DMA-1 channel 2 mask bit
+ 
+-  SET_INT_VECTOR(0x1E, #0xF000, #diskette_param_table2)
++  SET_INT_VECTOR(0x1E, #0xF000, #diskette_param_table)
+   SET_INT_VECTOR(0x40, #0xF000, #int13_diskette)
+   SET_INT_VECTOR(0x0E, #0xF000, #int0e_handler) ;; IRQ 6
+ 
+@@ -12004,21 +12013,19 @@
+ 
+ 
+ .org 0xefc7 ; Diskette Controller Parameter Table
++;; DISK_BASE (IBM PC/AT Technical Reference 6183355, ORGS module)
+ diskette_param_table:
+-;;  Since no provisions are made for multiple drive types, most
+-;;  values in this table are ignored.  I set parameters for 1.44M
+-;;  floppy here
+-db  0xAF
+-db  0x02 ;; head load time 0000001, DMA used
+-db  0x25
+-db  0x02
+-db    18
+-db  0x1B
+-db  0xFF
+-db  0x6C
+-db  0xF6
+-db  0x0F
+-db  0x08
++db  0xDF ;; SRT=D, HD UNLOAD=0F
++db  0x02 ;; HD LOAD=1, MODE=DMA
++db  0x25 ;; motor-off wait
++db  0x02 ;; 512 bytes/sector
++db    15 ;; EOT
++db  0x1B ;; gap length
++db  0xFF ;; DTL
++db  0x54 ;; gap length for format
++db  0xF6 ;; fill byte for format
++db  0x0F ;; head settle, ms
++db  0x08 ;; motor start, 1/8 s
+ 
+ 
+ ;----------------------------------------
+@@ -12035,25 +12042,14 @@
+   pop  ds
+   iret
+ 
+-diskette_param_table2:
+-;;  New diskette parameter table adding 3 parameters from IBM
+-;;  Since no provisions are made for multiple drive types, most
+-;;  values in this table are ignored.  I set parameters for 1.44M
+-;;  floppy here
+-db  0xAF
+-db  0x02 ;; head load time 0000001, DMA used
+-db  0x25
+-db  0x02
+-db    18
+-db  0x1B
+-db  0xFF
+-db  0x6C
+-db  0xF6
+-db  0x0F
+-db  0x08
+-db    79 ;; maximum track
+-db     0 ;; data transfer rate
+-db     4 ;; drive type in cmos
++;; MD_TBL1-6, media/drive parameter tables (IBM PC/AT Technical Reference 6183355, DISKETTE)
++md_tbl:
++db 0xDF,0x02,0x25,0x02, 9,0x2A,0xFF,0x50,0xF6,0x0F,0x08,39,0x80 ;; 360KB in 360KB
++db 0xDF,0x02,0x25,0x02, 9,0x2A,0xFF,0x50,0xF6,0x0F,0x08,39,0x40 ;; 360KB in 1.2MB
++db 0xDF,0x02,0x25,0x02,15,0x1B,0xFF,0x54,0xF6,0x0F,0x08,79,0x00 ;; 1.2MB in 1.2MB
++db 0xDF,0x02,0x25,0x02, 9,0x2A,0xFF,0x50,0xF6,0x0F,0x08,79,0x80 ;; 720KB in 720KB
++db 0xDF,0x02,0x25,0x02, 9,0x2A,0xFF,0x50,0xF6,0x0F,0x08,79,0x80 ;; 720KB in 1.44MB
++db 0xAF,0x02,0x25,0x02,18,0x1B,0xFF,0x6C,0xF6,0x0F,0x08,79,0x00 ;; 1.44MB in 1.44MB
+ 
+ .org 0xf045 ; INT 10 Functions 0-Fh Entry Point
+   HALT(__LINE__)
+@@ -12293,7 +12289,7 @@
+   dw dummy_iret_handler
+   dw dummy_iret_handler
+   dw 0
+-  dw diskette_param_table2
++  dw diskette_param_table
+   dw 0
+ 
+ ;------------------------------------------------
