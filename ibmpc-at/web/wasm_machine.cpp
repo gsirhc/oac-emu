@@ -12,6 +12,7 @@
 //   m.injectScancode(0x1E);               // Set 1 scan code (see i8042.h)
 //   m.setRtc(1986, 10, 8, 12, 0, 0, 4);   // battery-backed clock, weekday 1 = Sunday
 //   const edges = m.speakerEdges();       // {cycles: Float64Array, levels: Uint8Array}
+//   m.setDriveSound(true); m.driveSoundEvents();  // Float64Array, 5 per event (see below)
 //   m.textScreen();                       // test-only: text-mode screen as a string
 
 #include <emscripten/bind.h>
@@ -265,6 +266,34 @@ public:
         return out;
     }
 
+    // ---- drive noise ----
+    void setDriveSound(bool on) {
+        m_.chipset.fdc.sound.enabled = on;
+        m_.chipset.hdd.sound.enabled = on;
+        if (!on) {
+            m_.chipset.fdc.sound.drain();
+            m_.chipset.hdd.sound.drain();
+            return;
+        }
+        for (int i = 0; i < 2; ++i)
+            if (m_.chipset.fdc.drives[i].motor_on)
+                m_.chipset.fdc.sound.push(double(m_.total_cycles()), pc::DriveSoundEvent::kMotorOn, i);
+    }
+    // [cycle, kind, source, steps, period] per event; source 0 = A:, 1 = B:, 2 = C:; kinds per pc::DriveSoundEvent
+    val driveSoundEvents() {
+        std::vector<double> out;
+        auto add = [&](const std::vector<pc::DriveSoundEvent>& evs, int base) {
+            for (const auto& e : evs) {
+                out.insert(out.end(), {e.cycle, double(e.kind), double(base + e.drive), double(e.steps), e.period});
+            }
+        };
+        add(m_.chipset.fdc.sound.drain(), 0);
+        add(m_.chipset.hdd.sound.drain(), 2);
+        val a = val::global("Float64Array").new_(out.size());
+        if (!out.empty()) a.call<void>("set", val(emscripten::typed_memory_view(out.size(), out.data())));
+        return a;
+    }
+
 private:
     Machine m_;
     ibmpcat::RenderedFrame last_frame_;
@@ -312,5 +341,7 @@ EMSCRIPTEN_BINDINGS(ibmpcat_machine) {
         .function("hddDirtyPatches", &WasmMachine::hddDirtyPatches)
         .function("speakerLevel", &WasmMachine::speakerLevel)
         .function("speakerEdges", &WasmMachine::speakerEdges)
+        .function("setDriveSound", &WasmMachine::setDriveSound)
+        .function("driveSoundEvents", &WasmMachine::driveSoundEvents)
         .function("textScreen", &WasmMachine::textScreen);
 }

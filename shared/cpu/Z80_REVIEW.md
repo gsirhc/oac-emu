@@ -1,8 +1,8 @@
 # Z80 core -- design notes
 
 The NMOS Zilog Z80 shared by Pac-Man, Frogger, Scramble, Galaxian and
-Galaga (`cpu_z80.{h,cpp}`). Items fixed from `Z80_ARCADE_PARITY.md` are
-written up here: the fact, why it matters, what changed, and the source.
+Galaga (`cpu_z80.{h,cpp}`). Items from `Z80_ARCADE_PARITY.md` are
+written up here: the fact, why it matters, the implementation, and the source.
 
 ## 1. Sources
 
@@ -40,21 +40,21 @@ any of them at T2 (TW for I/O). /INT is a level sampled at the end of
 each instruction. /NMI is an edge, latched and taken at the next
 instruction boundary.
 
-**Why it matters.** A board sees each access at a specific T-state. The
-core used to perform every access of an instruction at once, with no
-/WAIT, so a board couldn't model video-RAM wait states (Pac-Man P6), beam
-races, or a CPU held off the bus. It also had no /INT line, so a board
-that fired `interrupt()` while IFF1 was clear lost the request.
+**Why it matters.** A board sees each access at a specific T-state. Performing
+every access of an instruction at once, with no /WAIT, can't model
+video-RAM wait states (Pac-Man P6), beam races, or a CPU held off the bus.
+Without an /INT line, a board that fires `interrupt()` while IFF1 is clear
+loses the request.
 
-**What changed.** Every instruction is written out as its UM0080
+**Implementation.** Every instruction is written out as its UM0080
 M-cycle sequence through `m1`/`mr`/`mw`/`ior`/`iow`/`tick`. `Cpu::cycles`
 is current inside every bus callback. `Bus::wait` returns /WAIT T-states
 for a cycle. `Bus::tick` reports T-states as they pass, so a board can
 advance video or another CPU mid-instruction. `Bus::refresh` gets I*256+R
 in M1 T3. `Cpu::set_int` holds /INT, and `Cpu::set_nmi` latches /NMI on a
 rising edge. `step()` takes a pending NMI, then a held INT, then runs the
-next instruction or halted M1. `interrupt()` and `nmi()` still accept
-immediately, so boards that call them are unchanged. SST checks every
+next instruction or halted M1. `interrupt()` and `nmi()` accept
+immediately. SST checks every
 strobe position. `Z80Timing.*` pins read, write, I/O, indexed, push and
 IM 2 positions, /WAIT on fetch, read, I/O and INTA, and tick totals.
 `Z80.HeldIntIsTakenOnceInterruptsAreEnabled`, `Z80.NmiIsEdgeTriggered`.
@@ -75,10 +75,10 @@ P/V is the parity of `(t & 7) ^ B`, and N is bit 7 of the byte (Young).
 An interrupted repeat also shows PC bits 13/11 in Y/X and adjusts H and
 P/V from B's next value (Banks).
 
-**Why it matters.** All eight fell through to an 8 T NOP. A sound program
-streaming register writes with OTIR would have silently done nothing.
+**Why it matters.** Without them, all eight fall through to an 8 T NOP, and a
+sound program streaming register writes with OTIR silently does nothing.
 
-**What changed.** `block_in`/`block_out`/`block_io_flags`/
+**Implementation.** `block_in`/`block_out`/`block_io_flags`/
 `block_io_repeat_flags`. `Z80.Ini*`, `Z80.Ind*`, `Z80.Inir*`, `Z80.Outi*`,
 `Z80.Outd*`, `Z80.Otir*`, and SST's `ed a2`-`ed bb`.
 
@@ -92,10 +92,10 @@ and 0 otherwise. On NMOS Zilog parts SCF and CCF set X/Y from
 `(Q ^ F) | A`. A DD/FD prefix is its own M1 and clears Q.
 
 **Why it matters.** zexall and real software that probes the undocumented
-flags read different values from the old core's plain "copy A" rule and
+flags read different values from a plain "copy A" rule and
 operand-based BIT.
 
-**What changed.** `Cpu::wz` and `Cpu::q` are maintained for every
+**Implementation.** `Cpu::wz` and `Cpu::q` are maintained for every
 instruction (Young's MEMPTR table; Banks for repeats). `setf` marks
 instructions that write F. POP AF and EX AF,AF' load F without marking it.
 `Z80.BitHlTakesXyFromMemptr`, `Z80.Memptr*`, `Z80.Scf*`, `Z80.CcfUsesQ`,
@@ -112,7 +112,7 @@ and IM are 0, and the rest are undefined (Young).
 **Why it matters.** Games seed randomness from LD A,R, so a missing
 increment per interrupt drifts the sequence from a real board.
 
-**What changed.** `bump_r` in every M1 and acknowledge. `reset()` sets AF
+**Implementation.** `bump_r` in every M1 and acknowledge. `reset()` sets AF
 and SP to FFFFh and leaves the other registers alone.
 `Z80.InterruptAcknowledgeIncrementsR`,
 `Z80.NmiAcknowledgeIncrementsRAndFetchesAtPc`,
@@ -125,7 +125,7 @@ and SP to FFFFh and leaves the other registers alone.
 **Fact.** IN A,(n) and OUT (n),A put A on A8-A15. The (C) forms and block
 I/O put B there.
 
-**What changed.** `Bus::in`/`out` take `uint16_t`. Every board here
+**Implementation.** `Bus::in`/`out` take `uint16_t`. Every board here
 decodes only A0-A7, so each casts the port to 8 bits. Pac-Man's vector
 latch matches `(port & 0xFF) == 0`. `Z80.InANPutsAOnHighByte`,
 `Z80.InRCPutsBOnHighByte`, `Z80.OutAToPort`.
@@ -137,20 +137,20 @@ device drives, with PC frozen. The first byte comes in the INTA cycle,
 which is two T-states longer than a normal M1 (UM0080). RST is 13 T and
 CALL nn is 19 T.
 
-**Why it matters.** The old core took `data & 0x38` as an RST target for
-any byte.
+**Why it matters.** Taking `data & 0x38` as an RST target would treat
+any byte as an RST.
 
-**What changed.** `accept_int` runs the byte through the normal decoder
+**Implementation.** `accept_int` runs the byte through the normal decoder
 with `from_bus_` set, so opcode and operand fetches read `Bus::irq_data`
 instead of memory. `Z80.Im0ExecutesCallFromBus`,
 `Z80.Im0ExecutesOneByteInstructionWithoutMovingPc`,
 `Z80.Im0JamsRstFromBus`.
 
-## 9. Smaller corrections found on the way
+## 9. Smaller details
 
 - **NMI leaves IFF2 alone.** UM0080's IFF table: NMI resets IFF1 and
-  leaves IFF2, so RETN restores the pre-NMI state. The old core copied
-  IFF1 into IFF2, which loses the outer state on a nested NMI.
+  leaves IFF2, so RETN restores the pre-NMI state. Copying
+  IFF1 into IFF2 would lose the outer state on a nested NMI.
   `Z80.NmiVectorsTo66AndLeavesIff2`.
 - **LD A,I/R parity quirk.** On NMOS parts an interrupt accepted right
   after LD A,I or LD A,R clears P/V (Young).
@@ -163,8 +163,8 @@ instead of memory. `Z80.Im0ExecutesCallFromBus`,
 
 ## 10. Cost
 
-The M-cycle core runs zexdoc about 1.6x slower than the old
-instruction-atomic one (70 s vs 44 s on the dev machine). That still comes
+The M-cycle core runs zexdoc in about 70 s on the dev machine, against
+44 s for an instruction-atomic core (about 1.6x slower). That comes
 to about 660 MHz of emulated Z80 per host core, against 9.2 MHz for
 Galaga's three CPUs. Every arcade's real-time pacing smoke test passes.
 

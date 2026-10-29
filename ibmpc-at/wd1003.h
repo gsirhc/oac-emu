@@ -20,6 +20,8 @@
 #include <utility>
 #include <vector>
 
+#include "../shared/pc/drive_sound.h"
+
 namespace ibmpcat {
 
 class Wd1003 {
@@ -51,6 +53,7 @@ public:
         }
     };
     Drive drives[2];  // 0 = C: (the only populated drive), 1 = D: (always absent)
+    pc::DriveSoundLog sound;
 
     Wd1003() { reset(); }
 
@@ -162,6 +165,8 @@ private:
 
     void run_command(uint8_t cmd);
     double seek_cycles(int from, int to) const;
+    void log_seek(double start, int from, int to);
+    void log_restore(double start, int from);
     double implied_seek(int cyl);
     void begin_seek(double cycles, int cyl);
     void complete(uint8_t error = 0);

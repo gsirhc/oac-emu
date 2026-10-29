@@ -135,6 +135,7 @@ void Wd1003::pio_write_byte(uint8_t v) {
             // the format starts at the index pulse and runs one revolution
             double now = implied_seek(int(cyl_low_) | (int(cyl_high_) << 8));
             due_ = now + (kCyclesPerRev - std::fmod(now, kCyclesPerRev)) + kCyclesPerRev;
+            sound.push(double(prev_cycles_), pc::DriveSoundEvent::kAccess, 0, 0, due_ - double(prev_cycles_));
             xfer_active_ = true;
             status_ = ST_BSY;
         } else {
@@ -223,12 +224,14 @@ void Wd1003::run_command(uint8_t cmd) {
         case 0x10:  // RESTORE steps on each SEEK COMPLETE (WD1003-WA2 OEM manual 5.2.1)
             step_rate_ = cmd & 0x0F;
             rate_set_ = true;
+            log_restore(double(prev_cycles_), head_cyl_);
             begin_seek(head_cyl_ * kTrackToTrackMs * kCpuHz / 1000.0, 0);
             return;
         case 0x70: {  // SEEK
             step_rate_ = cmd & 0x0F;
             rate_set_ = true;
             int cyl = std::min(int(cyl_low_) | (int(cyl_high_) << 8), drives[0].cylinders);
+            log_seek(double(prev_cycles_), head_cyl_, cyl);
             begin_seek(seek_cycles(head_cyl_, cyl), cyl);
             return;
         }
@@ -296,14 +299,28 @@ double Wd1003::seek_cycles(int from, int to) const {
 double Wd1003::implied_seek(int cyl) {
     double t = double(prev_cycles_);
     if (!rate_set_) {
+        log_restore(t, head_cyl_);
         t += head_cyl_ * kTrackToTrackMs * kCpuHz / 1000.0;
         head_cyl_ = 0;
         step_rate_ = 0x0D;
         rate_set_ = true;
     }
+    log_seek(t, head_cyl_, cyl);
     t += seek_cycles(head_cyl_, cyl);
     head_cyl_ = cyl;
     return t;
+}
+
+// A buffered seek is one actuator move; slow-step moves once per pulse.
+void Wd1003::log_seek(double start, int from, int to) {
+    int n = std::abs(to - from);
+    if (n == 0 || !sound.enabled) return;
+    if (step_rate_ == 0x0 || step_rate_ >= 0x0E) sound.push(start, pc::DriveSoundEvent::kSeek, 0, 1, seek_cycles(from, to));
+    else sound.push(start, pc::DriveSoundEvent::kSeek, 0, n, 0.5 * step_rate_ * kCpuHz / 1000.0);
+}
+
+void Wd1003::log_restore(double start, int from) {
+    if (from > 0) sound.push(start, pc::DriveSoundEvent::kSeek, 0, from, kTrackToTrackMs * kCpuHz / 1000.0);
 }
 
 void Wd1003::begin_seek(double cycles, int cyl) {
@@ -341,6 +358,7 @@ void Wd1003::seek_sector() {
     }
     due_ = id_missing_ ? double(prev_cycles_) + (no_retry_ ? 2 : 10) * kCyclesPerRev
                        : sector_due(sector, implied_seek(int(sector / (long(d.heads) * d.sectors_per_track))));
+    sound.push(double(prev_cycles_), pc::DriveSoundEvent::kAccess, 0, 0, due_ - double(prev_cycles_));
     retries_ = 0;
     xfer_active_ = true;
     status_ = ST_BSY;

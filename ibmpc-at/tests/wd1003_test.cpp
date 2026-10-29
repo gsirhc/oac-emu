@@ -218,6 +218,66 @@ TEST_F(Wd1003CommandTest, ATransferBeforeAnyStepRateRecalibratesFirst) {
     EXPECT_LE(double(took), Ms(50 * 11.0) + kRev + kSlot + 100);
 }
 
+TEST_F(Wd1003CommandTest, DriveSoundBufferedSeekIsOneMoveForTheSeekTime) {
+    hdd.sound.enabled = true;
+    SeekTo(243);
+    auto ev = hdd.sound.drain();
+    ASSERT_EQ(ev.size(), 1u);
+    EXPECT_EQ(ev[0].kind, pc::DriveSoundEvent::kSeek);
+    EXPECT_EQ(ev[0].steps, 1);
+    EXPECT_NEAR(ev[0].period, Ms(40.0), 200.0);
+    SeekTo(243);
+    EXPECT_TRUE(hdd.sound.drain().empty()) << "no move, no sound";
+}
+
+TEST_F(Wd1003CommandTest, DriveSoundSlowStepAndRestoreMoveOncePerTrack) {
+    hdd.sound.enabled = true;
+    SeekTo(10, 0x7D);
+    hdd.out(0x1F7, 0x10);
+    RunWhileBusy();
+    auto ev = hdd.sound.drain();
+    ASSERT_EQ(ev.size(), 2u);
+    EXPECT_EQ(ev[0].steps, 10);
+    EXPECT_DOUBLE_EQ(ev[0].period, Ms(6.5));
+    EXPECT_EQ(ev[1].steps, 10);
+    EXPECT_DOUBLE_EQ(ev[1].period, Ms(11.0));
+}
+
+TEST_F(Wd1003CommandTest, DriveSoundImpliedSeekOnARead) {
+    hdd.sound.enabled = true;
+    Chs(243, 0, 1, 1);
+    hdd.out(0x1F7, 0x20);
+    RunWhileBusy();
+    auto ev = hdd.sound.drain();
+    ASSERT_EQ(ev.size(), 2u);
+    EXPECT_EQ(ev[0].kind, pc::DriveSoundEvent::kSeek);
+    EXPECT_EQ(ev[0].steps, 1);
+    EXPECT_NEAR(ev[0].period, Ms(40.0), 200.0);
+    EXPECT_EQ(ev[1].kind, pc::DriveSoundEvent::kAccess);
+}
+
+TEST_F(Wd1003CommandTest, DriveSoundMarksEachSectorWhileBusy) {
+    hdd.sound.enabled = true;
+    Chs(0, 0, 1, 3);
+    hdd.out(0x1F7, 0x20);
+    std::vector<pc::DriveSoundEvent> ev;
+    for (int s = 0; s < 3; ++s) {
+        uint64_t start = now;
+        uint64_t took = RunWhileBusy();
+        auto got = hdd.sound.drain();
+        ASSERT_EQ(got.size(), 1u) << s;
+        EXPECT_EQ(got[0].kind, pc::DriveSoundEvent::kAccess);
+        EXPECT_NEAR(got[0].cycle + got[0].period, double(start + took), 200.0) << "lasts until BSY drops";
+        for (int i = 0; i < 256; ++i) hdd.data_in16();
+    }
+    EXPECT_TRUE(hdd.sound.drain().empty());
+}
+
+TEST_F(Wd1003CommandTest, DriveSoundLogsNothingUntilEnabled) {
+    SeekTo(300);
+    EXPECT_TRUE(hdd.sound.drain().empty());
+}
+
 TEST_F(Wd1003CommandTest, WritePrecompDoesNotLandInTheErrorRegister) {
     hdd.out(0x1F1, 0x20);
     EXPECT_EQ(hdd.in(0x1F1), 0x00);

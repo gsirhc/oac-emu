@@ -209,10 +209,10 @@ spec sheet or reference document. Every addition must:
   stays turnkey like every other machine here, and label the substitution
   clearly (README, boot banner) as a compatible stand-in, not the literal
   factory firmware — the same labelled-departure rule as any override above.
-- **`*_REVIEW.md` and `*_PARITY.md`** in the machine's folder (citation
-  trail and open backlog). Shared cores that have their own
-  (`shared/cpu/Z80_REVIEW.md`, `Z80_ARCADE_PARITY.md`) count the same.
-  See "Review and parity docs" below.
+- **`README.md`, `*_REVIEW.md`, and `*_PARITY.md`** in the machine's
+  folder (summary and specs, citation trail, open backlog). Shared
+  cores that have their own (`shared/cpu/Z80_REVIEW.md`,
+  `Z80_ARCADE_PARITY.md`) count the same. See "Machine docs" below.
 
 Arcade cabinets (Pac-Man, Frogger, Scramble, Galaxian, Galaga, Asteroids,
 Centipede, Missile Command, Space Invaders, Lunar Rescue, Battlezone, and any new one) also follow [`.claude/arcade.md`](.claude/arcade.md).
@@ -457,28 +457,74 @@ nightly's. Treat tests as part of every change, not a step at the end.
   nightly-full.yml` and `gh run view --job <id> --log-failed`. Fix the
   cause, including flakes marked "flaky", not just the hard failures.
 
-## Review and parity docs
+## Machine docs (README, REVIEW, PARITY)
 
-Every machine keeps a `*_REVIEW.md` (citation trail and design notes) and
-a `*_PARITY.md` (open gaps vs real hardware, with a status table). Shared
-cores that have their own (`shared/cpu/Z80_REVIEW.md`,
-`Z80_ARCADE_PARITY.md`) follow the same rule. **Both stay current with
-the code for every emulator** — not a follow-up, and not only when
-someone asks for a doc pass.
+Every machine folder keeps three kinds of doc, and **all of them stay
+current with the code in the same change** — not a follow-up, and not
+only when someone asks for a doc pass. Shared cores that have their own
+(`shared/cpu/Z80_REVIEW.md`, `Z80_ARCADE_PARITY.md`) follow the same
+rule for REVIEW and PARITY. The root [`README.md`](README.md) points
+people at the machine folders; it does not list each machine's specs.
 
-- A change that adds, removes, or reshapes behaviour updates the matching
-  REVIEW section (or adds one) and the PARITY backlog in the same change:
-  close items that landed, open items that are still missing, fix stale
-  "current state" claims and IDs, refresh counts only where the section
-  is meant to be current (prefer pointing at `ctest -N` / the spec files
-  over hard-coding totals that rot).
-- The REVIEW may keep a chronological journal; mark superseded early
-  bullets with a "(§N replaces this)" pointer rather than leaving a
-  reader on an obsolete "not yet done".
-- Do not leave a PARITY item marked done and still open under the same
-  ID. Rename leftovers when a close-out reuses a number.
-- New machines ship both files from the start (see "Adding a new
-  machine"). Cabinets also list them in [`.claude/arcade.md`](.claude/arcade.md).
+| File | What it is |
+|------|------------|
+| `README.md` | Short summary of the hardware, a Specs list, and links to the REVIEW (and PARITY when one exists). |
+| `*_REVIEW.md` | Citation trail and design notes for what the emulator does. |
+| `*_PARITY.md` | Open gaps vs real hardware, with a status table. Not every machine has one yet. |
+
+A change that adds, removes, or reshapes behaviour updates every doc it
+touches in the same change. Before finishing, check the machine's
+`README.md`, its `*_REVIEW.md`, and its `*_PARITY.md` (or the shared
+one it uses) against what the code now does.
+
+### README.md
+
+- One short opening that names the hardware. Specs are the machine
+  itself: CPU, clocks, memory, video, sound, storage, input, firmware,
+  OS. Link the REVIEW, and the PARITY when the machine has one. Shared
+  cores (Z80, 8080) get a link when that is the board's CPU write-up.
+- Describe the hardware, not the host. Do not say "running in the
+  browser", "the page ships", or copyright stand-in essays. Firmware
+  and OS lines may name what is included (FreeDOS, Bochs BIOS, a
+  self-test ROM) as facts; the labelled-departure rule for copyrighted
+  firmware still applies in the live UI and elsewhere.
+- When a change alters something a visitor would see in Specs (CPU,
+  RAM, video, storage, sound, input, firmware, OS, or a labelled gap
+  called out in the summary), update the README in the same change.
+  Leave the opening alone when only internals move.
+
+### `*_REVIEW.md`
+
+- Present tense, present state. Say what the machine does and cite the
+  source. Do not write a build journal: no phases, milestones, rounds,
+  "we found a bug", "previously", "used to", or "what changed". A real
+  silicon quirk stays, described as what the chip does, not as a bug.
+- Keep section numbers (`## N`, `### N.M`). Other docs and the PARITY
+  backlog cite them. You may retitle the words after a number; do not
+  renumber without updating every citation.
+- A behaviour change updates the matching section, or adds one. When
+  later work replaces earlier behaviour, rewrite the old section to
+  match the code (or point at the section that holds the current
+  description). Do not leave a reader on an obsolete "not yet done".
+- Prefer pointing at `ctest -N` / the spec files over hard-coding test
+  totals that rot. Keep port maps, timings, part numbers, and primary
+  sources.
+
+### `*_PARITY.md`
+
+- The open backlog only. When an item lands, write the current
+  behaviour and its source into the REVIEW and delete the item here.
+  Open new items for gaps that are still missing. Fix stale "current
+  state" claims and IDs.
+- Do not leave an item marked done and still open under the same ID.
+  Rename leftovers when a close-out reuses a number.
+- Refresh the status table when the backlog moves. Rough parity
+  percentages are a guide, not a gate.
+
+New machines ship a `README.md` and a `*_REVIEW.md` from the start, and
+a `*_PARITY.md` when there is a backlog to track (see "Adding a new
+machine"). Cabinets also list the REVIEW and PARITY in
+[`.claude/arcade.md`](.claude/arcade.md).
 
 ## Always delegate to a cheaper model when the task allows it
 

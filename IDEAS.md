@@ -121,7 +121,9 @@ hardware, triggered by the emulated mechanism rather than by a timer.
 - ASR-33: print head and carriage per character, carriage return, the motor
   idling, the paper-tape punch and reader
 - ibmpc-at and pc486: floppy seek and grind, hard disk spin-up and seek
-  chatter, the PC speaker already exists
+  chatter, the PC speaker already exists. The AT already has the event
+  path and a synthesized stand-in behind an opt-in Drive noise checkbox
+  (`IBM_PCAT_REVIEW.md` §77); recordings would replace its synth voices
 - cassette: the tones actually on the tape while it plays (optional,
   because it's loud)
 

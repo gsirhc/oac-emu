@@ -3,10 +3,8 @@
 The open gaps between the shared Z80 core plus the five boards built on it
 (Pac-Man, Frogger, Scramble, Galaxian, Galaga) and the real 1979-81 PCBs,
 plus test gaps against the repo rules in `CLAUDE.md` and `.claude/arcade.md`.
-First audited 2026-10-08 against every source file. When an item is
-fixed, write it up in `Z80_REVIEW.md` (Z80) or the
-board's `*_REVIEW.md` (fact, why it matters, what it fixed, source) and
-delete it here.
+First audited 2026-10-08 against every source file. When an item lands, write the current behavior and its source into
+`Z80_REVIEW.md` (Z80) or the board's `*_REVIEW.md` and delete it here.
 
 Done: the Z80 core (`Z80_REVIEW.md` §3-§9) and, on 2026-10-09, every
 board item that has a source: Pac-Man P1-P5 (`PACMAN_REVIEW.md` §10),

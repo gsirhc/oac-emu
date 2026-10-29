@@ -5,9 +5,8 @@ IBM EGA, plus the test gaps against the repo rules in `CLAUDE.md`. Shared
 chips live in `shared/pc/` and also drive `pc486`; their tests are under
 `shared/pc/tests/` and build into this machine's `make check`. Where a 486
 fix ports, the item cites its `PC486_REVIEW.md` section. Checked against
-the code through `IBM_PCAT_REVIEW.md` §76 (2026-10-28). When an item is
-fixed, write it up in `IBM_PCAT_REVIEW.md` as usual (fact, why it matters,
-what it fixed, source) and delete it here.
+the code through `IBM_PCAT_REVIEW.md` §78 (2026-10-29). When an item lands, write the current behavior and its source into
+`IBM_PCAT_REVIEW.md` and delete it here.
 
 Done so far: the real-mode CPU, C1-C9 (`IBM_PCAT_REVIEW.md` §44), the
 reset vector and `F1h`, C11-C12 (§45), bus timing, T1-T5 and T8 with P5
@@ -132,6 +131,10 @@ don't look like forgotten gaps:
   devices" where the AT has ROM BASIC. IBM retries A: four times and C:
   three, checks a floppy's first byte and fill pattern instead, and prints
   nothing. §71.1.
+- **D8. Drive noise is synthesized.** The Drive noise checkbox plays
+  floppy steps, motor, C:'s spindle and seeks from the controllers' own
+  events, but the sounds are made from filtered noise, not recordings of
+  a 1.2MB drive or an ST4038. IDEAS.md §10. §77.
 - **D6. egabios hooks INT 15h AH=4Fh + INT 1Ch for Print Screen.**
   BIOS-bochs-legacy never issues INT 5 on PrtSc (E0 37 becomes keypad `*`).
   egabios swallows the sequence on AH=4Fh and runs INT 5 from INT 1Ch.

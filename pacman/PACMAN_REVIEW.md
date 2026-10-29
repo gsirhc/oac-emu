@@ -5,7 +5,7 @@ This document plays the same role as `altair8800/ALTAIR_REVIEW.md`,
 `ibmpc-at/IBM_PCAT_REVIEW.md`: a citation trail for the decisions
 behind the emulator's behavior, and an honest list of what isn't built yet.
 
-## 0. Status: v1 of the Midway Pac-Man board is done
+## 0. Status: the Midway Pac-Man board
 
 The Z80 core (`shared/cpu/cpu_z80.{h,cpp}`), video (`video.{h,cpp}`), Namco WSG
 (`wsg.{h,cpp}`), and the board-level `machine.{h,cpp}` are implemented and
@@ -224,10 +224,9 @@ enough on its own, though: which nibble supplies pen bit 0 vs. bit 1 also
 matters, and monochrome glyphs (letters, digits, walls) set both bits
 identically so they look correct either way -- only genuinely 2bpp art
 (the maze dots) reveals a swap here, by resolving to a palette index that's
-black instead of the intended color. This was a real bring-up bug: dots
-were being drawn (confirmed via VRAM byte dumps) but invisible, and the
-maze walls came out the wrong hue, both from the same wrong-nibble-to-
-pen-bit assignment. Palette is a 2-stage lookup: a 6-bit tile/sprite
+black instead of the intended color. A swapped nibble-to-pen-bit
+assignment leaves the maze dots invisible (they are in VRAM, but black)
+and the maze walls the wrong hue. Palette is a 2-stage lookup: a 6-bit tile/sprite
 "color" attribute plus a 2-bit pixel value index
 into a 256-byte lookup PROM, whose output byte indexes a 32-byte RGB color
 PROM (`Video::lookup_rgb`) — this two-PROM indirection (not a direct
@@ -284,22 +283,20 @@ sprite number above them). Both bits apply in *native* (pre-rotation,
 landscape) space, before the 90 degree rotation swaps the axes for the upright
 cabinet: native Y-flip ends up moving a sprite along the upright screen's
 *horizontal* axis (`render`'s `dx` depends on native y) and native X-flip
-along its *vertical* axis (`dy = native x`). This axis swap is what made
-this bug easy to get only half right during bring-up: an initial fix,
-made by watching only on-screen left/right walking and swapping which bit
-fed which flip, happened to correct the horizontal case but left the
-vertical case (up/down walking) with the mouth opening backwards -- and
-independently guessing a fix for *that* by flipping one bit's polarity in
-isolation fixed Pac-Man but flipped every ghost upside down (ghosts always
+along its *vertical* axis (`dy = native x`). This axis swap makes the
+flip bits easy to get only half right. Swapping which bit feeds which flip
+corrects the horizontal case but leaves the vertical case (up/down
+walking) with the mouth opening backwards, and flipping one bit's polarity
+in isolation fixes Pac-Man but turns every ghost upside down (ghosts always
 leave both bits 0, so any wrong-axis fix that isn't a no-op at bit=0 will
-visibly break them). The bug only fully resolves by using the
-bit-to-axis pairing unchanged and letting the existing rotation transform
-account for the axis swap, rather than re-deriving new bit semantics by
+visibly break them). The correct model uses the
+bit-to-axis pairing unchanged and lets the existing rotation transform
+account for the axis swap, rather than deriving new bit semantics by
 eye per axis. `Video.SpriteFlipBitsAreXBit0YBit1` and
 `Video.UnflippedSpriteKeepsBottomEdgeAtBottom` are the regression tests
 (the latter specifically pins the ghosts' always-unflipped case), verified
 against real gameplay (walking in all four joystick directions, ghosts
-staying dome-up) via a native trace harness before landing.
+staying dome-up) via a native trace harness.
 
 Sprite transparency isn't "pen index 0 is transparent". Lomont says colour 0
 in sprite images is transparent, and that colour is the lookup-PROM output, so
@@ -311,12 +308,11 @@ ROM's PROMs: color attribute 0 maps every pen to `#000000`). A renderer
 that only skips literal pen 0 still draws that "invisible" Pac-Man as an
 opaque black circle, which -- because he's overlapping the eaten ghost's
 position and drawn on top of it in sprite priority order -- blots out part
-of the "200"/"400"/"800"/"1600" score sprite underneath. This was a real
-bring-up bug, reported as "the points are cut off and I see a little
-outline of Pac-Man" and reproduced via a native gameplay-simulation
-harness that ran the attract mode's Pac-Man-eats-ghosts demo (same sprite
-codes and freeze mechanic as real in-game ghost-eating) and dumped the
-frame at the moment of the freeze. `Video.SpriteWithAllPensMatchingPenZeroDoesNotOccludeSpriteBehindIt`
+of the "200"/"400"/"800"/"1600" score sprite underneath, so the points
+look cut off with a little outline of Pac-Man. The attract mode's
+Pac-Man-eats-ghosts demo shows it (same sprite codes and freeze mechanic
+as real in-game ghost-eating) at the moment of the freeze.
+`Video.SpriteWithAllPensMatchingPenZeroDoesNotOccludeSpriteBehindIt`
 is the regression test.
 
 ## 6. Sound: Namco WSG
@@ -349,23 +345,21 @@ agrees: waveform selects at `$5045`/`$504a`/`$504f`, pitch and volume at
 | `0x16-0x19` / `0x1a` | ch1 frequency / ch1 volume |
 | `0x1b-0x1e` / `0x1f` | ch2 frequency / ch2 volume |
 
-An earlier version of `Wsg::voice_freq`/`voice_wave`/`voice_vol` instead
-spaced all three voices 5 nibbles apart starting at offset 0 (frequency at
-`v*5`, waveform at `5+v`, volume at `0x15+v`) — plausible-looking, but it
+Spacing all three voices 5 nibbles apart starting at offset 0 (frequency at
+`v*5`, waveform at `5+v`, volume at `0x15+v`) looks plausible, but it
 means, e.g., voice 1's frequency LSB nibble (`0x05`) and voice 0's
 waveform select alias the *same* register, so an ordinary game write to
-one field silently corrupted the other. That produced exactly the bug
-report this fix addresses: audio that was present (voices were enabled,
-volumes were nonzero, the WASM audio pipeline was working) but sounded
-like crackling static — every write to a voice's own register also
-scrambled a neighboring voice's unrelated field, so no stable tone ever
-held for more than an instruction or two. `Wsg.RegisterMapMatchesRealHardwareOffsets`
+one field silently corrupts the other. The result is audio that is present
+(voices enabled, volumes nonzero) but sounds like crackling static: every
+write to a voice's own register also scrambles a neighboring voice's
+unrelated field, so no stable tone holds for more than an instruction or
+two. `Wsg.RegisterMapMatchesRealHardwareOffsets`
 and `Wsg.OnlyVoiceZeroHasLowFrequencyNibble` in `shared/namco/tests/wsg_test.cpp`
-pin the corrected map; a native harness feeding the real ROM set and
+pin the real map. A native harness feeding the real ROM set and
 dumping `Machine::audio` to a WAV file (analyzed offline with a sliding
-FFT) confirmed the fix produces long, stable single-frequency stretches —
-consistent with the siren/waka-waka tones — rather than the broadband,
-frame-to-frame-incoherent spectrum a wrong overlapping map produces.
+FFT) shows long, stable single-frequency stretches, consistent with the
+siren/waka-waka tones, rather than the broadband, frame-to-frame-incoherent
+spectrum an overlapping map produces.
 
 The WSG PROM sample nibble is decoded as an unsigned 4-bit value centred on 8
 (`(nibble & 0xf) - 8`; the centring is Unsourced), not a symmetric
@@ -484,9 +478,8 @@ asserts the GCC latch starts clear and is set by the first IM2 vector
 fetch. A folder that holds both zips picks by aux-board chips, so the
 Pac-Man playthrough does not silently run the overlay. The generated
 self-test ROM is rejected (`TST1` signature) so a misplaced hwtest dump
-cannot pass as a playthrough. These are the regressions that would
-have caught the rotation / mouth-facing / ghost-eat / aux-decode
-bring-up bugs against a real set; the rest of the suite never inserts
+cannot pass as a playthrough. They catch rotation, mouth-facing,
+ghost-eat and aux-decode errors against a real set; the rest of the suite never inserts
 a credit into Namco's program.
 
 ## 9. Known simplifications (documented, not silent)
@@ -512,8 +505,8 @@ a credit into Namco's program.
   three bytes in IndexedDB (keyed by program CRC) for a user ROM and pokes
   them back once POST is done (irq on after ~8 s — POST's RAM test also
   writes `1` through `$4E00`, and poking `$4E88` during that test fails as
-  BAD RAM). Attract is not required: a fast coin+start used to skip the
-  restore forever when the gate also demanded `$4E00 == 1`. Prefers the
+  BAD RAM). Attract is not required. The restore gate does not demand
+  `$4E00 == 1`, so a fast coin+start still restores. Prefers the
   saved TOP over leftover attract bytes at `$4E88`, and paints the six
   HIGH SCORE tiles at `$43F2` (Midway `#2ABE` — the ROM only copies TOP to
   the tilemap when a score beats it, not on attract) — a labelled departure.
@@ -533,9 +526,9 @@ a credit into Namco's program.
 Items P1-P5, B1-B3 and X5 from `shared/cpu/Z80_ARCADE_PARITY.md`.
 
 - **Held vblank IRQ (P1).** *Fact:* the vblank flip-flop holds /INT until
-  `$5000` is written 0. *Why:* the old one-shot `interrupt()` dropped a
-  request that arrived with interrupts off. *What:* `set_int` on the edge,
-  cleared by `$5000 = 0`. The self-test ROM's ISR now clears and re-arms
+  `$5000` is written 0. *Why:* a one-shot `interrupt()` drops a
+  request that arrives with interrupts off. *What:* `set_int` on the edge,
+  cleared by `$5000 = 0`. The self-test ROM's ISR clears and re-arms
   `$5000`, as the real ROM's does. *Source:* Namco Pac-Man wiki, Memory Mapped I/O.
   `Machine.VblankIrqIsHeldUntil5000IsCleared`,
   `Machine.VblankIrqFiresOncePerFrameWhenAcknowledged`,
@@ -554,8 +547,8 @@ Items P1-P5, B1-B3 and X5 from `shared/cpu/Z80_ARCADE_PARITY.md`.
   beam crosses it and loads a sprite line buffer in HBLANK, so a mid-frame
   write lands where the beam is. Lower slots win the buffer.
   `Video.MidFrameFlipTakesEffectAtTheBeam`, `Video.LowerSlotWinsTheLineBuffer`.
-- **Cocktail flip.** Found on the way. `$5003` flips the tilemap in X and
-  Y and leaves sprites alone; the renderer used to flip sprites and never flipped tiles. Lomont,
+- **Cocktail flip.** `$5003` flips the tilemap in X and
+  Y and leaves sprites alone. Lomont,
   Flip Screen. `Video.FlipScreenFlipsOnlyTheTilemap`.
 - **Transparency by lookup index.** Compares the lookup entry, not the
   RGB. Same visible result on the real PROMs.
@@ -569,26 +562,25 @@ pellet (`play_test`), checked against frames dumped from the real ROMs.
 
 ## 11. Memory map gaps (2026-10-09)
 
-Found while closing the coverage gaps. `make -C pacman coverage`
-reports the board code.
+`make -C pacman coverage` reports the board code.
 
 - **No RAM at `$4800–$4BFF`.** The board has 1K of work RAM at `$4C00`
   (Namco Pac-Man wiki, Memory Map: `$4800-$4BFF` unused; Lomont's table 1
   shows RAM from `$4800`, the two disagree and the wiki matches the 1K
-  chip count). We mapped 2K from `$4800`. Reads there now return `$BF`
+  chip count). Reads there return `$BF`
   and writes go nowhere. The `$BF` value is Unsourced.
   `Machine.NoRamAt4800TheFloatingBusReadsBF`.
 - **Mirrors.** Wiki Memory Map and Memory Mapped I/O: `$6000-$7FFF` mirror
   `$4000-$5FFF`, the I/O page repeats every `$100`, the latch every 8
-  bytes, and the ports and watchdog every 64. We had only the A15 mirror.
+  bytes, and the ports and watchdog every 64.
   `Machine.A13AndA15MirrorTheRamBlocks`,
   `Machine.IoPageIgnoresA8ToA11`, `Machine.WatchdogKicksAnywhereIn50C0To50FF`.
 - **Latch bits 2, 4, 5 and 6 do nothing.** The wiki lists them as connected
   to nothing. Lomont calls `$5004-$5006` lamps and a lockout that Pac-Man
   does not use. `Machine.LatchBitsWithNoHardwareDoNothing`.
-- **WSG through the bus.** `$5001` and `$5040–$505F` had no test.
-  `Machine.SoundChipSitsAt5040AndIsEnabledBy5001`. The WSG tests now drive
-  the real `advance()` path, and the test-only `mix_at` mixer is gone.
+- **WSG through the bus.** `$5001` and `$5040–$505F` are tested through the bus.
+  `Machine.SoundChipSitsAt5040AndIsEnabledBy5001`. The WSG tests drive
+  the real `advance()` path.
   `Wsg.AdvancingWithoutOutputStillTurnsThePhase` covers running the chip
   with no host output.
 

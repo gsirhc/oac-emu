@@ -409,6 +409,135 @@
       }
     }
     registerProcessor("pc-speaker-processor", PcSpeakerProcessor);
+
+    // Synthesized drive noise, driven by the controllers' own step, motor and access events.
+    class DriveNoiseProcessor extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.t = 0;
+        this.next = 0;
+        this.on = false;
+        this.power = false;
+        this.spin = 0;
+        this.motor = [false, false];
+        this.motorLevel = [0, 0];
+        this.accessUntil = [0, 0, 0];
+        this.hddRustle = this.bandpass(1200, 1.5);
+        this.rot = [0, 0];
+        this.hum = [0, 0];
+        this.spinPhase = 0;
+        this.air = 0;
+        this.pending = [];
+        this.voices = [];
+        this.port.onmessage = (e) => this.message(e.data);
+      }
+      message(m) {
+        if (m.type === "enable") {
+          this.on = m.on;
+          this.power = m.power;
+          if (!m.on) { this.pending = []; this.voices = []; this.motor = [false, false]; }
+          return;
+        }
+        if (m.type === "power") {
+          this.power = m.on;
+          if (!m.on) this.spin = 0;
+          this.pending = []; this.voices = []; this.motor = [false, false];
+          return;
+        }
+        // 50 ms behind real time absorbs frame jitter; a stall resyncs instead of piling up
+        const lead = 0.05 * sampleRate;
+        if (this.next < this.t + lead || this.next > this.t + 6 * lead) this.next = this.t + lead;
+        const ev = m.ev;
+        for (let i = 0; i < ev.length; i += 5) {
+          const at = this.next + ev[i], kind = ev[i + 1], src = ev[i + 2], steps = ev[i + 3], per = ev[i + 4];
+          if (kind === 0 || kind === 1) this.pending.push({ at, kind: "motor", src, on: kind === 0 });
+          else if (kind === 3) this.pending.push({ at, kind: "access", src, len: per });
+          else if (src === 2 && steps === 1) this.pending.push({ at, kind: "swing", src, len: per });
+          else for (let k = 0; k < Math.min(steps, 1024); k++) this.pending.push({ at: at + k * per, kind: "step", src });
+        }
+        this.pending.sort((a, b) => a.at - b.at);
+        this.next += m.samples;
+      }
+      bandpass(f, q) {
+        const w = 2 * Math.PI * f / sampleRate, al = Math.sin(w) / (2 * q), a0 = 1 + al;
+        return { b0: al / a0, b2: -al / a0, a1: -2 * Math.cos(w) / a0, a2: (1 - al) / a0, x1: 0, x2: 0, y1: 0, y2: 0 };
+      }
+      filt(b, x) {
+        const y = b.b0 * x + b.b2 * b.x2 - b.a1 * b.y1 - b.a2 * b.y2;
+        b.x2 = b.x1; b.x1 = x; b.y2 = b.y1; b.y1 = y;
+        return y;
+      }
+      start(h) {
+        if (h.kind === "motor") { this.motor[h.src] = h.on; return; }
+        const sr = sampleRate;
+        if (h.kind === "access") {
+          this.accessUntil[h.src] = Math.max(this.accessUntil[h.src], h.at + h.len);
+          if (h.src === 2) this.hddTick(0, 0.4);
+          return;
+        }
+        if (h.kind === "step" && h.src < 2) {
+          this.voices.push({ age: 0, len: 0.008 * sr, decay: 0.0012 * sr, gain: 0.45, bp: this.bandpass(2800, 4), thud: 420, thudGain: 0.25, thudDecay: 0.0015 * sr });
+        } else if (h.kind === "step") {
+          this.hddTick(0, 1);
+        } else {
+          const len = Math.max(h.len, 0.004 * sr);
+          this.hddTick(0, 1.1);
+          this.voices.push({ age: 0, len, decay: len, gain: 0.04, bp: this.bandpass(1800, 3), swell: len });
+          this.hddTick(-len, 1);
+        }
+      }
+      // Sharp tick, a low knock and a short ring, as of the actuator hitting the casting.
+      hddTick(age, k) {
+        const sr = sampleRate;
+        this.voices.push({ age, len: 0.03 * sr, decay: 0.0005 * sr, gain: 0.35 * k, bp: this.bandpass(4800, 3), thud: 180, thudGain: 0.35 * k, thudDecay: 0.004 * sr });
+        this.voices.push({ age, len: 0.04 * sr, decay: 0.02 * sr, gain: 0.25 * k, bp: this.bandpass(650, 8), impulse: true });
+      }
+      process(_inputs, outputs) {
+        const out = outputs[0][0];
+        const sr = sampleRate;
+        for (let i = 0; i < out.length; i++, this.t++) {
+          while (this.pending.length && this.pending[0].at <= this.t) this.start(this.pending.shift());
+          if (!this.on) { out[i] = 0; continue; }
+          let s = 0;
+          for (let d = 0; d < 2; d++) {
+            const target = this.motor[d] && this.power ? 1 : 0;
+            this.motorLevel[d] += (target - this.motorLevel[d]) * (target ? 8 : 4) / sr;
+            const lvl = this.motorLevel[d];
+            if (lvl < 1e-4) continue;
+            // A: turns at 360 rpm, B: at 300 (kDrive12M, kDrive360K)
+            this.rot[d] += (d === 0 ? 6 : 5) / sr;
+            const n = Math.random() * 2 - 1;
+            this.hum[d] += (n - this.hum[d]) * 0.01;
+            const w = 2 * Math.PI * this.rot[d] * 20;
+            s += lvl * ((0.02 * Math.sin(w) + 0.008 * Math.sin(2 * w)) * (1 + 0.05 * Math.sin(2 * Math.PI * this.rot[d])) + this.hum[d] * 0.15);
+            if (this.t < this.accessUntil[d]) s += lvl * n * 0.003;
+          }
+          this.spin += ((this.power ? 1 : 0) - this.spin) * (this.power ? 0.25 : 0.4) / sr;
+          if (this.spin > 1e-4) {
+            this.spinPhase += 60 * this.spin / sr;
+            const p = 2 * Math.PI * this.spinPhase;
+            this.air += ((Math.random() * 2 - 1) - this.air) * 0.05;
+            if (this.t < this.accessUntil[2]) s += this.filt(this.hddRustle, this.air) * 0.15;
+            s += this.spin * (0.015 * Math.sin(p) + 0.003 * Math.sin(20 * p) + 0.0015 * Math.sin(60 * p) + 0.015 * this.air);
+          }
+          for (let v = this.voices.length - 1; v >= 0; v--) {
+            const vo = this.voices[v];
+            if (vo.age++ < 0) continue;
+            if (vo.impulse) {
+              s += this.filt(vo.bp, vo.age === 1 ? 80 : 0) * vo.gain;
+            } else {
+              const env = vo.swell ? Math.sin(Math.PI * vo.age / vo.swell) : Math.exp(-vo.age / vo.decay);
+              s += this.filt(vo.bp, Math.random() * 2 - 1) * 6 * env * vo.gain;
+            }
+            if (vo.thud) s += vo.thudGain * Math.sin(2 * Math.PI * vo.thud * vo.age / sr) * Math.exp(-vo.age / vo.thudDecay);
+            if (vo.age >= vo.len) this.voices.splice(v, 1);
+          }
+          out[i] = Math.max(-1, Math.min(1, s * 0.5));
+        }
+        return true;
+      }
+    }
+    registerProcessor("drive-noise-processor", DriveNoiseProcessor);
   `;
 
   async function ensureAudioStarted() {
@@ -422,10 +551,49 @@
     }
     speakerNode = new AudioWorkletNode(audioCtx, "pc-speaker-processor", { numberOfOutputs: 1, outputChannelCount: [1] });
     speakerNode.connect(audioCtx.destination);
+    driveNode = new AudioWorkletNode(audioCtx, "drive-noise-processor", { numberOfOutputs: 1, outputChannelCount: [1] });
+    driveNode.connect(audioCtx.destination);
+    driveNode.onprocessorerror = () => { driveNoiseLog.errors++; console.error("drive noise worklet failed"); };
+    driveNode.port.postMessage({ type: "enable", on: driveNoiseCheckbox.checked, power: poweredOn });
   }
   speakerCheckbox.addEventListener("change", () => {
     if (speakerCheckbox.checked) ensureAudioStarted();
   });
+
+  // ---- drive noise (synthesized, muted every page load) ----
+  const driveNoiseCheckbox = document.getElementById("driveNoiseEnabled");
+  driveNoiseCheckbox.checked = false;
+  let driveNode = null;
+  const driveNoiseLog = { motorOn: 0, motorOff: 0, access: [0, 0, 0], seeks: [], frames: 0, errors: 0 };
+  driveNoiseCheckbox.addEventListener("change", async () => {
+    const on = driveNoiseCheckbox.checked;
+    if (machine) machine.setDriveSound(on);
+    if (on) await ensureAudioStarted();
+    if (driveNode) driveNode.port.postMessage({ type: "enable", on, power: poweredOn });
+  });
+
+  function pumpDriveNoise(frameStartCycle, cyclesThisFrame, dtSeconds) {
+    const ev = machine.driveSoundEvents();
+    if (!driveNoiseCheckbox.checked || cyclesThisFrame <= 0) return;
+    for (let i = 0; i < ev.length; i += 5) {
+      const kind = ev[i + 1], src = ev[i + 2], steps = ev[i + 3];
+      if (kind === 0) driveNoiseLog.motorOn++;
+      else if (kind === 1) driveNoiseLog.motorOff++;
+      else if (kind === 3) driveNoiseLog.access[src]++;
+      else if (driveNoiseLog.seeks.length < 256) driveNoiseLog.seeks.push({ src, steps });
+    }
+    if (!driveNode) return;
+    const sampleRate = audioCtx.sampleRate;
+    const cyclesPerRealSecond = cyclesThisFrame / dtSeconds;
+    const samples = Math.max(1, Math.round(dtSeconds * sampleRate));
+    // offsets follow the frame; step periods and access lengths keep the real 8 MHz time
+    for (let i = 0; i < ev.length; i += 5) {
+      ev[i] = Math.min(samples, Math.max(0, ((ev[i] - frameStartCycle) / cyclesPerRealSecond) * sampleRate));
+      ev[i + 4] = (ev[i + 4] / kCpuHz) * sampleRate;
+    }
+    driveNode.port.postMessage({ type: "frame", samples, ev }, [ev.buffer]);
+    driveNoiseLog.frames++;
+  }
 
   // Turns this frame's (cpu_cycle, level) edges into samples for the worklet ring.
   function pumpAudio(frameStartCycle, cyclesThisFrame, dtSeconds) {
@@ -776,6 +944,7 @@
     if (dbg.on) dbg.emuMs += performance.now() - emuT0;
 
     pumpAudio(frameStartCycle, machine.totalCycles() - frameStartCycle, dtSeconds);
+    pumpDriveNoise(frameStartCycle, machine.totalCycles() - frameStartCycle, dtSeconds);
 
     const drawT0 = dbg.on ? performance.now() : 0;
     const rgba = machine.renderFrame();
@@ -1042,6 +1211,7 @@
       machine.loadRom(0x100000 - firmware.bios.byteLength, new Uint8Array(firmware.bios));
       machine.loadRom(0xC0000, new Uint8Array(firmware.videoBios));
       machine.mountHdd(savedHdd || new Uint8Array(firmware.hdd));
+      machine.setDriveSound(driveNoiseCheckbox.checked);
       remountPendingFloppies();
       // The battery kept the clock running, so a fresh power-on reads the visitor's local time.
       const now = new Date();
@@ -1050,6 +1220,8 @@
     }
     poweredOn = true;
     powerLed.classList.add("power-on");
+    if (audioCtx) audioCtx.resume().catch(() => {});
+    if (driveNode) driveNode.port.postMessage({ type: "power", on: true });
     lastT = null;
     requestAnimationFrame(frame);
     refreshHddControls();
@@ -1071,6 +1243,7 @@
         whenHddSaved: () => hddPersistChain,
         // Skips the one-minute wait before retrying a failed save.
         retryHddSave: () => { hddRetryAt = 0; return persistHddIfDirty(); },
+        driveNoiseLog,
       };
     }
   }
@@ -1122,6 +1295,7 @@
     for (const bay of bays) bay.querySelector('[data-role="led"]').classList.remove("on");
     hddLed.classList.remove("on");
     clearScreenToBlack();
+    if (driveNode) driveNode.port.postMessage({ type: "power", on: false });
     if (audioCtx) { audioCtx.suspend().catch(() => {}); }
     refreshHddControls();
     refreshMemoryControls();

@@ -22,6 +22,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "drive_sound.h"
+
 namespace pc {
 
 // One drive's mechanism. Media geometry still follows the image size.
@@ -46,7 +48,8 @@ public:
         bool present = false;
         bool write_protected = false;
         int cylinders = 0, heads = 0, sectors_per_track = 0;
-        int current_cylinder = 0;  // physical track under the head
+        int current_cylinder = 0;  // physical track under the head; reset and mount don't move it
+        int pcn = 0;               // the controller's Present Cylinder Number for this drive
         bool motor_on = false;
         bool dirty = false;
         // DSKCHG is asserted at power-on and after every mount(), and cleared by the
@@ -63,6 +66,7 @@ public:
     };
     Drive drives[2];
     bool lenient_media = false;
+    DriveSoundLog sound;
 
     Fdc765(double cpu_hz, const DriveType& a, const DriveType& b) : cpu_hz_(cpu_hz), types_{a, b} { reset(); }
 
@@ -138,6 +142,7 @@ private:
     // Pending seek/recalibrate interrupt, reported by SENSE INTERRUPT STATUS (0x08).
     bool seek_pending_irq_ = false;
     int seek_drive_ = 0;
+    uint8_t seek_st0_ = 0;
     double seek_credit_ = 0.0, seek_target_ = 0.0;
     bool seeking_ = false;
 

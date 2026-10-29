@@ -86,8 +86,9 @@ another emulator’s shortcuts as if they were hardware.
   its logo in frame) and a year · manufacturer · CPU meta line). Cabinets
   are hub-only; the home page links in via the full-width neon
   Enter the Arcade portal on `index.html`.
-- `*_REVIEW.md` citation trail and `*_PARITY.md` backlog (both kept
-  current with the code; see CLAUDE.md "Review and parity docs").
+- `README.md` (hardware summary and specs), `*_REVIEW.md` citation
+  trail, and `*_PARITY.md` backlog (all kept current with the code; see
+  CLAUDE.md "Machine docs").
 
 ## Shared chips
 

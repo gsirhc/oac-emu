@@ -1,28 +1,26 @@
 # oac-emu
 
-Browser emulators of Old-Ass Computers, built from scratch. Each machine is written in C++ compiled to WebAssembly. 
+Browser-based emulators of Old-Ass Computers built from scratch. Each machine is written in C++ compiled to WebAssembly. 
 
 Visit [https://oac-emu.dev](https://oac-emu.dev) to use the emulators. 
 
-## Machines
+## Emulators
 
-Every machine has a `*_REVIEW.md` with its hardware findings and citations.  Also, most machines have a `*_PARITY.md` outlining how close it is to the real hardware.
+Navigate to each machine's sub-directory for more information.  Every one has a `*_REVIEW.md` with its hardware findings and citations.  Also, some machines have a `*_PARITY.md` outlining how close it is to the real hardware.
 
 ## Frontend
 
-The frontend is pure JavaScript, HTML and CSS.  No 3rd party frameworks are used to  keep it pure.  I also had a little fun with the themes, sorry.  
+The web frontend is pure JavaScript, HTML and CSS.  No 3rd party frameworks are used.  I also had a little fun with the themes, sorry.  
 
-The monitors (CRTs / terminals) are realistic to the actual displays.  Though, I found realism effects like curved glass, scanlines and afterglow to be more annoying then cool.  So they are rendered clear and flat for readability and crisp displays.
+The monitors (CRTs / terminals) are realistic to the actual displays.  Though, I found realism effects like curved glass, scanlines and afterglow to be more annoying then cool.  So they are rendered clear and flat for readability and crispness.
 
 ## AI Statement
 
-AI is used to write the majority of the code.  I know that will trigger some people but I assure you that I took on an architectural role to ensure the AI was just the coder.  I've also used this project to learn how to properly and responsibly use AI to build a complex software system.  Lets just say it takes a considerable amount of passion and work to keep AI on the rails but it ultimately writes code much faster.  
+AI is used to write the majority of the code.  I know that will trigger some of you.  This project started out as a way for me to learn how to properly and responsibly use AI to write software.  It has turned into a passion of reliving the old days of computing and gaming.  I will say AI is not what the Kool-Aid drinkers think it is.  It takes a considerable amount of passion and work to keep AI on the rails.  However, as you can see here, it does ultimately write code much faster.  If you would like more details on how I use AI, email me at chris @ oac-emu . com.  Please keep it professional.  
 
-If you are curious about my experiences with AI after spending decades as a "traditional" programmer, feel free to contact me at chris @ oac-emu . com (please keep it professional).  
+Success is not measured by tools or methods, but rather passion, heart and ultimately the end result.
 
-Success is not measured by tools or methods, but rather passion, heart and time.
-
-Earlier development history: [https://github.com/gsirhc/retro](https://github.com/gsirhc/retro)
+Earlier development history (before moving to the oac-emu repo): [https://github.com/gsirhc/retro](https://github.com/gsirhc/retro)
 
 ## License
 

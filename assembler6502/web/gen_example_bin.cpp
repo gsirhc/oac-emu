@@ -1,7 +1,7 @@
 // Build-time tool: types one Example program into the ROM's resident editor
 // headlessly, then dumps the source buffer for app.js's pokeExample() to
-// poke into RAM. This sidesteps the Examples-load wedging bug
-// (CGOAC6502_REVIEW.md, "Examples-load wedging the CPU"). It also runs the
+// poke into RAM. This sidesteps the serial-injection wedge
+// (CGOAC6502_REVIEW.md §16). It also runs the
 // ROM's ASM over the source so a broken example fails the build.
 //
 // Usage: gen_example_bin <firmware.bin> <firmware.lbl> <source.asm> <output.bin>

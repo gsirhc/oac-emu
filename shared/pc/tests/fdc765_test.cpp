@@ -297,6 +297,119 @@ TEST_F(Fdc765Test, SeekTakesOneStepTimePerCylinderAndReportsTheNewCylinder) {
     EXPECT_FALSE(fdc.irq_pending());
 }
 
+TEST_F(Fdc765Test, RecalibrateAfterAResetStepsTheHeadHomeFromWhereItWasLeft) {
+    auto img = MakeImage(80, 2, 15);
+    fdc.mount(0, img.data(), img.size());
+    PowerOnMotorAndSelect(0);
+    fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x00); fdc.out(0x3F5, 30);
+    fdc.reset();
+    fdc.mount(0, img.data(), img.size());
+    EXPECT_EQ(fdc.drives[0].current_cylinder, 30) << "reset and a disk swap leave the head alone";
+    fdc.sound.enabled = true;
+    PowerOnMotorAndSelect(0);
+    fdc.out(0x3F5, 0x07); fdc.out(0x3F5, 0x00);
+    uint64_t c = 0;
+    for (; c < 10'000'000 && !fdc.irq_pending(); c += 100) fdc.tick(c);
+    fdc.out(0x3F5, 0x08);
+    EXPECT_EQ(fdc.in(0x3F5), 0x20);
+    EXPECT_EQ(fdc.in(0x3F5), 0);
+    EXPECT_EQ(fdc.drives[0].current_cylinder, 0);
+    auto ev = fdc.sound.drain();
+    ASSERT_EQ(ev.size(), 2u);
+    EXPECT_EQ(ev[1].steps, 30);
+}
+
+TEST_F(Fdc765Test, SeekPulsesFollowPcnNotTheHead) {
+    auto img = MakeImage(80, 2, 15);
+    fdc.mount(0, img.data(), img.size());
+    PowerOnMotorAndSelect(0);
+    fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x00); fdc.out(0x3F5, 30);
+    fdc.reset();
+    PowerOnMotorAndSelect(0);
+    fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x00); fdc.out(0x3F5, 10);  // PCN 0 -> 10: ten pulses in
+    EXPECT_EQ(fdc.drives[0].current_cylinder, 40);
+    EXPECT_EQ(fdc.drives[0].pcn, 10);
+    fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x01); fdc.out(0x3F5, 45);  // the 40-track B: stops at 39
+    EXPECT_EQ(fdc.drives[1].current_cylinder, 39);
+}
+
+TEST_F(Fdc765Test, RecalibrateGivesUpAfter77PulsesWithEquipmentCheck) {
+    auto img = MakeImage(80, 2, 15);
+    fdc.mount(0, img.data(), img.size());
+    PowerOnMotorAndSelect(0);
+    fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x00); fdc.out(0x3F5, 79);
+    fdc.reset();
+    PowerOnMotorAndSelect(0);
+    auto recal = [&] {
+        fdc.out(0x3F5, 0x07); fdc.out(0x3F5, 0x00);
+        uint64_t c = 0;
+        for (; c < 10'000'000 && !fdc.irq_pending(); c += 100) fdc.tick(c);
+        fdc.out(0x3F5, 0x08);
+        uint8_t st0 = fdc.in(0x3F5);
+        fdc.in(0x3F5);
+        return st0;
+    };
+    EXPECT_EQ(recal(), 0x70) << "IC abnormal, SE, EC";
+    EXPECT_EQ(fdc.drives[0].current_cylinder, 2);
+    EXPECT_EQ(recal(), 0x20);
+    EXPECT_EQ(fdc.drives[0].current_cylinder, 0);
+}
+
+TEST_F(Fdc765Test, DriveSoundLogsNothingUntilEnabled) {
+    auto img = MakeImage(80, 2, 15);
+    fdc.mount(0, img.data(), img.size());
+    PowerOnMotorAndSelect(0);
+    fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x00); fdc.out(0x3F5, 30);
+    EXPECT_TRUE(fdc.sound.drain().empty());
+}
+
+TEST_F(Fdc765Test, DriveSoundStepsOncePerCylinderAtTheStepRate) {
+    auto img = MakeImage(80, 2, 15);
+    fdc.mount(0, img.data(), img.size());
+    fdc.sound.enabled = true;
+    PowerOnMotorAndSelect(0);
+    fdc.out(0x3F5, 0x03); fdc.out(0x3F5, 0xDF); fdc.out(0x3F5, 0x02);  // SRT D: 3 ms
+    fdc.tick(5000);
+    fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x00); fdc.out(0x3F5, 30);
+    fdc.out(0x3F5, 0x0F); fdc.out(0x3F5, 0x00); fdc.out(0x3F5, 30);  // same cylinder, no pulses
+    fdc.out(0x3F5, 0x07); fdc.out(0x3F5, 0x00);
+    auto ev = fdc.sound.drain();
+    ASSERT_EQ(ev.size(), 3u);
+    EXPECT_EQ(ev[0].kind, pc::DriveSoundEvent::kMotorOn);
+    EXPECT_EQ(ev[1].kind, pc::DriveSoundEvent::kSeek);
+    EXPECT_EQ(ev[1].steps, 30);
+    EXPECT_DOUBLE_EQ(ev[1].period, 0.003 * 8e6);
+    EXPECT_DOUBLE_EQ(ev[1].cycle, 5000.0);
+    EXPECT_EQ(ev[2].steps, 30) << "RECALIBRATE back to 0";
+    EXPECT_TRUE(fdc.sound.drain().empty());
+}
+
+TEST_F(Fdc765Test, DriveSoundFollowsEachMotorBitAndReset) {
+    fdc.sound.enabled = true;
+    fdc.out(0x3F2, 0x3C);
+    fdc.out(0x3F2, 0x2C);
+    fdc.reset();
+    auto ev = fdc.sound.drain();
+    ASSERT_EQ(ev.size(), 4u);
+    EXPECT_EQ(ev[0].kind, pc::DriveSoundEvent::kMotorOn); EXPECT_EQ(ev[0].drive, 0);
+    EXPECT_EQ(ev[1].kind, pc::DriveSoundEvent::kMotorOn); EXPECT_EQ(ev[1].drive, 1);
+    EXPECT_EQ(ev[2].kind, pc::DriveSoundEvent::kMotorOff); EXPECT_EQ(ev[2].drive, 0);
+    EXPECT_EQ(ev[3].kind, pc::DriveSoundEvent::kMotorOff); EXPECT_EQ(ev[3].drive, 1);
+}
+
+TEST_F(Fdc765Test, DriveSoundMarksAReadForItsTransferTime) {
+    auto img = MakeImage(80, 2, 15);
+    fdc.mount(0, img.data(), img.size());
+    PowerOnMotorAndSelect(0);
+    fdc.sound.enabled = true;
+    const uint8_t cmd[] = {0x46, 0x00, 0, 0, 1, 2, 2, 0x1B, 0xFF};  // READ DATA C0 H0 R1-2
+    for (uint8_t b : cmd) fdc.out(0x3F5, b);
+    auto ev = fdc.sound.drain();
+    ASSERT_EQ(ev.size(), 1u);
+    EXPECT_EQ(ev[0].kind, pc::DriveSoundEvent::kAccess);
+    EXPECT_DOUBLE_EQ(ev[0].period, 1024.0 / 62500.0 * 8e6);
+}
+
 TEST_F(Fdc765Test, SenseDriveStatusShowsTrackZeroOnlyAtCylinderZero) {
     auto img = MakeImage(40, 2, 9);
     fdc.mount(1, img.data(), img.size());

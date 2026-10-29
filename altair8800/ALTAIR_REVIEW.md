@@ -1,138 +1,50 @@
-# Altair 8800 — Independent Fidelity Review
+# Altair 8800 Fidelity Review
 
-**Date:** 2026-09-04
-**Scope:** `altair8800/` — C++ 8080 core, peripheral boards, WebAssembly
-wrapper, browser front end, both test suites.
-**Reviewer brief:** historical accuracy (accepting that some choices were made to
-let more software run), preset accuracy, code architecture, strict 8080
-execution fidelity, hardware/bus accuracy including I/O traps for the disk
-controller / paper tape reader / cassette, serial terminal accuracy, and whether
-the unit + E2E suites are adequate.
-
-**Nothing in the repo was changed by this review.** Every item below is a
-finding, a question, or a work item — with the owner's decisions already
-recorded where they were given (see *Owner decision* lines).
-
-This file now lives at `altair8800/ALTAIR_REVIEW.md` (moved from the
-repo root) and is versioned as the source of truth for review findings and
-responses — see the response log immediately below for what happened to each
-item, added the same day as the review.
-
----
-
-## Response log — 2026-09-04, implementing agent
-
-Verified the review's factual claims against source before acting on any of
-them (EI/interrupt dead-code, Kill-the-Bit OR-not-brightness, the RAM/ROM read
-order, the `test` substring guard, the cassette-tick/runCycles coupling) — all
-confirmed exactly as written. Where a response below disagrees, it's about
-scope or sequencing, not a correction of the review's facts.
-
-| # | Item | Status |
-|---|---|---|
-| §5.4 | "~716 bytes free" | **Resolved empirically** — booted `stock` with Auto-load and read the ROM's own banner. It prints `716 BYTES FREE`, and `4K BASIC 4.0 / COPYRIGHT MITS 1976` — which also answers §5.3's version-number question: not invented, it's what the ROM itself prints. No doc changes needed. |
-| §7.1 | CLAUDE.md's track-0 example | **Fixed.** Replaced with the `ANA` auxiliary-carry quirk as the "keep a real hardware quirk" example, and stated the distinction between a real hardware quirk and a convenience explicitly so it doesn't drift back. |
-| §3.5 | Boot PROM writable at 64 KB | **Fixed.** `bus.read`/`bus.write` now check the ROM window before the RAM ceiling, and `bus.write` drops writes into it. New disk.spec.ts test drives an `STA` through the CPU (not `writeByte()`, which bypasses the bus) to prove it. |
-| §6.8 | Test-seam guard | **Fixed** — real `URLSearchParams` parse instead of `.includes("test")`. |
-| §6.7 | `make cpm` not in `make check` | **Fixed** — `check: demo test cpm`; no-ops harmlessly if `cpm/*.COM` aren't fetched locally. |
-| §5.1 | Preset metadata (part numbers, eras, RAM story, blurb contradiction) | **Fixed** — see §5.2 response for the era reasoning. Real MITS part numbers (88-4MCS/88-4MCD/88-16MCD ×4), CP/M 2.2 → 1979, the 64 KB RAM story now told one way (4× 88-16MCD, matching the disk-cabinet hint), `baremetal`'s blurb no longer contradicts its own card list. Pinned in `presets.spec.ts`. |
-| §7.2 | `printManual` speed override | **Fixed** — one-line carve-out added to CLAUDE.md's overrides list. Also corrected the `?test=1` clause's stale "floppy load speed" claim while in there (§3.2d is still unimplemented — see below). |
-| §2.4 | `Cpu::reset()` clears all registers | **Doc comment only, as the review suggested** — not building a "leave registers alone" mode. Real MITS software already can't rely on post-reset register state either way; a mode that injects garbage would only matter for adversarially testing software's own init discipline, not a goal here. |
-| §3.6b | Kill the Bit lamps: OR, not brightness | **Fixed.** `addr_or_` replaced with a 16-element per-bit hit-count array (`Machine::busActivityCounts()`), mapped to lamp opacity in `app.js`. `panel-lights.spec.ts` now asserts two simultaneously-lit high bits render at different brightness, sampled every rendered frame in-page (Playwright's own poll round-trip was too slow to reliably catch the ~16 ms transition window — see the test's comment). |
-| §4 | Terminal profiles are cosmetic only | **Fixed, phased as A/B/C rather than one PR** (see the plan in the conversation this ran in): ASR-33/Glass TTY strip all escape sequences (a stateful filter, tested for a sequence split across filter calls too); VT52 translates the real DEC VT52 set to xterm-compatible sequences; ADM-3A translates its bare control-code cursor moves and `ESC =` addressing (translator unit-tested against the Lear Siegler ADM-3A protocol). ASR-33 now forces CAPS LOCK on. Baud-metering tests added for the five previously-untested profiles. VT100/Modern correctly have no filter (they're genuinely ANSI-compatible). New `termfilters.spec.ts`. |
-| §5.2 | 88-SIO vs 88-2SIO | **Option 1 (relabel), by agreement.** `baremetal`/`stock` moved to 1976 (when the 2SIO existed) rather than their software's earlier real MITS release date; documented as a deliberate choice in `app.js`, the web README, and here. Option 2 (implement 88-SIO) stays undone — see "Deferred" below for why it's coupled to §5.3's bootstrap question. |
-| §3.2b | `Disk88::reset()` homes the head | **Fixed.** RESET now only deselects the controller and clears its latches (`selected_`, `flags_`, `sector_`, `bufpos_`, `write_dirty_`); the head-homing loop is gone. New GoogleTest `DiskTest.ResetDoesNotHomeTheHead`, plus a Playwright test that boots CP/M (which seeks off track 0), hits RESET, and confirms the track is unchanged while the controller does deselect. |
-| §3.4a/b | Cassette transport frozen while stopped; RESET rewinds the tape | **Fixed.** `Machine::reboot()` no longer calls `cassette_.reset()` at all (the deck isn't on the bus RESET reaches). The frozen-transport bug needed more than removing a call, though: `cassette_.tick()` was paced entirely by `cpu_.cycles`, which never advances while the CPU is stopped. New `Machine::tickCassette(dtMs, running)`, called every rendered frame regardless of run state: while running it still paces off `cpu_.cycles` exactly as before (so 25×/50× and turbo stay correct); while not, it advances a separate `idle_cycles_` counter by real elapsed time at 2 MHz-equivalent, added to `cpu_.cycles` before the same `cassette_.tick()` call — so the two paces splice with no jump when RUN resumes. Two new Playwright tests: PLAY keeps winding with the CPU on STOP, and RESET touches neither tape position nor transport state. **Follow-up regression, found 2026-09-11 via CI (not this review):** `Cpu::reset()` (called by `Machine::reboot()`, i.e. the RESET paddle) zeroes `cpu_.cycles` back to 0 — so `cpu_.cycles` isn't just "frozen" during a reset the way this fix assumed, it *goes backward* from `cassette_.tick()`'s point of view. `tick()`'s `uint64_t d = cpuCycles - prev_tick_cy_` underflowed on that backward jump, turning it into an astronomically large spurious "elapsed time" that yanked the head to `capacity()` in one tick — the exact bug this fix's own "RESET touches neither tape position" test exists to catch, just not reliably (whether the underflowing math actually moved `pos_` measurably depended on how many cycles had elapsed before the reset). Fixed in `CassetteACR::tick()`: a `cpuCycles < prev_tick_cy_` guard resyncs the baseline and treats that tick as zero elapsed time, instead of underflowing. New GoogleTest `TickToleratesCpuCycleCounterGoingBackwardOnReset`. |
-| §2.2, §2.3 | `EI` delay, interrupt wiring | **Fixed.** `Cpu::ei_delay_` blocks `interrupt()` for exactly one retiring instruction after `EI` (counted down at the top of `step()`, not decremented by HALT's own idle cycles). `sio_.on_irq` now fires `cpu_.interrupt(0xFF)` (RST 7, the conventional Altair 2SIO vector) in `Machine`'s constructor. New `tests/interrupt_test.cpp` (8 cases): DI-ignored, EI-taken, HALT-wakes, HALT-stays-halted-while-disabled, INTE-cleared-on-accept, the vector for all 8 RST n, the EI delay itself, and EI-immediately-followed-by-HLT. Full Playwright suite re-run afterward specifically to check no bundled software's dormant interrupt-enable now misbehaves — none does (nothing in `disks/`/`roms/` was found to exercise this path; it's correct but, as flagged below, still unproven against real software). |
-| §3.2a | 138th byte per sector | **Fixed (§3.2).** Reads past byte 137 return the zero tail the write circuit lays down to the end of the sector (MITS 88-DCDD manual p.135), `0x00`. GoogleTest `ReadsPastByte137ReturnTheZeroTail`. |
-| §3.2c | Empty drive reports healthy | **Fixed (§3.2).** A drive with no diskette can't be enabled (MITS 88-DCDD manual p.133 note a), so selecting it leaves the controller disabled and every port floats to `0xFF`. GoogleTests `EmptyDriveCannotBeEnabled` and `DisabledControllerFloatsAllPorts`. |
-| §3.2d | 88-DCDD has no rotation timing | **Fixed** — `Disk88::tick()`/`setSpeed()` gate `IN 0x09`'s sector advance on a sectors/sec credit, same shape as `CassetteACR`'s byte credit; default (never called) is unlimited, so every pre-existing caller (native harnesses, GoogleTest) is unaffected. Browser build adds a LOAD SPEED selector to the disk cabinet (Realistic ≈193/sec ≈166 ms/rev / 5×/25×/50×/Max-under-`?test=1`), matching the paper-tape/cassette pattern exactly. New fidelity test proves Realistic measurably slows a CP/M boot. **Refined in §3.2:** Realistic is the real 360 rpm drive with its head and step timing, not a sector-advance credit. |
-| §3.6a | Status lamps (MEMR/M1/etc.) from real machine-cycle status | **Partially fixed — see the note below on what's still approximated.** `MEMR`/`WO`/`INP`/`OUT` now reflect which `Bus` callback fired last (tracked in `wasm_machine.cpp`, no CPU-core change needed since `read`/`write`/`in`/`out` were already four separate callbacks); `INT` lights when `cpu_.interrupt()` was actually served since the last poll. `HLDA`/`PROT` were already correct as permanently off (no DMA peripheral; PROTECT is a documented no-op) — not bugs, just mislabelled as such in the original finding. `M1`/`STACK` remain approximated; see below for why. |
-
-### What's still approximated in §3.6a, and why
-
-`M1` (opcode fetch vs. a plain operand read) and `STACK` (a push/pop vs. any
-other memory access) need the CPU core itself to say what an access is *for* —
-the `Bus`'s four callbacks say *what kind* of access (read/write/in/out) but
-not *why*. That's a real decoder-level change (tagging every one of `cpu_i8080.cpp`'s
-opcode handlers with its access's purpose), touching the one part of this
-codebase proven correct by 8080EXM, for a payoff that's arguably invisible
-regardless: both are sub-frame pulses (a handful of T-states within a ~10-18
-T-state instruction) and the front panel is polled once a rendered frame —
-the Kill-the-Bit brightness fix worked by aggregating *counts* over many
-cycles, but a boolean status bit has no equivalent trick. Recommend leaving
-this as the one deliberately-scoped-out remainder of §3.6a rather than take
-on the core-decoder risk for it.
-
-### Deferred, by explicit decision
-
-- **§5.2, 88-SIO — deferred, not scheduled.** Staying with Option 1 (relabel,
-  already applied): `baremetal`/`stock` dated 1976, the false 88-2SIO-in-1975
-  anachronism gone, the simplification documented in `app.js`/the web
-  README/here. Option 2 (implement an actual 88-SIO board at ports 0x00/0x01)
-  is explicitly not being done — this is a real feature (a new peripheral,
-  plus sourcing and pinning a period SIO-targeted BASIC image that may not
-  exist in fetchable form), not a fidelity nit, and doesn't earn its cost
-  against everything else in this pass. It stays coupled to §5.3 (below) if
-  it's ever picked up.
-- **§5.3, the deramp.com 3.2 bootstrap — deferred with it.** The
-  `LDR4K32-octal.PRN` loader already sourced (`altairclone.com/downloads/
-  4kbootstrap.pdf`, read in full earlier in this same review's conversation)
-  runs on **ports 0x00/0x01 — actual 88-SIO**, not this emulator's 2SIO.
-  Teaching it in the panel guide only makes sense once/if §5.2's option 2 is
-  taken — porting the same loader to 2SIO ports would stop being "an actual
-  artifact" and defeat the reason for wanting it. Decide both together,
-  later, as one question, not two separate backlog items.
-- **§2.2/§2.3, interrupts are wired but functionally unproven.** Fixed and
-  unit-tested (above), and the full Playwright suite confirms nothing bundled
-  breaks -- but that's a negative result, not a positive one: nothing in
-  `disks/`/`roms/` was found to actually *use* RST-vectored interrupts, so
-  the wiring has never been exercised by real period software end to end. If
-  this matters going forward, the honest next step is a tiny purpose-built
-  test ROM that enables interrupts, arms the 2SIO's RX-ready IRQ, and proves
-  a keystroke actually vectors to 0x38 -- not folded into this pass.
-- **§8, `app.js` module split:** the review itself says not urgent. Agreed —
-  2,700+ lines in one closure with 200+ tests pinned against its exact
-  behavior is a large-regression-surface refactor for zero user-facing
-  benefit. Left alone.
-
-All work above was verified against the actual test suites before being
-called done: 213/213 Playwright tests, 66/66 GoogleTests (including the new
-`interrupt_test` suite), and all four CP/M diagnostics
-(8080PRE/TST8080/CPUTEST/8080EXM) green after every change, not
-just at the end.
+This file is the citation trail for the Altair 8800 emulator in `altair8800/`:
+the C++ 8080 core, the peripheral boards, the WebAssembly wrapper, the browser
+front end, and both test suites. Each section says what the emulator does, the
+source it follows, and what it does not model. §9 lists the open items.
 
 ---
 
 ## 0. How this was verified
 
-Not read-only guesswork. What was actually executed:
+What is executed against the emulator:
 
 | Check | Result |
 |---|---|
-| `make -C altair8800 test` | **55/55 pass** — Arith 27, Cassette 20, DiskTest 8 |
-| `make -C altair8800 cpm` | **8080PRE, TST8080, CPUTEST, 8080EXM all pass** |
-| 8080EXM CRC check | All 25 groups PASS with matching CRCs |
-| `kCycles[256]` vs. Intel 8080 datasheet | Hand-verified entry by entry — **no errors found** |
-| Ad-hoc C++ harness against `disk88.cpp` | Confirmed three edge behaviours (§3.2) |
+| `make -C altair8800 test` | GoogleTest suites `arithmetic_test`, `cassette_test`, `disk88_test`, `interrupt_test` pass |
+| `make -C altair8800 cpm` | 8080PRE, TST8080, CPUTEST and 8080EXM pass |
+| 8080EXM CRC check | All 25 groups pass with matching CRCs |
+| `kCycles[256]` vs. Intel 8080 datasheet | Checked entry by entry, no errors |
+| `make -C altair8800 check` | `demo`, `test` and `cpm` |
+| `make -C altair8800/web test` | Playwright suites drive the real front end |
 
-The 8080EXM pass is the single most important result in this review: it
-exercises every documented flag combination, including auxiliary carry and the
-PSW's fixed bits 1/3/5, and it matches. The ALU and flag model is correct — this
-is not an inference.
+The 8080EXM pass is the strongest evidence for the CPU: it exercises every
+documented flag combination, including auxiliary carry and the PSW's fixed
+bits 1/3/5, and it matches. The ALU and flag model is measured, not inferred.
+`cpm` is a no-op when the `cpm/*.COM` diagnostics have not been fetched locally.
 
 ---
 
-## 1. Executive summary
+## 1. Summary
 
-**What is genuinely excellent:**
+**What the emulator gets right:**
 
 - The CPU core passes the exhaustive 8080 instruction exerciser with correct CRCs.
 - The cycle table is correct in all 256 entries.
-- The 88-ACR cassette is the best-modelled device in the project — linear tape
-  with a real head position, record-at-head with overwrite, inter-program gaps,
-  transport auto-stop, credit-based throttling, and status polarity derived from
-  and cited against the actual 8K BASIC ROM.
+- Interrupts are wired: the 2SIO's IRQ line jams RST 7, and `EI` takes effect
+  after the following instruction (§2.2, §2.3).
+- The 88-DCDD models rotation, head load, step and settle timing, with a LOAD
+  SPEED selector (§3.2).
+- The 88-ACR cassette is linear tape with a real head position,
+  record-at-head with overwrite, inter-program gaps, transport auto-stop,
+  credit-based throttling, and status polarity derived from and cited against
+  the actual 8K BASIC ROM. It keeps running while the CPU is stopped and
+  ignores panel RESET (§3.4).
+- Panel RESET clears the CPU and the bus-side board latches only. Tape position
+  and disk heads stay where they are (§3.2, §3.4).
+- The terminal profiles filter output the way the real terminals do (§4).
 - CI boots a real, pinned MITS CP/M 2.2 diskette on the emulated 88-DCDD and
   runs `DIR`/`STAT`, and blocks the deploy on failure.
 - Provenance is cited in file headers (the ROM-derived cassette polarity)
@@ -141,22 +53,17 @@ is not an inference.
   as independent `owns()/in()/out()` units, an embind wrapper that composes them.
   The same `Disk88` runs under the native `cpm_disk` harness and in the browser.
 
-**What needs attention, in priority order:**
+**What is still approximated or missing, in priority order:**
 
-1. Serial terminal profiles are cosmetic only — no actual terminal emulation
-   differences. **Owner wants these 100% realistic.** (§4)
-2. Panel RESET rewinds the cassette and homes the disk heads. **Owner confirms
-   this should be realistic.** (§3.4)
-3. The interrupt path is entirely dead code, and `EI` has no one-instruction
-   delay. **Owner wants this wired up.** (§2.2, §2.3)
-4. Kill the Bit's address lamps show an OR, not brightness — the marquee visual
-   of the bare-metal preset doesn't work. **Owner independently noticed this.** (§3.6)
-5. The 88-DCDD has no rotation or step timing at all — the one unlabelled speed
-   departure in the project. (§3.2)
-6. CLAUDE.md and the code contradict each other on the track-0 line. (§7.1)
-7. Preset era/hardware anachronisms, and an unverified BASIC version number. (§5)
-8. Test gaps: no `serial2sio` unit test, no T-state assertions, five of seven
-   terminal baud rates unmetered. (§6)
+1. The `M1` and `STACK` status lamps are approximated, not taken from the CPU
+   core (§3.6).
+2. There is no 88-SIO board at ports 0x00/0x01. Every preset uses the 88-2SIO,
+   and the `baremetal` and `stock` presets are dated 1976 to match (§5.2).
+3. Interrupts are unit-tested but no bundled software uses them (§2.3).
+4. Test gaps: no `serial2sio` unit test and no T-state assertions (§6).
+5. Smaller items: `Cpu::reset()` clears every register, the 6850 master reset
+   leaves the RX FIFO alone, the 88-DCDD sector interrupt is not wired (§2.4,
+   §3.1, §3.2).
 
 ---
 
@@ -176,19 +83,19 @@ aluop <b,c,d,e,h,l,m,a>.......  PASS! crc is:cf762c86
 
 Source inspection agrees with the empirical result:
 
-- **`sub`/`cmp` auxiliary carry** — `shared/cpu/cpu_i8080.cpp:59` uses
+- **`sub`/`cmp` auxiliary carry.** `shared/cpu/cpu_i8080.cpp` uses
   `~(a ^ v ^ r) & 0x10`, i.e. the *inverted borrow*. This is 8080 semantics (the
   half-carry out of the internal `A + ~v + 1`), not Z80 semantics. Correct, and
   correct with borrow-in too.
-- **`ana` AC quirk** — `cpu_i8080.cpp:74` sets AC from `(a | v) & 0x08`, the 8080
+- **`ana` AC quirk.** `cpu_i8080.cpp` sets AC from `(a | v) & 0x08`, the 8080
   behaviour, not the 8085's always-1. Correct.
-- **`dcr` AC** — `(v & 0xF) != 0`, matching `v + 0xFF`'s half-carry. Correct.
-- **`daa`** — `cpu_i8080.cpp:112` uses `a > 0x99` for the high-nibble correction.
+- **`dcr` AC.** `(v & 0xF) != 0`, matching `v + 0xFF`'s half-carry. Correct.
+- **`daa`.** `cpu_i8080.cpp` uses `a > 0x99` for the high-nibble correction.
   Worked through the boundary cases (`0x9A`, `0xFA`, AC-set-with-low-nibble ≤ 9,
   `0x99` with AC): exactly equivalent to the Intel manual's "if the most
   significant 4 bits are **now** greater than 9" wording, including carry-out
   from step 1. Carry is never cleared by DAA. Correct.
-- **PSW masking** — `PUSH PSW` writes `(f & 0xD7) | FLAG_N1`; `POP PSW` reads it
+- **PSW masking.** `PUSH PSW` writes `(f & 0xD7) | FLAG_N1`; `POP PSW` reads it
   back the same way. Bits 3/5 read 0, bit 1 reads 1. Correct, and validated by
   8080EXM (which uses PUSH/POP PSW to accumulate its CRCs).
 - **Undocumented opcodes** alias correctly with correct cycle counts:
@@ -197,110 +104,100 @@ Source inspection agrees with the empirical result:
 - **Rotates** touch only carry. `CMA` touches nothing. `STC`/`CMC` touch only
   carry. `INR`/`DCR` preserve carry. `DAD` touches only carry. All correct.
 
-**Cycle table (`cpu_i8080.cpp:11-28`) — verified entry by entry against the Intel
-8080 datasheet.** Spot points worth recording: HLT = 7, XTHL = 18,
+**Cycle table (`cpu_i8080.cpp`, `kCycles`), verified entry by entry against the
+Intel 8080 datasheet.** Spot points worth recording: HLT = 7, XTHL = 18,
 SHLD/LHLD = 16, STA/LDA = 13, MVI M / INR M / DCR M = 10, conditional RET 5
 (not taken) / 11 (taken), conditional CALL 11 / 17, PCHL = 5, SPHL = 5,
 XCHG = 5, EI/DI = 4, IN/OUT = 10. **No errors found.**
 
-### 2.2 Finding — `EI` takes effect immediately
+### 2.2 `EI` delay
 
-`shared/cpu/cpu_i8080.cpp:411`
+`shared/cpu/cpu_i8080.cpp` (`Cpu::ei_delay_`)
 
-```cpp
-case 0xFB: int_enabled = true; break;          // EI
-```
+A real 8080 does not recognise an interrupt until after the instruction
+following `EI`. The `EI / RET` idiom in interrupt handlers depends on it.
+`ei_delay_` blocks `interrupt()` for exactly one retiring instruction after
+`EI`. It is counted down at the top of `step()`, and HALT's own idle cycles do
+not decrement it. `tests/interrupt_test.cpp` covers the delay itself and
+`EI` immediately followed by `HLT`.
 
-A real 8080 does not recognise an interrupt until **after the instruction
-following `EI`**. This is a documented and load-bearing behaviour for the
-`EI / RET` idiom in interrupt handlers. Not implemented, not tested.
+### 2.3 Interrupt path
 
-> **Owner decision (#4):** wire this up along with the interrupt path.
-
-**Work item:** add a one-instruction interrupt-enable delay (a
-`pending_ei` flag consumed at the top of the next `step()`), plus a unit test
-that proves an interrupt requested immediately after `EI` is not taken until the
-following instruction retires.
-
-### 2.3 Finding — the entire interrupt path is dead code
-
-`shared/cpu/cpu_i8080.cpp:213` (`Cpu::interrupt`)
-`altair8800/serial2sio.h:61` (`on_irq`)
-`altair8800/serial2sio.cpp:47, :91` (fires `on_irq`)
+`shared/cpu/cpu_i8080.cpp` (`Cpu::interrupt`)
+`altair8800/serial2sio.h` (`on_irq`)
+`altair8800/serial2sio.cpp` (fires `on_irq`)
 
 `Serial2SIO` decodes the 6850's receive- and transmit-interrupt enable bits and
-fires `on_irq`, but **nothing ever assigns `on_irq`** — not in
-`web/wasm_machine.cpp`, not in `main.cpp`. `Cpu::interrupt()` therefore has no
-caller anywhere in the repo. The RST jam, the INTE-clear-on-accept, and the
-HALT-wake logic are all unreachable and untested.
+fires `on_irq`. `Machine`'s constructor assigns `sio_.on_irq` to
+`cpu_.interrupt(0xFF)`, RST 7, the conventional Altair 2SIO vector.
 
-Note `Cpu::interrupt()` itself looks correct where it can be judged: it returns
-0 and leaves `halted` set when interrupts are disabled (a real 8080 in HALT with
-DI stays halted until RESET), it pushes the post-`HLT` PC, and it charges 11
-T-states for an RST.
+`Cpu::interrupt()` returns 0 and leaves `halted` set when interrupts are
+disabled (a real 8080 in HALT with DI stays halted until RESET). When
+interrupts are enabled it clears INTE, wakes a halted CPU, pushes the
+post-`HLT` PC, and charges 11 T-states for an RST. The vector comes from
+`opcode & 0x38`.
 
-> **Owner decision (#4):** yes, wire it up.
+`tests/interrupt_test.cpp` has eight cases: ignored while DI, taken while EI,
+HALT wakes, HALT stays halted while disabled, INTE cleared on accept, the
+vector for all eight RST n, the `EI` delay, and `EI` immediately followed by
+`HLT`.
 
-**Work item:** wire `sio_.on_irq` to `cpu_.interrupt(0xFF)` (RST 7 — the
-conventional Altair 2SIO vector) in `Machine::make_bus()` or the constructor.
-Add unit tests for: interrupt ignored while DI; interrupt taken while EI;
-interrupt wakes HALT; INTE cleared on accept; PC pushed correctly; the vector
-address derived from `opcode & 0x38`.
+**Gap.** Nothing in `disks/` or `roms/` uses RST-vectored interrupts, so the
+wiring has not run against real period software end to end. The next step is a
+small purpose-built test ROM that enables interrupts, arms the 2SIO's RX-ready
+IRQ, and shows a keystroke vectoring to 0x38.
 
-### 2.4 Minor — `Cpu::reset()` clears every register
+### 2.4 `Cpu::reset()` clears every register
 
-`shared/cpu/cpu_i8080.cpp:27`
+`shared/cpu/cpu_i8080.cpp`
 
 A real 8080 RESET forces only `PC = 0`. `A`, `F`, `BC`, `DE`, `HL`, `SP` are
-indeterminate after reset — this is why Altair software always initialises `SP`
-explicitly before using the stack. Clearing everything gives the emulated
-machine a cleaner post-reset state than a real one, which could mask a bug in
-software that forgets to set `SP`.
+indeterminate after reset, which is why Altair software always initialises `SP`
+explicitly before using the stack. `Cpu::reset()` clears all of them, a cleaner
+post-reset state than a real chip has, and a doc comment on the function says
+so. There is no mode that leaves the registers alone.
 
-Low priority; document it or add a "leave registers alone" mode.
-
-### 2.5 Gap — nothing asserts a T-state count
+### 2.5 T-state coverage
 
 The `fidelity.spec.ts` test *"the 8080 runs at ~2 MHz of emulated time per
-wall-clock second"* measures `cycles` delta against wall time. That is
-**self-consistent** — it counts what the emulator itself claims — so a typo in
-`kCycles[]` would silently change every real-time behaviour in the machine
-(BASIC's timing loops, the cassette credit throttle, paper-tape pacing) without
-turning a single test red.
+wall-clock second"* measures the `cycles` delta against wall time. That is
+self-consistent: it counts what the emulator itself claims. No GoogleTest
+asserts a per-opcode T-state count, so a typo in `kCycles[]` would change every
+real-time behaviour in the machine (BASIC's timing loops, the cassette credit
+throttle, paper-tape pacing) without turning a test red.
 
-**Work item:** add a GoogleTest that walks a table of `{opcode, expected
-T-states}` and asserts `cpu.step()`'s return value, covering all 256 opcodes
-including the taken/not-taken variants of every conditional CALL and RET.
+**Gap.** A GoogleTest that walks a table of `{opcode, expected T-states}` and
+asserts `cpu.step()`'s return value, covering all 256 opcodes including the
+taken and not-taken variants of every conditional CALL and RET.
 
 ---
 
 ## 3. Hardware, bus, and I/O traps
 
-### 3.1 88-2SIO serial board (ports 0x10–0x13) — correct, one documented departure
+### 3.1 88-2SIO serial board (ports 0x10–0x13)
 
 `altair8800/serial2sio.{h,cpp}`
 
-Correct:
-- 6850 status polarity: RDRF active-high on bit 0, TDRE on bit 1.
-- DCD/CTS left clear — on a 6850 these status bits read 1 when the input pin is
-  *high* (not asserted), so 0 = ready. The header comment gets this right.
-- Master reset decoded on counter-divide field `CR1:CR0 == 0b11`.
-- `tx_irq_enabled = (value & 0x60) == 0x20` — CR6:CR5 == 01 is RTS-low +
-  transmit-interrupt-enable. Correct.
-- Reading the receive data register clears the overrun latch. Correct.
-- Channel B present at 0x12/0x13, the physical 2SIO layout.
+The 6850 model:
+
+- Status polarity: RDRF active-high on bit 0, TDRE on bit 1.
+- DCD/CTS read clear. On a 6850 these status bits read 1 when the input pin is
+  *high* (not asserted), so 0 = ready.
+- Master reset is decoded on counter-divide field `CR1:CR0 == 0b11`.
+- `tx_irq_enabled = (value & 0x60) == 0x20`. CR6:CR5 == 01 is RTS-low plus
+  transmit-interrupt-enable.
+- Reading the receive data register clears the overrun latch.
+- Channel B is present at 0x12/0x13, the physical 2SIO layout.
 - `owns()` masks `port & 0xFC`, giving exactly 0x10–0x13.
 
-**Documented departure — 512-byte FIFOs** (`serial2sio.h:44`) in place of the
-6850's single byte. This is deliberate and explained in the header, but it has a
-consequence worth naming explicitly: **a program can transmit 512 characters
-before TDRE ever drops.** The claim in `EMU_PRIMER` and CLAUDE.md that "the
-Teletype crawls at 10 characters a second and throttles the 8080" is true only
-after 512 bytes of slack have been absorbed. For a `LIST` of a long program the
-throttle does engage; for anything shorter than 512 characters it never does.
+**Departure: 512-byte FIFOs** (`serial2sio.h`) in place of the 6850's single
+byte, explained in the header. A program can transmit 512 characters before TDRE
+drops, so the Teletype's 10 characters a second throttles the 8080 only after
+512 bytes of slack are absorbed. For a `LIST` of a long program the throttle
+engages. For anything shorter than 512 characters it never does.
 
-**Minor:** master reset does not flush the RX FIFO, so `RDRF` can survive a
-master reset. A real 6850 master reset clears the receiver.
+**Gap.** Master reset does not flush the RX FIFO, so `RDRF` can survive a master
+reset. A real 6850 master reset clears the receiver.
 
 ### 3.2 88-DCDD floppy controller (ports 0x08–0x0A)
 
@@ -321,7 +218,7 @@ The controller follows MITS's and Pertec's own documentation. Sources:
   Appendix H: the 137-byte sector layouts and MITS's own read/write routines,
   which poll NRDA/ENWD and move two bytes per poll at 32 µs/byte.
 
-What the model does, each point checked against those pages:
+What the model does, each point taken from those pages:
 
 - **Ports.** `OUT 010` selects (D0–D3 drive, D7 clears the controller);
   `IN 010` status; `OUT 011` control (D0 step in, D1 step out, D2 head load,
@@ -329,7 +226,7 @@ What the model does, each point checked against those pages:
   enable); `IN 011` sector position; `OUT/IN 012` data (pp.133–136).
 - **Polarity.** Status is true = 0 (p.134). D3 and D4 are "not used, = 0"
   (on Board #1 sheet 2 their 8T97 inputs are grounded). D5 is the bus INTE,
-  inverted, which the machine now feeds in with `setInte()`.
+  inverted, which the machine feeds in with `setInte()`.
 - **Enable.** A drive with no diskette can't be enabled (p.133 note a), and
   every port then floats to `0xFF`, "all false" (p.134). Taking the diskette
   out of the selected drive clears the controller ("disk control also
@@ -356,8 +253,9 @@ What the model does, each point checked against those pages:
 - **Track 0** comes from the FD-400's track 0 switch, so it follows the head in
   both directions, and the drive holds it false until 40 ms after the last
   step (FD-400 §2.6.3.1). The same switch makes a step out at track 0 a no-op.
-- **RESET** clears the controller and leaves the heads where they are; bus
-  RESET sends no step pulses.
+- **RESET** deselects the controller and clears its latches (`selected_`,
+  `flags_`, `sector_`, `bufpos_`, `write_dirty_`). It leaves the heads where
+  they are, because bus RESET sends no step pulses.
 
 **LOAD SPEED.** Realistic (192 sectors/s) is the real drive above, paced on
 the CPU cycle count at every port access. 5×/25×/50× scale rotation and the
@@ -368,10 +266,18 @@ first read byte. Max (`?test=1`, and every native harness that never calls
 `clock()`) is timeless: each `IN 011` brings the next sector under the head,
 bytes come as fast as they're read, and every wait is zero.
 
-Verified: `cpm63k`, `games`, `cpm3boot` boot to `A>` and CP/M `SAVE`/`DIR`/
-`STAT`/`ERA` round-trip at Realistic, 5×, 50× and Max; Disk BASIC
-`SAVE`/`LOAD`/`RUN`/`KILL` the same; Altair DOS boots. Images written at
-Realistic and at Max are byte-identical.
+Boot and round-trip coverage: `cpm63k`, `games` and `cpm3boot` boot to `A>`,
+and CP/M `SAVE`/`DIR`/`STAT`/`ERA` round-trip at Realistic, 5×, 50× and Max.
+Disk BASIC `SAVE`/`LOAD`/`RUN`/`KILL` do the same, and Altair DOS boots. Images
+written at Realistic and at Max are byte-identical.
+
+GoogleTests in `disk88_test` pin the edge behaviour: `ReadsPastByte137ReturnTheZeroTail`,
+`EmptyDriveCannotBeEnabled`, `DisabledControllerFloatsAllPorts`,
+`ResetDoesNotHomeTheHead`, `Track0LineFollowsHead` and
+`Track0ReportsOnlyAfterTheHeadSettles`. A Playwright test boots CP/M, which
+seeks off track 0, hits RESET, and checks that the track is unchanged while the
+controller deselects. A fidelity test shows Realistic measurably slows a CP/M
+boot.
 
 **Boot PROM (`disk_bootrom.h`).** No MITS-published listing of the DBL was
 found (the BASIC 4.1 manual only says how to run it from 177400 octal). The
@@ -385,605 +291,449 @@ jumper output isn't wired to the CPU; no MITS software found uses it), write
 protect (an FD-400 option MITS media don't use), and per-drive spindle phase
 (all drives share one rotation).
 
-> **Owner decision (#8):** RESET should behave realistically.
-> **Owner decision (#2):** report as a potential issue.
+### 3.3 Paper tape, not a bus device
 
-### 3.3 Paper tape — not a bus device at all
+There is no 88-PTR board and no I/O trap for the reader. `tape.tick()`
+(`web/app.js`, the `tape` object) pushes bytes into the 88-2SIO channel-A RX
+FIFO via `machine.sendByte()`, the same path a keystroke takes.
 
-There is **no 88-PTR board and no I/O trap for the reader.** `tape.tick()`
-(`web/app.js`, the `tape` object around line 2160) pushes bytes into the 88-2SIO
-channel-A RX FIFO via `machine.sendByte()` — the same path a keystroke takes.
-
-This is a **defensible and arguably correct** model: on a real Altair the paper
-tape reader most people used was the one built into the ASR-33 Teletype, sharing
-the console current loop with the keyboard. Bytes from the reader and bytes from
-the keys genuinely do arrive on the same serial port. It should be stated
-explicitly somewhere in the docs, because a reader reviewing the code will look
-for a reader device and not find one.
+On a real Altair the paper tape reader most people used was the one built into
+the ASR-33 Teletype, sharing the console current loop with the keyboard. Bytes
+from the reader and bytes from the keys arrive on the same serial port, so the
+model matches that setup. It has no reader device because there isn't one on
+the bus.
 
 Two behaviours inside it:
 
-**(a) The feed back-pressures on the FIFO.** `web/app.js:2232`:
+**(a) The feed back-pressures on the FIFO.** In `web/app.js`:
 
 ```js
 if (!this.flooding && machine.rxPending && machine.rxPending() > 400) break;
 ```
 
-On the AUTO-LOAD path this means the load **can never overrun**, however badly
-the loader keeps up. A real reader runs at a fixed mechanical rate and the
-loader either keeps up or loses bytes. The raw `START` path does model overrun
-(the `flooding` flag after ~0.75 s of a jammed FIFO); the bootstrap path does
-not. Whether that matters depends on whether AUTO-LOAD is considered fully
-inside the "labelled shortcut" concession.
+On the AUTO-LOAD path the load never overruns, however badly the loader keeps
+up. A real reader runs at a fixed mechanical rate, and the loader either keeps
+up or loses bytes. The raw `START` path does model overrun (the `flooding` flag
+after about 0.75 s of a jammed FIFO). The bootstrap path does not. AUTO-LOAD is
+a labelled shortcut, so the back-pressure stays inside that departure.
 
-**(b) The bootstrap is synthesised, not MITS's.** `makeBootstrap()` at
-`web/app.js:2113` builds a ~40-byte loader. The 8080 in it is correct — it polls
-`IN 0x10 / RRC / JNC` on RDRF (bit 0 rotated into carry), skips leader nulls
-with `ORA A / JZ`, stores with `MOV M,A / INX H`, counts down `DE`, and `JMP`s to
-the start address. But it is not the loader MITS published. It is clearly
-labelled AUTO-LOAD, and the reader's `START` button preserves the authentic
-hand-keyed path, so this reads as intentional. See §5.3 for the deramp.com
-bootstrap the owner wants investigated.
+**(b) The bootstrap is synthesised, not MITS's.** `makeBootstrap()` in
+`web/app.js` builds a loader of about 40 bytes. It polls `IN 0x10 / RRC / JNC`
+on RDRF (bit 0 rotated into carry), skips leader nulls with `ORA A / JZ`, stores
+with `MOV M,A / INX H`, counts down `DE`, and `JMP`s to the start address. It is
+not the loader MITS published. It is labelled AUTO-LOAD, and the reader's
+`START` button keeps the authentic hand-keyed path. The panel guide's
+hand-keyed loader follows the synthesised one. §5.3 covers the published
+bootstrap.
 
-**Well done:** the reader's `START` button runs the reader motor and nothing
-else — no memory touched, no bootstrap, no RUN — and warns when no loader is
-running because the bytes really do fall on the floor. The 128-frame blank
-leader is a lovely period detail. Both are exactly right.
+The reader's `START` button runs the reader motor and nothing else. It touches
+no memory, runs no bootstrap, and does not RUN. It warns when no loader is
+running, because the bytes fall on the floor. The tape starts with a 128-frame
+blank leader.
 
-### 3.4 88-ACR cassette (ports 0x06/0x07) — the best-modelled device here
+### 3.4 88-ACR cassette (ports 0x06/0x07)
 
 `altair8800/cassette.{h,cpp}`
 
-Status polarity is derived from the actual 8K BASIC ROM and the derivation is
+Status polarity is derived from the actual 8K BASIC ROM, and the derivation is
 cited in the file header (`IN 06 / ANI 01 / JNZ` → wait while bit 0 is set; `IN
 06 / ANI 80 / JNZ` → wait while bit 7 is set; both ready conditions active-low).
-The tape is genuinely linear: a physical head position, record-at-head with
-overwrite, a 12-byte inter-program gap so CLOAD can resync, FF/REW winding at
-30× play rate with auto-stop at both ends, and a credit-based throttle measured
-against CPU cycles so 25×/50× are really that fast rather than frame-capped.
-20 unit tests. 300 baud → 30 B/s is correct for KCS with 10-bit framing.
+The tape is linear: a physical head position, record-at-head with overwrite, a
+12-byte inter-program gap so CLOAD can resync, FF/REW winding at 30× play rate
+with auto-stop at both ends, and a credit-based throttle measured against CPU
+cycles so 25×/50× are really that fast rather than frame-capped. 300 baud is
+30 B/s, correct for KCS with 10-bit framing. `cassette_test` covers the device.
 
-**Bug (a) — the transport freezes while the CPU is stopped.**
-`web/wasm_machine.cpp:214` calls `cassette_.tick()` only from `runCycles()`, and
-`web/app.js:557` only calls `runCycles()` when `running && powered`. Press STOP
-on the front panel and FF/REW stop winding. On a real setup the deck is a
-separate box with its own mechanical transport; the CPU's RUN/STOP paddle has no
-effect on it.
+**The transport runs while the CPU is stopped.** The deck is a separate box with
+its own mechanical transport, and the CPU's RUN/STOP paddle has no effect on it.
+`Machine::tickCassette(dtMs, running)` is called every rendered frame
+regardless of run state. While the CPU runs, it paces off `cpu_.cycles`, so
+25×/50× and turbo stay correct. While it is stopped, it advances a separate
+`idle_cycles_` counter by real elapsed time at the 2 MHz equivalent and adds it
+to `cpu_.cycles` before the same `cassette_.tick()` call. The two paces splice
+with no jump when RUN resumes. A Playwright test shows PLAY keeps winding with
+the CPU on STOP.
 
-**Bug (b) — panel RESET rewinds the tape.**
-`web/app.js:775` binds RESET to `machine.reboot()`, which calls
-`cassette_.reset()` (`web/wasm_machine.cpp:92`), which sets `pos_ = 0`
-(`cassette.cpp:23`). The header comment acknowledges the design choice ("the
-transport stops and the head returns to the start"), but physically this cannot
-happen: RESET is a bus signal to the S-100 cards, and the cassette deck is not
-on the bus. Pressing RESET on a real Altair leaves the tape exactly where it was,
-still playing if PLAY is down.
+**Panel RESET leaves the deck alone.** RESET is a bus signal to the S-100
+cards, and the cassette deck is not on the bus. `Machine::reboot()` does not
+call `cassette_.reset()`, so tape position and the transport keys survive, and
+a tape that was playing keeps playing. A Playwright test shows RESET touches
+neither the position nor the transport state.
 
-The same call also does `disk_.reset()`, which homes every drive's head to
-track 0 (§3.2b).
+**Cycle counter reset.** `Cpu::reset()`, called from `Machine::reboot()`, zeroes
+`cpu_.cycles`, so from `cassette_.tick()`'s point of view the counter goes
+backward. `CassetteACR::tick()` guards on `cpuCycles < prev_tick_cy_`: it
+resyncs the baseline and treats that tick as zero elapsed time. The GoogleTest
+`TickToleratesCpuCycleCounterGoingBackwardOnReset` pins it.
 
-> **Owner decision (#8):** yes, make RESET realistic.
-
-**Work item:** `Machine::reboot()` should reset the CPU and the S-100 boards'
-*electrical* state only. Specifically: do not move the cassette head, do not
-change the cassette transport keys, and do not move disk heads. Deselecting the
-disk controller and clearing its latches on reset **is** correct — that is a bus
-signal reaching the 88-DCDD card. Add tests: tape position survives RESET; disk
-track survives RESET; disk controller is deselected by RESET.
+`Machine::reboot()` resets the CPU and the S-100 boards' electrical state only.
+Deselecting the disk controller and clearing its latches is a bus signal
+reaching the 88-DCDD card (§3.2).
 
 ### 3.5 Memory / bus model
 
-`web/wasm_machine.cpp:256`:
+`web/wasm_machine.cpp` (`bus.read`, `bus.write`)
 
-```cpp
-if (a < ram_top_)                 return mem_[a];
-if (a >= rom_lo_ && a <= rom_hi_) return mem_[a];
-return 0xFF;                      // unpopulated: floating high
-```
+Unpopulated reads return `0xFF`, the Altair convention (floating high). The ROM
+window is checked before the RAM ceiling, so on the 64 KB CP/M preset the
+88-DCDD boot PROM at `0xFF00` shadows RAM and `bus.write` drops writes into it,
+as on real hardware. A test in `disk.spec.ts` drives an `STA` through the CPU
+to prove it. `writeByte()` bypasses the bus, so it is not used for that check.
 
-Correct: unpopulated reads return `0xFF`, which is the Altair convention.
-
-**Finding:** the RAM test comes *first*, and `loadBytes` only establishes a ROM
-window when `addr >= ram_top_` (`web/wasm_machine.cpp:79`). So on the 64 KB CP/M
-preset, `ram_top_ == 0x10000` and the 88-DCDD boot PROM at `0xFF00` is **plain
-writable RAM** — the machine has no read-only region at all. On real hardware
-the PROM shadows RAM and is not writable. In practice nothing writes there after
-boot, so this is latent rather than active, but it means a CP/M BIOS bug that
-scribbled over `0xFF00` would be silently tolerated.
-
-Sense switches on `IN 0FFh` returning the A8–A15 paddle row is correct
-(`web/wasm_machine.cpp` `bus.in`, `port == 0xFF`).
+Sense switches on `IN 0FFh` return the A8–A15 paddle row (`bus.in`,
+`port == 0xFF`).
 
 ### 3.6 Front panel
 
 The paddle set and layout match the real machine: OFF/ON, STOP/RUN, SINGLE STEP,
 EXAMINE / EXAMINE NEXT, DEPOSIT / DEPOSIT NEXT, RESET / CLR, PROTECT /
-UNPROTECT, and two AUX. EXAMINE loading the switches into PC and DEPOSIT writing
-at PC is correct Altair behaviour. SINGLE STEP only working while stopped is
-correct. The status lamp names and the WAIT/HLDA second row match the real
-silkscreen.
+UNPROTECT, and two AUX. EXAMINE loads the switches into PC and DEPOSIT writes
+at PC, as on the real Altair. SINGLE STEP works only while stopped. The status
+lamp names and the WAIT/HLDA second row match the real silkscreen.
 
-**Finding (a) — the status lamps are decorative, not derived from 8080 machine-cycle status.**
-`web/app.js:825-840`:
+**(a) Status lamps.** The lamps come from which `Bus` callback fired last. That
+tracking lives in `wasm_machine.cpp`, since `read`, `write`, `in` and `out` are
+four separate callbacks and the CPU core needs no change.
 
-| Lamp | Real meaning | What it does here |
+| Lamp | Real meaning | Source here |
 |---|---|---|
-| `MEMR` | asserted during a memory-read machine cycle | "the CPU is running" |
-| `M1` | asserted during an instruction-fetch cycle | "the CPU is running" |
-| `INP` | asserted during an `IN` machine cycle | "the paper-tape reader is feeding" |
-| `WO` | **active-low** — lit *except* during a write | hardwired `true` (comment at `:834` says otherwise) |
-| `STACK` | asserted during a stack cycle | never lights |
-| `OUT` | asserted during an `OUT` cycle | never lights |
-| `INT` | interrupt acknowledged | never lights |
-| `HLDA` | hold acknowledged | never lights |
-| `PROT` | memory protect active | never lights |
-| `INTE`, `HLTA`, `WAIT` | — | **correct** |
+| `MEMR` | asserted during a memory-read machine cycle | last callback was `read` |
+| `WO` | active-low, lit except during a write | follows the `write` callback, active-low as on the bus |
+| `INP` | asserted during an `IN` machine cycle | last callback was `in` |
+| `OUT` | asserted during an `OUT` cycle | last callback was `out` |
+| `INT` | interrupt acknowledged | `cpu_.interrupt()` was served since the last poll |
+| `HLDA` | hold acknowledged | permanently off, there is no DMA peripheral |
+| `PROT` | memory protect active | permanently off, PROTECT is a documented no-op |
+| `M1`, `STACK` | instruction fetch, stack cycle | approximated |
+| `INTE`, `HLTA`, `WAIT` | | from CPU state |
 
-Also, the data lamps re-read `mem[lastAddr]` rather than showing the byte that
-was actually on the data bus, so an `IN` displays memory contents rather than
-the port value.
+`M1` (opcode fetch versus a plain operand read) and `STACK` (a push or pop
+versus any other memory access) need the CPU core to say what an access is for.
+The four `Bus` callbacks say what kind of access it is, not why. Reporting the
+purpose means tagging every opcode handler in `cpu_i8080.cpp`, which is the part
+of the codebase 8080EXM proves correct. Both lamps are sub-frame pulses, a
+handful of T-states inside a 10–18 T-state instruction, and the panel is polled
+once per rendered frame. Aggregating counts over many cycles works for address
+lamps (below), but a boolean status bit has no equivalent. `M1` and `STACK`
+stay approximated.
 
-Fixing this properly means having the CPU core report per-machine-cycle status
-bits — a real change to the `Bus` interface, not a UI patch. Worth scoping
-separately.
+The data lamps show the byte at the last address in memory, not the byte that
+was on the data bus, so an `IN` shows memory contents rather than the port
+value.
 
-**Finding (b) — Kill the Bit's moving bit does not render as a moving bit.**
+**(b) Address lamps carry brightness.** On real hardware the lamps integrate,
+so an address bit driven often glows brighter than one driven rarely. Kill the
+Bit depends on it. `HL` is a delay counter incremented by 14 (`DAD B` with
+`BC = 0x000E`) until it overflows, about 4681 iterations at 48 T-states each,
+roughly 225k cycles or 6.7 frames, and within one frame `H` sweeps about
+`0x00`→`0x24`. The four consecutive `LDAX D` instructions put `D` on the address
+bus four times per loop iteration, so its bit is brighter than `H`'s sweep.
+That brightness weighting is the effect.
 
-`web/wasm_machine.cpp:232`:
-
-```cpp
-int busActivity() { int v = addr_or_; addr_or_ = 0; return v; }
-```
-
-`addr_or_` is the OR of every address touched since the last read, sampled once
-per frame (`web/app.js:817`).
-
-In Kill the Bit, `HL` is a delay counter incremented by 14 (`DAD B` with
-`BC = 0x000E`) until it overflows — 65536/14 ≈ 4681 iterations at 48 T-states
-each ≈ 225k cycles ≈ 6.7 frames. So within a single frame `H` sweeps roughly
-`0x00`→`0x24`, and the OR of that sweep lights several of A8–A15 **at the same
-brightness as `D`'s single bit**.
-
-On real hardware the four consecutive `LDAX D` instructions put `D` on the
-address bus four times per loop iteration, making its bit visibly *brighter*
-than `H`'s sweep. **That brightness weighting is the entire visual effect.** An
-OR cannot reproduce it.
-
-The `baremetal` preset guide promises *"a lit bit sweeps across the top address
-lamps (A8 - A15)"*, and the test in `panel-lights.spec.ts` only asserts that
-`addr & 0xff00` changes between frames and that `D` holds exactly one bit — so
-it passes regardless of how the lamps actually look.
-
-> **Owner decision (#9):** independently noticed; report it.
-
-**Work item:** replace the OR with a per-bit hit *count* per frame (a
-`uint16_t counts[16]` or an accumulator array), then map count → lamp opacity so
-frequently-driven address bits glow brighter. That is both closer to how the
-real incandescent lamps integrated and the only way Kill the Bit reads correctly.
+`Machine::busActivityCounts()` returns a 16-element per-bit hit-count array,
+and `app.js` maps each count to lamp opacity. `panel-lights.spec.ts` asserts
+that two simultaneously lit high bits render at different brightness. It
+samples every rendered frame in the page, because a Playwright poll round-trip
+is too slow to catch the transition window of about 16 ms reliably. The
+`baremetal` preset guide promises a lit bit sweeping across the top address
+lamps (A8 – A15).
 
 ---
 
-## 4. Serial terminal options — cosmetic only; owner wants full realism
+## 4. Serial terminal options
 
-`web/app.js:182` (`TERM_PROFILES`)
+`web/app.js` (`TERM_PROFILES`)
 
-### What is right
+### 4.1 Metering and chrome
 
-The baud→characters-per-second conversion is correct and the ASR-33 detail is
-genuinely good (`web/app.js:234`):
+The baud to characters-per-second conversion is (`web/app.js`):
 
 ```js
 baudCps = p.baud ? p.baud / (key === "tty33" ? 11 : 10) : 0;
 ```
 
-The ASR-33 framed characters as 1 start + 8 data + **2** stop = 11 bits, so
-110 baud is exactly 10 cps. Everything else uses 10 bits. Correct.
+The ASR-33 frames a character as 1 start + 8 data + 2 stop = 11 bits, so 110
+baud is exactly 10 cps. Everything else uses 10 bits.
 
-Also right: scrollback disabled on the CRT profiles and enabled only on the
-Teletype's paper roll; the `bare` housing for Modern and Teletype; the amber
-variant; the mechanical bell for the ASR-33 vs. a phosphor flash for CRTs.
+Scrollback is disabled on the CRT profiles and enabled only on the Teletype's
+paper roll. The `bare` housing is used for Modern and Teletype, with an amber
+variant. The ASR-33 has a mechanical bell and the CRTs a phosphor flash.
 
-### The finding
+### 4.2 Per-profile output filters
 
-**The profiles change font, colour, bezel, bell and baud rate — and nothing
-else. Every profile runs through xterm.js's full VT100/xterm parser.**
+Each profile has a capability descriptor on its `TERM_PROFILES` entry, and a
+per-profile output filter sits between `outQ` and `term.write()`.
 
-Concretely:
+| Profile | Behaviour |
+|---|---|
+| Teletype ASR-33 | a stateful filter strips every escape sequence, including one split across filter calls. CAPS LOCK is forced on |
+| Glass TTY | the same stripping filter |
+| DEC VT52 | translates the real DEC VT52 command set (`ESC A/B/C/D` cursor, `ESC H` home, `ESC J` and `ESC K` erases, `ESC Y row col` addressing) to xterm-compatible sequences |
+| Lear Siegler ADM-3A | translates its bare control-code cursor moves and `ESC =` row/column addressing; the translator is unit-tested against the Lear Siegler ADM-3A protocol |
+| DEC VT100 green/amber | no filter, the xterm parser is VT100-compatible |
+| Modern | no filter |
 
-| Profile | Claim | Reality |
-|---|---|---|
-| Teletype ASR-33 | a printing terminal, no cursor addressing possible | processes the full ANSI/xterm escape set |
-| DEC VT52 | VT52 command set (`ESC A/B/C/D`, `ESC Y` addressing) | full VT100+ |
-| Lear Siegler ADM-3A | `ESC =` row/column addressing, no ANSI | full VT100+ |
-| Glass TTY | minimal — CR/LF/BS and little else | full VT100+ |
-| DEC VT100 green/amber | VT100 | roughly right by accident |
+The CP/M Games disk help text tells users to switch the Terminal dropdown to
+DEC VT100 first, because those programs move the cursor around and expect a
+real CRT. Under the Teletype profile their escape sequences are stripped.
 
-This matters for real software in the repo: the CP/M Games disk help text tells
-users to *"Switch the Terminal dropdown to 'DEC VT100' first — these move the
-cursor around and expect a real CRT."* Those programs would work identically
-under the Teletype profile, which is physically impossible.
+### 4.3 Tests
 
-> **Owner decision (#3):** these should be 100% realistic. This is a
-> requirement, not a nice-to-have.
+`termfilters.spec.ts` covers the filters, including a sequence split across
+filter calls. Every profile has a baud-metering assertion. `fidelity.spec.ts`
+covers `tty33` at 10 cps and `modern` unmetered.
 
-**Work item — per-profile terminal emulation.** Sketch of an approach:
-
-1. Insert a **per-profile output filter** between `outQ` and `term.write()`,
-   driven by a capability descriptor on each `TERM_PROFILES` entry.
-2. **ASR-33 / Glass TTY:** strip or render-as-literal every escape sequence;
-   honour only CR, LF, BS, BEL, HT. On the ASR-33, BS does not erase (the print
-   head backs up and overstrikes) and there is no cursor addressing, no clear
-   screen, no reverse video. Uppercase-only is already handled by CAPS LOCK but
-   should be forced, not optional, on this profile.
-3. **VT52:** translate the VT52 set (`ESC A/B/C/D` cursor, `ESC H` home,
-   `ESC J` erase to end of screen, `ESC K` erase to end of line, `ESC Y row col`
-   direct addressing) into what xterm.js accepts, and drop everything else.
-   xterm.js does have a VT52 mode via DECANM — worth checking whether it can be
-   entered and locked rather than writing a translator.
-4. **ADM-3A:** translate `ESC =` + (row+32) + (col+32) into a CUP sequence, plus
-   `^Z` clear screen, `^H/^L/^K/^J` cursor moves, `^M` CR, `^N/^O` (rarely used).
-   Drop ANSI. Matches the Lear Siegler ADM-3A cursor protocol; the translator
-   is unit-tested against the spec.
-5. **VT100:** keep as-is, but verify the DECAWM/DECOM/scroll-region subset
-   actually matches a VT100 rather than xterm.
-6. Consider whether the correct terminal for each *preset* should be enforced
-   rather than merely defaulted.
-
-**Also:** verify the baud choices while you are in there. VT100 at 9600 and
-ADM-3A at 9600 are plausible defaults; VT52 at 4800 and Glass TTY at 300 look
-arbitrary. Each should be justified against a manual or changed to a documented
-default.
-
-**Test gap:** only `tty33` (10 cps) and `modern` (unmetered) have their metering
-asserted, in `fidelity.spec.ts`. The other five profiles' baud rates are
-completely untested — `terminal.spec.ts` only checks fonts, bezel classes and
-persistence. Every profile needs a metering assertion, and once the filters
-exist, an escape-handling assertion too.
+**Gap.** The baud choices are not all justified against a manual. VT100 at 9600
+and ADM-3A at 9600 are plausible defaults, but VT52 at 4800 and Glass TTY at 300
+have no cited source.
 
 ---
 
-## 5. Presets — historical accuracy
+## 5. Presets
 
-`web/app.js:1767` (`PRESETS`)
+`web/app.js` (`PRESETS`)
 
-### 5.1 Per-preset findings
+### 5.1 Per-preset notes
 
-**`baremetal` — "Bare-Metal Toggle", Early 1975, 4 KB, ASR-33**
+**`baremetal`, "Bare-Metal Toggle", 1976, 4 KB, ASR-33.** The card list uses
+the real MITS part number 88-4MCS (4K static) with the 88-2SIO, which existed
+by 1976. The blurb agrees with the card list. Kill the Bit was a
+front-panel toggle-in program. Delivering it on paper tape is an emulator
+conceit: there was no MITS paper tape of it, and a 24-byte tape with no
+checksum loader is not a period artifact. The guide text points at the manual
+path, but the preset's default is the tape.
 
-- Card list includes **MITS 88-2SIO**, which is a **1976** board. In early 1975
-  the MITS serial card was the **88-SIO** (and 88-SIO-A/B), at ports 0x00/0x01 —
-  which this emulator does not implement at all.
-- *"The Altair as it first shipped"* had **256 bytes** on the 88-CPU board, not
-  4 KB. The first memory board was 1 KB static.
-- **"MITS 88-4K Static RAM" is not a MITS part number.** The real boards are
-  88-4MCS (4K static) and 88-4MCD (4K dynamic). CLAUDE.md explicitly names
-  *"hardware names on the S-100 cards"* as a fidelity feature, so this matters.
-- Internal inconsistency: the blurb says *"No keyboard, no screen worth the
-  name"* while the build includes a serial card and `term: "tty33"`.
-- **Kill the Bit was a front-panel toggle-in program.** Delivering it on paper
-  tape is an emulator conceit — there was no MITS paper tape of it, and a
-  24-byte tape with no checksum loader is not a period artifact. The guide text
-  does point at the manual path, but the preset's default is the tape.
+**`stock`, "Stock Launch", 1976, 4 KB, ASR-33.** The card list uses 88-4MCD (4K
+dynamic) with the 88-2SIO. It loads the image the ROM manifest calls "Altair 4K
+BASIC 4.0 (MITS 1976)". The ROM's own banner prints `4K BASIC 4.0 / COPYRIGHT
+MITS 1976` (§5.3).
 
-**`stock` — "Stock Launch", Mid 1975, 4 KB, ASR-33**
+**`cassette`, "Cassette Hobbyist", 1976, 32 KB, ADM-3A.**
 
-- Same 88-2SIO anachronism; **"MITS 88-4K DRAM"** again not a real part number
-  (should be 88-4MCD).
-- Loads what the ROM manifest calls **"Altair 4K BASIC 4.0 (MITS 1976)"** onto a
-  machine labelled "Mid 1975". Mid-1975 was 4K BASIC 1.0/2.0. Either the era or
-  the software is wrong. See §5.2.
+- 88-16MCD × 2 = 32 KB is a real MITS configuration with real part numbers.
+- 88-ACR is real and correctly dated, and the ADM-3A is 1976.
+- 8K BASIC on paper tape is right for 1976.
+- `CLOAD "S"` single-letter naming matches Altair BASIC's syntax.
+- "Realistic" is 300 baud for the cassette.
+- About 14 minutes for 8K at 10 B/s is arithmetically right.
 
-**`cassette` — "Cassette Hobbyist", 1976, 32 KB, ADM-3A — accurate**
+The deck is labelled "RADIO SHACK CASSETTE RECORDER" in the UI. The 88-ACR is
+the S-100 interface board and the recorder was any consumer deck, so the label
+is the right framing.
 
-- 88-16MCD × 2 = 32 KB is a real MITS configuration with real part numbers. ✅
-- 88-ACR is real and correctly dated. ✅
-- ADM-3A is 1976. ✅
-- 8K BASIC on paper tape is right for 1976. ✅
-- `CLOAD "S"` single-letter naming matches Altair BASIC's actual syntax. ✅
-- "Realistic = 300 baud" for the cassette is right. ✅
-- ~14 minutes for 8K at 10 B/s is arithmetically right and matches reality. ✅
+**`cpm`, "CP/M Workstation", 1979, 64 KB, VT100.** CP/M 2.2 is 1979, and the
+VT100 shipped in August 1978. The 64 KB of RAM is 4× 88-16MCD boards, told the
+same way in the preset backplane and in the disk cabinet hint (`dcdd-hint`).
+The 64 KB setting puts RAM up to the top of memory, and the boot PROM at
+`0xFF00` shadows it (§3.5).
 
-The only quibble: the deck is labelled **"RADIO SHACK CASSETTE RECORDER"** in
-the UI. That is actually *correct* framing — the 88-ACR is the S-100 interface
-board and the recorder was any consumer deck — and "Realistic" being both the
-speed-selector label and Radio Shack's brand name is a happy accident. No change
-needed; noting it so nobody "fixes" it.
+`presets.spec.ts` pins the part numbers, eras and RAM story.
 
-**`cpm` — "CP/M Workstation", 1978, 64 KB, VT100**
+### 5.2 88-SIO and 88-2SIO
 
-- The guide says **"CP/M 2.2 has booted"**. CP/M **2.2 is 1979**; 1978 was
-  CP/M 1.4. Either change the era to 1979–80 or change the disk description.
-- VT100 shipped August 1978, so it just fits 1978 — but pairs better with 1979.
-- Inconsistency: the preset backplane says **"64K Static RAM (3rd party)"**
-  while the disk cabinet hint (`web/app.js`, `dcdd-hint`) says CP/M *"wants all
-  64 KB of RAM (4× 88-16MCD boards)"*. Pick one story.
-- Note the 64 KB RAM setting also means the boot PROM at `0xFF00` is writable
-  (§3.5).
+Every preset ships an 88-2SIO at ports 0x10/0x11, because that is the only
+serial board the emulator implements and the only one the bundled BASIC images
+target. A genuinely period 1975 machine used the 88-SIO at ports 0x00/0x01, and
+MITS shipped BASIC builds targeting it.
 
-### 5.2 The 88-SIO / 2SIO question — challenged, may stand
+The 2SIO is the departure, and it is stated. `baremetal` and `stock` are dated
+1976, when the 2SIO existed, rather than their software's earlier MITS release
+date. `app.js`, the web README and this section say so.
 
-Every preset, regardless of era, ships an 88-2SIO at ports 0x10/0x11, because
-that is the only serial board the emulator implements and the only one the
-bundled BASIC images target.
+**Gap.** There is no 88-SIO board. It would be a new peripheral at 0x00/0x01,
+simpler than the 2SIO, plus a pinned SIO-targeted 4K/8K BASIC image that may
+not exist in a form that can be fetched with a checksum. It is not scheduled,
+and it is tied to the bootstrap question in §5.3.
 
-**The challenge:** if the goal is fidelity, the 1975 presets are wrong hardware.
-A genuinely period "Early 1975" or "Mid 1975" machine used the 88-SIO at ports
-0x00/0x01, and MITS shipped BASIC builds targeting it. Implementing an 88-SIO is
-not hard — it is a simpler board than the 2SIO — but it requires finding and
-pinning SIO-targeted 4K/8K BASIC images, which may not exist in a form that can
-be fetched with a checksum.
+The DBL boot PROM's error path writes to port 0x01, the 88-SIO data port (the
+`3E 43 / 01 / 3E 4F ... D3 01` tail of `disk_bootrom.h`). Nothing maps port
+0x01, so a boot failure prints nothing. An 88-SIO would make CP/M boot errors
+visible.
 
-**Three ways out, in increasing cost:**
+### 5.3 BASIC version numbers and the 3.2 bootstrap
 
-1. **Relabel.** Keep the 2SIO, but move `baremetal` and `stock` to "1976" and
-   drop the 88-2SIO from the card list where it is anachronistic. Cheapest,
-   loses nothing functional, and stops the docs asserting something false.
-2. **Implement the 88-SIO** at 0x00/0x01 as a second board (it can share
-   `Serial2SIO`'s machinery with a different port map and status layout), and
-   add a preset-level choice of console board. Then source period BASIC images.
-3. **Do nothing**, but document the simplification explicitly in the preset
-   guide text and in CLAUDE.md, so it is a *stated* departure rather than an
-   unmarked one.
+**Version numbers.** `web/roms/manifest.json` describes the 4K image as "Altair
+4K BASIC 4.0 (MITS 1976)", and the upstream file is
+`nippur72/8-bit-projects/altair-basic/4kbas40.bin`. The number is not invented.
+Booting `stock` with Auto-load prints `4K BASIC 4.0 / COPYRIGHT MITS 1976` and
+`716 BYTES FREE`, straight from the ROM. The 8K image is described as "8K BASIC
+4.0 (MITS 1976)", and its dating has not been checked against the ROM.
 
-> **Owner decision (#5):** challenge it, but it may stay as-is. Recorded here so
-> the decision is deliberate rather than accidental.
+**The deramp.com 3.2 bootstrap.** Mike Douglas's deramp.com Altair archive is
+already a pinned source for the 8K EPROM build (`8kBas_e0/e8/f0/f8.bin`, see
+`web/roms/fetch-basic.sh`). A shorter, historically real bootstrap would beat the
+synthesised loader in `makeBootstrap()` for the hand-keyed panel-guide path,
+with fewer switch flips and an actual artifact in place of an invention.
 
-Note that the DBL boot PROM's error path already writes to **port 0x01** (the
-88-SIO data port) — see the `3E 43 / 01 / 3E 4F ... D3 01` tail of
-`disk_bootrom.h`. Since nothing maps port 0x01, a boot failure currently prints
-nothing at all. Implementing an 88-SIO would incidentally make CP/M boot errors
-visible, which is a real diagnostic win.
+The `LDR4K32-octal.PRN` loader (`altairclone.com/downloads/4kbootstrap.pdf`)
+runs on ports 0x00/0x01, which is the 88-SIO, not this emulator's 2SIO.
+Porting the same loader to the 2SIO ports would make it a rewrite instead of an
+actual artifact. It becomes worth teaching in the panel guide only with an
+88-SIO (§5.2).
 
-### 5.3 Altair BASIC version numbers, and the deramp.com 3.2 bootstrap
+**Gap.** The panel guide teaches the synthesised loader. Any real bootstrap
+must be transcribed from its source with the URL cited, and pinned with a
+SHA-256 if it ships as a file, or inlined as a cited `constexpr` table if it
+ships as a listing.
 
-**Question first:** `web/roms/manifest.json` describes the 4K image as
-**"Altair 4K BASIC 4.0 (MITS 1976)"**, and the upstream file is
-`nippur72/8-bit-projects/altair-basic/4kbas40.bin`. I could not confirm that a
-**version 4.0 of *4K* BASIC** ever shipped. The release line I know of is 4K
-BASIC 1.0 (July 1975) → 2.0 → 3.0 → 3.2 (1976), with **4.0 being an 8K/Extended
-release (1977)**. The 8K image is separately described as "8K BASIC 4.0
-(MITS 1976)", where 4.0 is more usually dated 1977.
+### 5.4 The `716 BYTES FREE` figure
 
-If those version numbers are wrong they are wrong in four places: the two
-`manifest.json` entries, `web/roms/README.md`, and the `stock` preset guide text.
+The figure appears in three places: `web/roms/manifest.json` (the 4K BASIC
+description), `web/roms/README.md`, and the `stock` preset guide in
+`web/app.js`. It matches what the bundled `4kbas.bin` prints on a cold start in
+a 4 KB machine, so `MEMORY SIZE?` auto-detection lands on the real number.
 
-**Work item — verify and, if needed, correct.** Also worth reconsidering the
-`(MITS 1976)` dating on both, and reconciling it with the preset eras (§5.1).
+### 5.5 Preset test coverage
 
-**Owner direction (#6): investigate deramp.com's shorter bootstrap for 3.2.**
-
-Mike Douglas's deramp.com Altair archive — already a pinned source in this repo
-for the 8K EPROM build (`8kBas_e0/e8/f0/f8.bin`, see `web/roms/fetch-basic.sh`)
-— also carries Altair BASIC 3.2 material and a **shorter bootstrap loader** than
-the one currently synthesised in `makeBootstrap()` (`web/app.js:2113`).
-
-The owner would like this simulated. Rationale: a shorter, *historically real*
-bootstrap is strictly better than a synthesised 40-byte one for the panel-guide
-hand-keying path — fewer switch flips for the user, and it is an actual artifact
-rather than an invention. It would also pair naturally with a 3.2 image if the
-version question above resolves toward 3.2.
-
-**Work item:**
-1. Locate the exact bootstrap on deramp.com (Mike Douglas's Altair software
-   archive, alongside the ROM BASIC images already fetched by
-   `web/roms/fetch-basic.sh`). **Do not guess at the byte listing — transcribe
-   it from the source and cite the URL in a comment**, per CLAUDE.md's rule on
-   porting behaviour.
-2. Confirm which BASIC version and which console board it targets (88-SIO vs.
-   88-2SIO port addresses) — this determines whether it works with the currently
-   bundled 2SIO-targeted images or needs a matching 3.2 image fetched and
-   checksummed alongside.
-3. Replace or supplement `makeBootstrap()` with it, and update the panel guide's
-   hand-keyed loader (which currently follows the synthesised loader — see
-   commit `0460d11`) to teach the real one.
-4. Add it to `fetch-basic.sh` with a pinned SHA-256 if it comes as a file, or
-   inline it as a cited `constexpr` table if it comes as a listing.
-
-### 5.4 Question — where does "~716 bytes free" come from?
-
-The figure **~716 bytes free** for 4K BASIC in a 4 KB machine appears in prose
-in three places: `web/roms/manifest.json` (the 4K BASIC description),
-`web/roms/README.md`, and the `stock` preset guide in `web/app.js`.
-
-> **Owner decision (#7):** not sure — report as an open question.
-
-**Question for whoever picks this up:** was 716 observed by actually cold-starting
-the bundled `4kbas.bin` in a 4 KB machine and reading what BASIC printed, or is
-it an estimate? CLAUDE.md calls out *"`MEMORY SIZE?` auto-detection landing on
-the real number"* as a fidelity feature, so this number is load-bearing.
-
-**Work item either way:** add an E2E assertion that boots the `stock` preset with
-Auto-load and asserts the exact "BYTES FREE" figure the ROM prints. If the
-number in the docs is wrong it gets corrected once and can never drift again.
-
-### 5.5 Test gap
-
-`presets.spec.ts` asserts RAM size, terminal profile and visible devices for all
-four presets — good. It does **not** assert the S-100 card lists, the era
-strings, or the blurb/guide text. Given that the card names are where most of
-the accuracy problems live (§5.1), those deserve assertions too.
+`presets.spec.ts` asserts RAM size, terminal profile and visible devices for
+all four presets, plus the S-100 card part numbers, the era strings and the
+64 KB RAM story.
 
 ---
 
-## 6. Test adequacy
+## 6. Test coverage
 
-### What is strong
+### 6.1 What is covered
 
-- **CI runs all four 8080 diagnostics** (8080PRE, TST8080, CPUTEST, 8080EXM)
+- CI runs all four 8080 diagnostics (8080PRE, TST8080, CPUTEST, 8080EXM)
   through the CP/M host, pinned by SHA-256, and exits non-zero on failure.
-- **CI boots a real MITS CP/M 2.2 diskette** (`dhansel/Altair8800` DISK01, pinned
-  by SHA-256) on the emulated 88-DCDD and runs `DIR` and `STAT`.
-- **~213 Playwright tests** across 17 spec files drive the real UI in a browser.
-- `fidelity.spec.ts` encodes CLAUDE.md's realism rules as executable checks —
-  2 MHz pacing, ASR-33 metering, paper tape at Realistic vs Max, turbo not
-  surviving a keypress. This is exactly the right instinct.
+- CI boots a real MITS CP/M 2.2 diskette (`dhansel/Altair8800` DISK01, pinned by
+  SHA-256) on the emulated 88-DCDD and runs `DIR` and `STAT`.
+- The Playwright suite in `web/tests/` drives the real UI in a browser.
+- `fidelity.spec.ts` encodes CLAUDE.md's realism rules as executable checks:
+  2 MHz pacing, ASR-33 metering, paper tape at Realistic vs Max, and turbo not
+  surviving a keypress.
 - A red web-test run blocks the deploy (`build` job `needs:` it).
 - Coverage targets exist for both C++ (llvm-cov, including the diagnostic COMs)
   and JS (V8/monocart).
+- `make check` runs `demo`, `test` and `cpm`, so a local check includes the
+  diagnostics.
+- The test seam in `web/app.js` parses `location.search` with `URLSearchParams`,
+  so only `?test=1` enables it. A substring match on "test" would catch an
+  unrelated parameter and force Max load speeds.
+- Interrupts: `interrupt_test` (§2.3).
+- Disk edges: `ReadsPastByte137ReturnTheZeroTail`, `ResetDoesNotHomeTheHead`,
+  `EmptyDriveCannotBeEnabled` (§3.2).
+- Terminal metering for every profile, and the escape filters (§4).
+- Preset card lists and eras (§5.5).
+- Kill the Bit lamp brightness (§3.6b).
 
-### Concrete gaps
+### 6.2 Remaining gaps
 
 | # | Gap | Impact |
 |---|---|---|
-| 1 | **No unit test for `serial2sio.cpp`.** The GoogleTest suite is `arithmetic_test` (27), `cassette_test` (20), `disk88_test` (8). The 2SIO's status bits, master reset, overrun latch, channel B and IRQ decoding have no direct test. | The console board is the single most load-bearing peripheral; it is only tested implicitly. |
-| 2 | **No T-state assertions** (§2.5). | A wrong cycle count changes every real-time behaviour and no test goes red. |
-| 3 | **`Cpu::interrupt()` untested and uncalled** (§2.3). | Whole feature is unverified. |
-| 4 | **Disk edges untested:** the 138th byte, `reset()` homing heads, empty-drive status (§3.2). | All three confirmed to exist; none caught. |
-| 5 | **Five of seven terminal baud rates unmetered** (§4). | Only `tty33` and `modern` are asserted. |
-| 6 | **Preset card lists / era metadata unasserted** (§5.5). | Where most accuracy bugs live. |
-| 7 | **`make check` = `demo + test` only.** The diagnostics run in CI (`make cpm`) but not from the local gate. | A local `make check` can pass while the core is broken. |
-| 8 | **`if (location.search.includes("test"))`** (`web/app.js:2679`) matches any query string containing the substring "test", not just `?test=1`. | Fragile; a future param like `?latest=` would silently enable the test seam and force Max load speeds in production. |
-| 9 | **Kill the Bit lamp test asserts the wrong thing** (§3.6b): it checks that `addr & 0xff00` changes and that `D` has one bit — both true regardless of whether the lamps render correctly. | The marquee visual is unverified. |
+| 1 | No unit test for `serial2sio.cpp`. The GoogleTest suites are `arithmetic_test`, `cassette_test`, `disk88_test` and `interrupt_test`. The 2SIO's status bits, master reset, overrun latch, channel B and IRQ decoding have no direct test. | The console board is the most load-bearing peripheral and is only tested implicitly. |
+| 2 | No T-state assertions (§2.5). | A wrong cycle count changes every real-time behaviour and no test goes red. |
+| 3 | No bundled software exercises RST-vectored interrupts (§2.3). | The wiring has not run against real period software end to end. |
 
 ---
 
-## 7. Documentation discrepancies
+## 7. Documentation notes
 
-### 7.1 CLAUDE.md contradicts the code on the track-0 line
+### 7.1 Track-0 line
 
-> **Owner decision (#1):** report this discrepancy.
+The 88-DCDD track 0 status (status D6, MITS 88-DCDD manual p.134) is the
+FD-400's TRACK 0 interface line, which Pertec's manual (§2.6.3) defines as "a
+function of the position of the magnetic head assembly". It is a switch on the
+carriage, so it follows the head in both directions. The only hold-off is the
+drive's own, which keeps the line false until 40 ms after the last step
+(§2.6.3.1). A latching line (set by a step out that reaches track 0, never
+cleared by a step in) is not period behaviour, and it breaks a BIOS whose
+head-home routine trusts the line.
 
-At review time `CLAUDE.md` gave a latching 88-DCDD track-0 status (set by a
-step out that reaches track 0, never cleared by a step in) as an example of a
-quirk to keep, while `disk88.cpp` and the README had the line follow the head.
+`disk88.cpp` models the switch and the hold-off (§3.2), and
+`Track0LineFollowsHead` and `Track0ReportsOnlyAfterTheHeadSettles` pin it.
+`CLAUDE.md` uses the 8080 `ANA` auxiliary-carry quirk as its example of a real
+hardware quirk to keep. A real quirk is what the chip or board does. A
+convenience is a departure from it, and the three override rules apply.
 
-**The code is right and the example was wrong.** On the real machine the track
-0 status (status D6, MITS 88-DCDD manual p.134) is the FD-400's TRACK 0
-interface line, which Pertec's manual (§2.6.3) defines as "a function of the
-position of the magnetic head assembly": a switch on the carriage, so it
-follows the head in both directions. The only hold-off is the drive's own,
-which keeps the line false until 40 ms after the last step (§2.6.3.1). A
-latching line isn't period behaviour, and it breaks a BIOS whose head-home
-routine trusts the line.
+### 7.2 Overrides and the RAM story
 
-**Resolved.** `CLAUDE.md` now uses the 8080 `ANA` auxiliary-carry quirk as its
-example. The controller (§3.2) models the FD-400 switch and its 40 ms
-hold-off; `Track0LineFollowsHead` and `Track0ReportsOnlyAfterTheHeadSettles`
-pin it.
-
-### 7.2 Smaller doc inconsistencies
-
-- CP/M RAM story told two ways: "64K Static RAM (3rd party)" in the preset
-  backplane vs. "4× 88-16MCD boards" in the disk cabinet hint (§5.1).
-- CLAUDE.md's `?test=1` clause mentions forcing **floppy** load speed to Max;
-  there is no floppy speed control (§3.2d).
-- `printManual()` (`web/app.js:467`) temporarily raises `baudCps` above the
-  profile's real rate so the how-to page prints in ~8 s instead of ~2 min on a
-  Teletype. It only affects emulator UI text, never machine output, and a
-  keypress skips it — but under CLAUDE.md's three-rule test it is an unlabelled
-  speed override. Worth one line of UI text ("press a key to skip") or an
-  explicit carve-out in CLAUDE.md.
+- `printManual()` (`web/app.js`) temporarily raises `baudCps` above the
+  profile's real rate so the how-to page prints in about 8 s instead of about
+  2 min on a Teletype. It affects only emulator UI text, never machine output,
+  and a keypress skips it. `CLAUDE.md` carves it out in its list of sanctioned
+  overrides.
+- The `?test=1` clause in `CLAUDE.md` names the load speeds a test may force to
+  Max. The 88-DCDD has a LOAD SPEED selector (§3.2), and Max is available under
+  `?test=1`.
+- The CP/M RAM story is the same in the preset backplane and the disk cabinet
+  hint: 4× 88-16MCD boards (§5.1).
 
 ---
 
-## 8. Architecture assessment
+## 8. Architecture
 
-**Good, and it earns the praise.**
-
-- The CPU core is genuinely host-agnostic: it talks to the world only through
-  four `std::function` callbacks. The same core drives the GoogleTest fixture,
-  the CP/M diagnostic host, the native disk-boot harness, and the browser.
+- The CPU core is host-agnostic: it talks to the world only through four
+  `std::function` callbacks. The same core drives the GoogleTest fixture, the
+  CP/M diagnostic host, the native disk-boot harness, and the browser.
 - Peripherals are independent units with a uniform `owns() / in() / out()`
   shape, composed by `Machine::make_bus()` in a readable dispatch chain.
 - The C++ core builds and tests with no emscripten dependency, which is why
   `make check` can be a fast local gate.
 - Media (`*.bin`, `*.dsk`) is fetched at build time with pinned SHA-256s rather
-  than committed. Correct call, and the CI cache keying on the workflow file
-  hash is neat.
+  than committed, and the CI cache keys on the workflow file hash.
 - Provenance is cited in headers wherever behaviour comes from a source.
 
-**Two things worth improving:**
+**Open items:**
 
-1. **`Machine::reset()` vs. `Machine::reboot()`** are confusingly named for two
-   quite different operations. `reset()` wipes all 64 KB of RAM and re-seeds the
-   echo ROM; `reboot()` resets the boards and CPU without touching memory. The
-   front panel's RESET paddle correctly calls `reboot()`, but the naming invites
-   the wrong one. Suggest `powerOnReset()` / `busReset()` or similar.
-2. **`web/app.js` is 2,721 lines** in a single `boot()` closure holding the front
-   panel, three device UIs, the preset system, the loader state machine, the
-   terminal metering and the test seam. The device objects (`paperTape`, `tape`,
-   `cassette`, `disk`) are already well-factored *inside* it and would split into
-   modules cleanly. Not urgent, but it will get worse.
-
----
-
-## 9. Prioritised work list
-
-Ordered by owner priority and impact. Each item names the decision behind it.
-
-### P0 — owner-directed, changes behaviour
-
-1. **Make the terminal profiles real** (§4). *Owner: "100% realistic."* Add a
-   per-profile output filter: ASR-33 and Glass TTY strip escapes entirely and
-   overstrike on BS; VT52 handles only the VT52 set; ADM-3A handles `ESC =`
-   addressing and control-char cursor moves, no ANSI. Test each profile's escape
-   handling **and** its baud metering.
-2. **Make RESET realistic** (§3.4, §3.2b). *Owner: "yes."* `Machine::reboot()`
-   must not move the cassette head, must not change transport keys, and must not
-   home disk heads. Deselecting the disk controller **is** correct. Add tests for
-   all three.
-3. **Wire up interrupts + the `EI` delay** (§2.2, §2.3). *Owner: "I think so."*
-   `sio_.on_irq` → `cpu_.interrupt(0xFF)` (RST 7). Add a `pending_ei` flag so
-   `EI` takes effect one instruction later. Test: DI-ignored, EI-taken,
-   HALT-wake, INTE-cleared-on-accept, EI-delay.
-4. **Fix the Kill the Bit lamps** (§3.6b). *Owner: independently noticed.*
-   Replace `addr_or_` with per-bit hit counts per frame and map count → lamp
-   brightness. Update the test to assert the moving bit is brighter than the
-   `HL` sweep.
-5. **Cassette transport should run while the CPU is stopped** (§3.4a). Move
-   `cassette_.tick()` out of `runCycles()` so FF/REW wind with the panel on STOP.
-
-### P1 — owner-directed, investigation
-
-6. **Verify the Altair BASIC version numbers** (§5.3). Is there really a 4K
-   BASIC *4.0*? Fix `manifest.json` ×2, `roms/README.md`, and the `stock` guide
-   if not.
-7. **Source and simulate deramp.com's shorter 3.2 bootstrap** (§5.3). *Owner
-   direction.* Transcribe from the source, cite the URL, confirm the target
-   console board, pin it, and teach it in the panel guide in place of the
-   synthesised loader.
-8. **Answer the "~716 bytes free" question** (§5.4). Then lock it in with an E2E
-   assertion on the exact figure the ROM prints.
-9. **Decide the 88-SIO question** (§5.2). Relabel the 1975 presets, implement the
-   88-SIO, or document the simplification. *Owner may keep as-is — but make it a
-   recorded decision.* Note that implementing it would also make DBL boot errors
-   visible (they currently go to unmapped port 0x01).
-
-### P2 — reported findings, no decision yet
-
-10. **88-DCDD has no timing model** (§3.2d). *Owner: "report as a potential
-    issue."* If addressed: a `LOAD SPEED` selector on the disk cabinet matching
-    the paper-tape/cassette pattern, gated on CPU-cycle credit.
-11. **Correct CLAUDE.md's track-0 example** (§7.1). *Owner: "please report that
-    discrepancy."* The code is right; the doc's example is stale.
-12. **Disk edge cases** (§3.2a, §3.2c): the 138th byte per sector; an empty
-    drive reporting a healthy status. Both confirmed empirically. Add tests
-    either way, so the current behaviour is at least pinned.
-13. **Front-panel status lamps** (§3.6a): `MEMR`/`M1`/`INP`/`WO`/`STACK`/`OUT`
-    are decorative. Proper fix needs per-machine-cycle status from the CPU core —
-    scope separately.
-14. **Boot PROM is writable at 64 KB** (§3.5): reorder the RAM/ROM checks in
-    `bus.read`, or let the ROM window win regardless of `ram_top_`.
-15. **Preset metadata fixes** (§5.1): real MITS part numbers (88-4MCS / 88-4MCD),
-    CP/M 2.2 = 1979, the 64 KB RAM story told one way, the `baremetal` blurb
-    contradiction.
-
-### P3 — test hardening
-
-16. Unit tests for `serial2sio.cpp` (§6.1).
-17. T-state assertions for all 256 opcodes plus taken/not-taken conditionals (§2.5).
-18. Baud metering assertions for all seven terminal profiles (§6.5).
-19. Preset card-list and era assertions (§5.5).
-20. Add `make cpm` to `make check` (§6.7).
-21. Tighten the test-seam guard to a real query-param parse (§6.8).
+1. **`Machine::reset()` and `Machine::reboot()`** are two different operations
+   with similar names. `reset()` wipes all 64 KB of RAM and re-seeds the echo
+   ROM. `reboot()` resets the boards and CPU without touching memory. The front
+   panel's RESET paddle calls `reboot()`. Names like `powerOnReset()` and
+   `busReset()` would separate them.
+2. **`web/app.js`** is more than 2,700 lines in a single `boot()` closure
+   holding the front panel, three device UIs, the preset system, the loader
+   state machine, the terminal metering and the test seam. The device objects
+   (`paperTape`, `tape`, `cassette`, `disk`) are factored inside it and would
+   split into modules cleanly. Over 200 tests are pinned to its exact
+   behaviour, and the split has no user-facing benefit, so it is not planned.
 
 ---
 
-## Appendix A — file map
+## 9. Open items
+
+What the emulator does not yet do, with the section that describes it.
+
+### Hardware and bus
+
+1. **88-SIO board** at ports 0x00/0x01 (§5.2). It would need a pinned
+   SIO-targeted BASIC image. It would also make DBL boot errors visible, since
+   they go to unmapped port 0x01 today.
+2. **The published 4K 3.2 bootstrap** (§5.3). It runs on the 88-SIO ports, so it
+   waits on item 1.
+3. **`M1` and `STACK` lamps** from real machine-cycle status (§3.6a). It needs
+   the CPU core to tag each access with its purpose.
+4. **Data lamps** showing the byte on the data bus rather than memory at the
+   last address (§3.6a).
+5. **Sector interrupt** on the 88-DCDD, write protect and per-drive spindle
+   phase (§3.2).
+6. **6850 master reset** does not flush the RX FIFO (§3.1).
+7. **`Cpu::reset()`** clears every register, where a real 8080 forces only
+   `PC = 0` (§2.4).
+
+### Tests
+
+8. A GoogleTest for `serial2sio.cpp` (§6.2).
+9. T-state assertions for all 256 opcodes plus taken and not-taken
+   conditionals (§2.5).
+10. A purpose-built interrupt test ROM that proves a keystroke vectors to 0x38
+    (§2.3).
+
+### Documentation and cleanup
+
+11. Cite a source for the VT52 (4800) and Glass TTY (300) default baud rates
+    (§4.3).
+12. Check the 8K BASIC "4.0 (MITS 1976)" dating against the ROM (§5.3).
+13. Rename `Machine::reset()` and `Machine::reboot()` (§8).
+
+---
+
+## Appendix A: file map
 
 | Path | Role |
 |---|---|
-| `altair8800/i8080.{h,cpp}` | 8080 core — registers, flags, cycle table, decoder, `Bus` callbacks |
+| `shared/cpu/cpu_i8080.{h,cpp}` | 8080 core: registers, flags, cycle table, decoder, interrupts, `Bus` callbacks |
 | `altair8800/serial2sio.{h,cpp}` | 88-2SIO, ports 0x10–0x13, ring-buffered |
 | `altair8800/ringbuffer.h` | fixed-capacity SPSC byte ring |
 | `altair8800/cassette.{h,cpp}` | 88-ACR, ports 0x06/0x07 |
@@ -993,43 +743,30 @@ Ordered by owner priority and impact. Each item names the decision behind it.
 | `altair8800/cpm/cpm_host.cpp` | CP/M BDOS shim for the diagnostic `.COM`s |
 | `altair8800/cpm/cpm_disk.cpp` | native 88-DCDD CP/M boot test |
 | `altair8800/tests/` | GoogleTest: `arithmetic_test`, `cassette_test`, `disk88_test`, `interrupt_test` |
-| `altair8800/web/wasm_machine.cpp` | embind wrapper composing CPU + boards |
+| `altair8800/web/wasm_machine.cpp` | embind wrapper composing CPU and boards |
 | `altair8800/web/app.js` | front end: panel, devices, presets, loaders, terminal |
 | `altair8800/web/index.html` | markup + CSS for the panel, disk cabinet, deck |
-| `altair8800/web/tests/` | 17 Playwright specs, ~213 tests |
+| `altair8800/web/tests/` | Playwright specs |
 
-## Appendix B — key line references
+## Appendix B: key code locations
 
-| Finding | Location |
+| Topic | Location |
 |---|---|
-| Cycle table | `cpu_i8080.cpp:11-28` |
-| `Cpu::reset()` clears all registers | `cpu_i8080.cpp:27` |
-| `sub` AC (inverted borrow) | `cpu_i8080.cpp:59` |
-| `ana` AC quirk | `cpu_i8080.cpp:74` |
-| `daa` | `cpu_i8080.cpp:112` |
-| `Cpu::interrupt()` — no caller | `cpu_i8080.cpp:213` |
-| `EI` — no delay | `cpu_i8080.cpp:411` |
-| 512-byte FIFOs | `serial2sio.h:44` |
-| `on_irq` fired but never assigned | `serial2sio.cpp:47`, `:91` |
-| `Disk88::reset()` homes heads | `disk88.cpp:26` |
-| 138th byte per sector | `disk88.cpp:91` |
-| Empty drive reports healthy | `disk88.cpp:124` |
-| Track-0 sensor (correct, contra CLAUDE.md) | `disk88.cpp:143` |
-| `CassetteACR::reset()` rewinds | `cassette.cpp:23` |
-| ROM window only above `ram_top_` | `web/wasm_machine.cpp:79` |
-| `Machine::reboot()` | `web/wasm_machine.cpp:92` |
-| `cassette_.tick()` inside `runCycles()` | `web/wasm_machine.cpp:214` |
-| `busActivity()` — OR, not brightness | `web/wasm_machine.cpp:232` |
-| RAM checked before ROM window | `web/wasm_machine.cpp:256` |
-| `TERM_PROFILES` | `web/app.js:182` |
-| ASR-33 11-bit framing | `web/app.js:234` |
-| `printManual` baud override | `web/app.js:467` |
-| turbo boost ×12 | `web/app.js:560` |
-| `busActivity()` sampled per frame | `web/app.js:817` |
-| Status lamps | `web/app.js:825-840` |
-| RESET paddle → `reboot()` | `web/app.js:775` |
-| `PRESETS` | `web/app.js:1767` |
-| Paper-tape FIFO back-pressure | `web/app.js:2232` |
-| `makeBootstrap()` | `web/app.js:2113` |
-| Test seam guard | `web/app.js:2679` |
-| CLAUDE.md track-0 latch claim | `CLAUDE.md:17` |
+| Cycle table | `shared/cpu/cpu_i8080.cpp`, `kCycles` |
+| `Cpu::reset()` clears all registers | `shared/cpu/cpu_i8080.cpp` |
+| `sub` AC (inverted borrow), `ana` AC quirk, `daa` | `shared/cpu/cpu_i8080.cpp` |
+| `Cpu::interrupt()`, `ei_delay_` | `shared/cpu/cpu_i8080.cpp` |
+| `on_irq` wiring | `Machine` constructor in `web/wasm_machine.cpp` |
+| 512-byte FIFOs | `serial2sio.h` |
+| `Disk88::reset()` | `disk88.cpp` |
+| Track-0 sensor | `disk88.cpp` |
+| `CassetteACR::tick()` cycle-counter guard | `cassette.cpp` |
+| `Machine::reboot()`, `Machine::tickCassette()` | `web/wasm_machine.cpp` |
+| `Machine::busActivityCounts()` | `web/wasm_machine.cpp` |
+| `bus.read`, `bus.write` ROM window | `web/wasm_machine.cpp` |
+| `TERM_PROFILES`, ASR-33 11-bit framing | `web/app.js` |
+| `printManual` baud override | `web/app.js` |
+| Status lamps, address-lamp opacity | `web/app.js` |
+| RESET paddle to `reboot()` | `web/app.js` |
+| `PRESETS`, `makeBootstrap()`, paper-tape FIFO back-pressure | `web/app.js` |
+| Test seam guard (`URLSearchParams`) | `web/app.js` |

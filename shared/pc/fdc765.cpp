@@ -21,13 +21,15 @@ void Fdc765::reset() {
     xfer_failed_ = false;
     formatting_ = false;
     srt_ = 0;
-    prev_cycles_ = 0;
-    // Mounted media survives a controller reset.
-    for (auto &d : drives) {
-        d.current_cylinder = 0;
+    // Mounted media and the head position survive a controller reset; PCN doesn't.
+    for (int i = 0; i < 2; ++i) {
+        Drive &d = drives[i];
+        if (d.motor_on) sound.push(double(prev_cycles_), DriveSoundEvent::kMotorOff, i);
+        d.pcn = 0;
         d.motor_on = false;
         d.disk_changed = true;  // DSKCHG asserted at power-on/reset
     }
+    prev_cycles_ = 0;
 }
 
 void Fdc765::mount(int drive, const uint8_t *data, std::size_t len) {
@@ -37,7 +39,6 @@ void Fdc765::mount(int drive, const uint8_t *data, std::size_t len) {
     d.present = true;
     d.dirty = false;
     d.write_protected = false;
-    d.current_cylinder = 0;
     d.disk_changed = true;  // DSKCHG asserted when media is swapped
     // Geometry follows the image size: an HD drive also reads DD media. A wrong
     // geometry makes the DMA path silently move zero bytes instead of returning
@@ -109,8 +110,12 @@ void Fdc765::out(uint16_t port, uint8_t v) {
         case 0x3F2: {
             bool was_reset = !(dor_ & 0x04);
             dor_ = v;
-            drives[0].motor_on = (v & 0x10) != 0;
-            drives[1].motor_on = (v & 0x20) != 0;
+            for (int i = 0; i < 2; ++i) {
+                bool on = (v & (0x10 << i)) != 0;
+                if (on != drives[i].motor_on)
+                    sound.push(double(prev_cycles_), on ? DriveSoundEvent::kMotorOn : DriveSoundEvent::kMotorOff, i);
+                drives[i].motor_on = on;
+            }
             bool now_reset = !(v & 0x04);
             if (was_reset && !now_reset) {
                 // Leaving reset raises an interrupt.
@@ -203,6 +208,7 @@ void Fdc765::fail_command(int drive, int head, uint8_t st1, uint8_t st2) {
     xfer_credit_ = 0.0;
     xfer_target_ = 2.0 * 60.0 / types_[drive].rpm * cpu_hz_;
     phase_ = Phase::kExecution;
+    sound.push(double(prev_cycles_), DriveSoundEvent::kAccess, drive, 0, xfer_target_);
 }
 
 void Fdc765::end_failed_command() {
@@ -248,6 +254,7 @@ void Fdc765::begin_transfer(bool is_write) {
     transfer_ready_ = false;
     formatting_ = false;
     phase_ = Phase::kExecution;
+    sound.push(double(prev_cycles_), DriveSoundEvent::kAccess, drive, 0, xfer_target_);
 
     result_[3] = uint8_t(cyl);
     result_[4] = uint8_t(head);
@@ -280,22 +287,37 @@ void Fdc765::run_command() {
         }
         case 0x07: case 0x0F: {  // RECALIBRATE / SEEK, implied-seek commands
             int drive = params_[0] & 1;
-            int new_cyl = (base == 0x07) ? 0 : params_[1];
-            int steps = std::abs(new_cyl - drives[drive].current_cylinder);
-            drives[drive].current_cylinder = new_cyl;
+            Drive &d = drives[drive];
+            int steps;
+            seek_st0_ = uint8_t(0x20 | drive);
+            if (base == 0x07) {
+                // steps out until TRK0, at most 77 pulses (NEC uPD765A data sheet, RECALIBRATE)
+                steps = std::min(d.current_cylinder, 77);
+                d.current_cylinder -= steps;
+                if (d.current_cylinder != 0) seek_st0_ = uint8_t(0x70 | drive);  // IC abnormal, SE, EC
+                d.pcn = 0;
+            } else {
+                // pulses follow PCN, not the head; the carriage stops at its end stops
+                int ncn = params_[1];
+                steps = std::abs(ncn - d.pcn);
+                int dir = ncn > d.pcn ? 1 : -1;
+                d.current_cylinder = std::clamp(d.current_cylinder + dir * steps, 0, types_[drive].tracks - 1);
+                d.pcn = ncn;
+            }
             // DSKCHG clears once the drive steps.
             if (drives[drive].present || !types_[drive].dskchg_needs_disk) drives[drive].disk_changed = false;
             seek_drive_ = drive;
             seeking_ = true;
             seek_credit_ = 0.0;
             seek_target_ = double(std::max(1, steps)) * step_cycles(drive);
+            if (steps > 0) sound.push(double(prev_cycles_), DriveSoundEvent::kSeek, drive, steps, step_cycles(drive));
             phase_ = Phase::kIdle;  // completion is signaled later via IRQ
             break;
         }
         case 0x08: {  // SENSE INTERRUPT STATUS
             if (seek_pending_irq_) {
-                result_[0] = uint8_t(0x20 | seek_drive_);  // ST0: seek end
-                result_[1] = uint8_t(drives[seek_drive_].current_cylinder);  // PCN
+                result_[0] = seek_st0_;
+                result_[1] = uint8_t(drives[seek_drive_].pcn);
                 seek_pending_irq_ = false;
             } else {
                 result_[0] = 0x80;  // invalid command, no interrupt pending
@@ -348,6 +370,7 @@ void Fdc765::begin_format() {
     xfer_active_ = true;
     transfer_ready_ = false;
     phase_ = Phase::kExecution;
+    sound.push(double(prev_cycles_), DriveSoundEvent::kAccess, drive, 0, xfer_target_);
 
     result_[3] = uint8_t(drives[drive].current_cylinder);
     result_[4] = uint8_t(head);

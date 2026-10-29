@@ -407,9 +407,9 @@ but have no on-page meter.
 Items GA1-GA5, B1-B3 and X4 from `shared/cpu/Z80_ARCADE_PARITY.md`.
 
 - **Raster video (B2) and the 05XX clock (GA1).** *Fact:* the 05XX
-  clocks its RNG off the pixel clock. *Why:* the old renderer advanced it
-  inside `render()`, once per `requestAnimationFrame`, so a 120 Hz monitor
-  scrolled the stars twice as fast and a hidden tab froze them. *What:*
+  clocks its RNG off the pixel clock. *Why:* advancing it
+  inside `render()`, once per `requestAnimationFrame`, would scroll the stars
+  twice as fast on a 120 Hz monitor and freeze them in a hidden tab. *What:*
   the main Z80's `Bus::tick` drives `Video::advance`. Each HBLANK loads
   the next line's sprite and star buffers: 256 RNG clocks on each of
   the 256 field lines, the scroll trim on the last. Controls are sampled
@@ -417,28 +417,27 @@ Items GA1-GA5, B1-B3 and X4 from `shared/cpu/Z80_ARCADE_PARITY.md`.
   `Video.StarfieldAdvancesWithTheBeamNotRender`.
 - **Sprite transparency (GA2).** LUT entry 0x0F, not pen 0.
   `Video.SpritePenIsClearOnlyWhenItsLutEntryIs0F`.
-- **Flip screen.** Found on the way, checked against the real ROM's
+- **Flip screen.** Checked against the real ROM's
   upside-down POST screen. Flip inverts the timing counters, so the
   counter picks the tile's byte half, and selects the second character
   set (`code | 0x80`), whose nibbles are stored reversed. The shifter
   outputs each nibble in screen order, so the two together give a full
-  mirror. The old code mirrored tile positions only, and didn't mask the
-  code to 7 bits. `Video.FlipUsesSecondCharSetAndInvertedCounters`.
+  mirror. Mirroring tile positions alone is not enough, and the code is
+  masked to 7 bits. `Video.FlipUsesSecondCharSetAndInvertedCounters`.
 - **51XX HLE coinage and credits (GA3).** *Fact:* the 51XX counts coins
   against the coinage the game sends with command `01`; zero coins means
-  free play; START spends 1 or 2 credits and starts a game. *Why:* the HLE
-  gave a credit per coin and never spent one, so the default path could
-  not start a game. *What:* rules and ROM addresses in §5. The genuine
+  free play; START spends 1 or 2 credits and starts a game. *Why:* an HLE
+  that gives a credit per coin and never spends one cannot start a game on
+  the default path. *What:* rules and ROM addresses in §5. The genuine
   51XX reports free play as `$A0`, not 99, and in play reports the stick
-  and button flags in the second and third bytes (the old pass-through of
-  raw IN1 put no fire button where the game looks). The HLE sampled
-  inputs live; it now samples once a frame like the chip.
+  and button flags in the second and third bytes (a pass-through of
+  raw IN1 puts no fire button where the game looks). The HLE samples
+  inputs once a frame like the chip.
   `Mcu51Hle.*`, `Machine.UserRom51xxAndFallbackAnswerTheMainCpuAlike`.
 - **54XX DAC network (GA4).** *Fact:* the 54XX drives three 4-bit R
   ladders (O low/high nibble, R1). Each goes through its own MFB
-  band-pass into an op-amp summer, then a 0.1 µF coupling cap. *Why:* the
-  LLE path mixed the raw O latch, and that latch also held the CPU's
-  command bytes. *What:* separate command latch for K/R0; the network at
+  band-pass into an op-amp summer, then a 0.1 µF coupling cap. *Why:* mixing
+  the raw O latch would also mix in the CPU's command bytes. *What:* separate command latch for K/R0; the network at
   96 kHz. Midway schematic M051-00808-C000 (Galaga CPU PCB A084-91404-C508,
   10-12-81) shows the parts at 6M and 5P. Each ladder is 4.7k, 10k, 22k,
   47k. The three filters are 150k/22k/470k/0.01µF, 47k/10k/150k/0.01µF,
@@ -470,21 +469,20 @@ Items GA1-GA5, B1-B3 and X4 from `shared/cpu/Z80_ARCADE_PARITY.md`.
   coin it accepts. `Io.Real51xxDrivesCoinMetersActiveLowOnP`,
   `Mcu51Hle.CoinMetersClickOncePerCoin`. The genuine image pulses P3 low
   once for a chute-1 coin, which `Machine.UserRomInsertsCoinWhenLocalDumpPresent`
-  checks. That test used to drop its coin during POST, when the 51XX
-  ignores coins. It now waits 20 s.
+  checks. That test waits 20 s before the coin, since the 51XX
+  ignores coins during POST.
 - **54XX fallback level.** `Io.HleExplosionPlaysThroughTheDacNetworkAndDecays`
   pins the fixed burst's peak through the DAC network (about 0.18) and
   its decay to silence, so CI covers the network without `54xx.bin`.
-- **Play test harness.** `play_test`'s zip loader copied a temp-dir guard
-  whose destructor deleted the extracted ROMs, so the real-ROM test always
-  skipped. The guard is move-only now.
+- **Play test harness.** `play_test`'s zip loader holds the temp-dir guard
+  move-only, so its destructor does not delete the extracted ROMs while the
+  real-ROM test runs.
 
-### Found closing the coverage gaps
+### Coverage gaps
 
-- **MB88 instruction timing.** The board ran one MB88 instruction per
-  instruction-cycle slot. EN, DIS, CALL, JPL and JPA take two cycles, and
-  taking an interrupt costs three more (the two-cycle list is the
-  datasheet's, the three extra cycles are Unsourced). `step()` now returns every cycle it burns, and the
+- **MB88 instruction timing.** EN, DIS, CALL, JPL and JPA take two cycles,
+  and taking an interrupt costs three more (the two-cycle list is the
+  datasheet's, the three extra cycles are Unsourced). `step()` returns every cycle it burns, and the
   board waits them out. `Io.McuSpendsTwoSlotsOnTwoCycleInstructions`.
 - **06XX timing.** See §10.
 - **The 54XX isn't readable.** The bus reads `$FF` for it.
@@ -493,7 +491,7 @@ Items GA1-GA5, B1-B3 and X4 from `shared/cpu/Z80_ARCADE_PARITY.md`.
   serial shift, and interrupt entry and return against §5: datasheet
   values where Table 5 or 6 gives them, the ROM-derived and Unsourced
   choices listed there otherwise.
-- Also tested now: the real 54XX's K/R0 command and O/R1 DACs, the HLE
+- Also tested: the real 54XX's K/R0 command and O/R1 DACs, the HLE
   54XX argument counts and volume, the HLE 51XX credit-mode reply, sprite
   RAM banks 2 and 3, IRQ2 masking, and the `$6823` reset line.
 
@@ -530,7 +528,7 @@ Derived from the CPU PCB sheet (page 7-9) and its designation list.
 - Op-amp outputs clamp to 0 V and V+ − 1.5 V (LM324 output swing).
 - Unsourced: the 54XX O pins swing the full 5 V rail. The datasheet
   only guarantees VOH ≥ 2.4 V at −200 µA.
-- The HLE explosion peaks near 0.09 now (was 0.18).
+- The HLE explosion peaks near 0.09.
   `Io.Only54xxPortOLaddersAreFitted`, `Io.SilentBoardIsExactlyZero`.
 
 ## 10. 06XX timer and the read delay

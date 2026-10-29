@@ -1,9 +1,8 @@
 # 486 DX2-66 -- parity backlog
 
 The open gaps between this machine and a real 1993-94 DX2-66 board, plus
-the test gaps against the repo rules in `CLAUDE.md`. When an item is
-fixed, write it up in `PC486_REVIEW.md` as usual (fact, why it matters,
-what it fixed, source) and delete it here. Done so far: the PIT and PIC
+the test gaps against the repo rules in `CLAUDE.md`. When an item lands, write the current behavior and its source into
+`PC486_REVIEW.md` and delete it here. Done so far: the PIT and PIC
 (§41), the VGA (§42, §43), the CPU edges C1-C14 (§44-§46), cache, bus
 and pipeline timing (§47, §48), and the port 61h refresh toggle (§52).
 
