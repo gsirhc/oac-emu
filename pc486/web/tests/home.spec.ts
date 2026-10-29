@@ -26,7 +26,7 @@ const CATALOG = HOME + "super_secret.html";
 test.describe("landing page", () => {
   test("lists the 486 DX2-66 Gaming PC with a launch link to /pc486/", async ({ page }) => {
     await page.goto(CATALOG);
-    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+    await expect(page).toHaveTitle(/Welcome to OAC Emulation/);
     await expect(page.locator("#siteFooter a.about-sign")).toHaveText("Help");
 
     const card = page.locator(`a.machine-card[href="${catalogHref("pc486/")}"]`);
@@ -98,7 +98,7 @@ test.describe("landing page", () => {
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
     await expect(page.locator("a.pb-close")).toHaveAttribute("href", "./");
     await page.locator("a.pb-close").click();
-    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+    await expect(page).toHaveTitle(/Welcome to OAC Emulation/);
   });
 
   test("the theme selector switches the page and persists to retro8080.theme", async ({ page }) => {

@@ -17,7 +17,7 @@ const ARCADE = "http://localhost:9510/arcade/";
 test.describe("landing page", () => {
   test("lists Battlezone on the arcade hub, not the home teaser", async ({ page }) => {
     await page.goto(HOME);
-    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+    await expect(page).toHaveTitle(/Welcome to OAC Emulation/);
     await expect(page.locator('a.machine-card[href="battlezone/"]')).toHaveCount(0);
 
     await page.goto(ARCADE);
@@ -66,7 +66,7 @@ test.describe("landing page", () => {
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
     await expect(page.locator("a.pb-close")).toHaveAttribute("href", "./");
     await page.locator("a.pb-close").click();
-    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+    await expect(page).toHaveTitle(/Welcome to OAC Emulation/);
   });
 
   test("Windows title-bar buttons: soft-minimize collapses the page; close is disabled", async ({ page }) => {

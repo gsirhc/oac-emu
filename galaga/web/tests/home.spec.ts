@@ -16,7 +16,7 @@ const ARCADE = "http://localhost:8910/arcade/";
 test.describe("landing page", () => {
   test("lists Galaga on the arcade hub; home has the full-width neon portal", async ({ page }) => {
     await page.goto(CATALOG);
-    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+    await expect(page).toHaveTitle(/Welcome to OAC Emulation/);
     await expect(page.locator('a.machine-card[href="galaga/"]')).toHaveCount(0);
     const headings = page.locator("h2.section-heading");
     await expect(headings).toHaveText(["Systems", "Ready to Play", "Arcade", "Homebrew"]);
@@ -69,7 +69,7 @@ test.describe("landing page", () => {
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
     await expect(page.locator("a.pb-close")).toHaveAttribute("href", "./");
     await page.locator("a.pb-close").click();
-    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+    await expect(page).toHaveTitle(/Welcome to OAC Emulation/);
   });
 
   test("Windows title-bar buttons: soft-minimize collapses the page; close is disabled", async ({ page }) => {

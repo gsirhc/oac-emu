@@ -18,7 +18,7 @@ const ARCADE = "http://localhost:8510/arcade/";
 test.describe("landing page", () => {
   test("Arcade section is a full-width Enter the Arcade portal; cabinets stay on the hub", async ({ page }) => {
     await page.goto(CATALOG);
-    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+    await expect(page).toHaveTitle(/Welcome to OAC Emulation/);
     await expect(page.locator("h2.section-heading")).toHaveText([
       "Systems",
       "Ready to Play",
@@ -65,7 +65,7 @@ test.describe("landing page", () => {
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
     await expect(page.locator("a.pb-close")).toHaveAttribute("href", "./");
     await page.locator("a.pb-close").click();
-    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+    await expect(page).toHaveTitle(/Welcome to OAC Emulation/);
   });
 
   test("Windows title-bar buttons: soft-minimize collapses the page; close is disabled", async ({ page }) => {

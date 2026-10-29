@@ -18,7 +18,7 @@ test.describe("landing page", () => {
   for (const [where, url] of [["public page", HOME], ["catalog", CATALOG]]) {
     test(`the ${where} lists the IBM PC/AT with a launch link to /ibmpc-at/`, async ({ page }) => {
       await page.goto(url);
-      await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+      await expect(page).toHaveTitle(/Welcome to OAC Emulation/);
 
       const card = page.locator('a.machine-card[href="ibmpc-at/"]');
       await expect(card).toHaveAttribute("href", "ibmpc-at/");
@@ -66,7 +66,7 @@ test.describe("landing page", () => {
     await expect(page.locator("#siteFooter a.about-sign")).toHaveCount(0);
     await expect(page.locator("a.pb-close")).toHaveAttribute("href", "./");
     await page.locator("a.pb-close").click();
-    await expect(page).toHaveTitle(/Welcome to OAC Emulators/);
+    await expect(page).toHaveTitle(/Welcome to OAC Emulation/);
   });
 
   test("a stored retro8080.theme is honoured on load", async ({ page }) => {
