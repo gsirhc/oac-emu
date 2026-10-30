@@ -104,7 +104,7 @@ test.describe("arcade hub", () => {
     expect(await page.evaluate(() => (window as any).__gc)).toEqual(["arcade-sort-year"]);
   });
 
-  test("lists eleven cabinets in Name order by default, including Pac-Man and Ms. Pac-Man", async ({ page }) => {
+  test("lists cabinets in Name order by default, including Pac-Man and Ms. Pac-Man", async ({ page }) => {
     await expect(page).toHaveTitle(/Arcade/);
     await expect(page.locator(".tagline a")).toHaveText("More info");
     await expect(page.locator(".tagline a")).toHaveAttribute("href", "../about.html#rights");
@@ -114,6 +114,7 @@ test.describe("arcade hub", () => {
       "Asteroids",
       "Battlezone",
       "Centipede",
+      "Donkey Kong",
       "Frogger",
       "Galaga",
       "Galaxian",
@@ -155,6 +156,7 @@ test.describe("arcade hub", () => {
       "Missile Command",
       "Pac-Man",
       "Centipede",
+      "Donkey Kong",
       "Frogger",
       "Galaga",
       "Scramble",
@@ -167,6 +169,7 @@ test.describe("arcade hub", () => {
     expect(names.slice(0, 4)).toEqual(["Asteroids", "Battlezone", "Centipede", "Missile Command"]);
     expect(names.slice(4, 6)).toEqual(["Lunar Rescue", "Space Invaders"]);
     expect(names.slice(6)).toEqual([
+      "Donkey Kong",
       "Frogger",
       "Galaga",
       "Galaxian",
@@ -177,7 +180,7 @@ test.describe("arcade hub", () => {
 
     await sel.selectOption("manufacturer");
     await expect(page.locator("#arcadeCatalog > h2.section-heading")).toHaveText([
-      "Atari", "Konami", "Midway", "Namco", "Taito",
+      "Atari", "Konami", "Midway", "Namco", "Nintendo", "Taito",
     ]);
     names = await page.locator("#arcadeCatalog a.machine-card .name").allTextContents();
     expect(names).toEqual([
@@ -192,13 +195,14 @@ test.describe("arcade hub", () => {
       "Space Invaders",
       "Galaxian",
       "Pac-Man",
+      "Donkey Kong",
       "Lunar Rescue",
     ]);
 
     await page.reload();
     await expect(page.locator("#arcadeSort")).toHaveValue("manufacturer");
     await expect(page.locator("#arcadeCatalog > h2.section-heading")).toHaveText([
-      "Atari", "Konami", "Midway", "Namco", "Taito",
+      "Atari", "Konami", "Midway", "Namco", "Nintendo", "Taito",
     ]);
     names = await page.locator("#arcadeCatalog a.machine-card .name").allTextContents();
     expect(names[0]).toBe("Asteroids");
@@ -213,6 +217,7 @@ test.describe("arcade hub real art", () => {
     "../asteroids/": "Asteroids%20(rev%204).png",
     "../battlezone/": "Battle%20Zone%20(rev%202).png",
     "../centipede/": "Centipede%20(revision%204).png",
+    "../dkong/": "Donkey%20Kong%20(US%20set%201).png",
     "../frogger/": "Frogger.png",
     "../galaga/": "Galaga%20(Midway%20set%201).png",
     "../galaxian/": "Galaxian%20(Namco%20set%201).png",
@@ -263,7 +268,7 @@ test.describe("arcade hub real art", () => {
         await expect(shot).toHaveJSProperty("complete", true);
         await expect(shot).toHaveAttribute("referrerpolicy", "no-referrer");
       }
-      await expect.poll(() => new Set(hits).size).toBe(12);
+      await expect.poll(() => new Set(hits).size).toBe(13);
       expect(hits.every((h) => h.startsWith(LIBRETRO + dir + "/"))).toBe(true);
       expect(await page.evaluate(() => localStorage.getItem("retroweb.arcadeArt"))).toBe(mode);
     });
@@ -272,8 +277,8 @@ test.describe("arcade hub real art", () => {
   test("marquee loads each cabinet's Arcade Database marquee fitted whole", async ({ page }) => {
     const ADB = "https://adb.arcadeitalia.net/media/mame.current/marquees/";
     const SETS: Record<string, string> = {
-      "../asteroids/": "asteroid", "../battlezone/": "bzone", "../centipede/": "centiped", "../frogger/": "frogger",
-      "../galaga/": "galaga", "../galaxian/": "galaxian", "../missile/": "missile",
+      "../asteroids/": "asteroid", "../battlezone/": "bzone", "../centipede/": "centiped", "../dkong/": "dkong",
+      "../frogger/": "frogger", "../galaga/": "galaga", "../galaxian/": "galaxian", "../missile/": "missile",
       "../pacman/?game=mspacman": "mspacman", "../pacman/": "pacman", "../scramble/": "scramble",
       "../invaders/": "invaders", "../lunarrescue/": "lrescue",
     };
@@ -288,7 +293,7 @@ test.describe("arcade hub real art", () => {
       await expect(shot).toHaveJSProperty("complete", true);
       expect(await shot.evaluate((img) => getComputedStyle(img).objectFit + " " + getComputedStyle(img).objectPosition)).toBe("contain 50% 50%");
     }
-    await expect.poll(() => new Set(hits).size).toBe(12);
+    await expect.poll(() => new Set(hits).size).toBe(13);
     expect(hits.every((h) => h.startsWith(ADB))).toBe(true);
 
     await page.locator("#arcadeArt").selectOption("snap");

@@ -248,8 +248,10 @@ change:
   specs (`shared/arcade-tests/`) into its `web/tests/shared/`;
   the cabinet supplies `web/tests/cabinet.ts` (ROM database name, hwtest
   files, the byte that makes a user set).
-- `watch_site.py` (`make watch`): `MACHINES`, `WASM_TARGETS` and
-  `GENERATED_JS`. A C++ change under `shared/` runs every machine's wasm
+- `watch_site.py` (`make watch`): every new emulator must be added here in
+  the same change — `MACHINES`, `WASM_TARGETS`, and `GENERATED_JS` — or
+  `MACHINE=<name> make watch` rejects it and C++ edits under that folder
+  never rebuild. A C++ change under `shared/` runs every machine's wasm
   target and make's `.d` files decide which actually rebuild, so the wasm
   rule must end with `$(call write_deps,…)` (`shared/web.mk`).
 - CI: `<machine>-test` / `<machine>-web-test` in
@@ -274,15 +276,22 @@ change:
 Verify with `make lint` and the new machine's own suites
 before calling it done.
 
-- **Landing-page card**: computers and Homebrew get a `.machine-card` `<a>`
-  in `index.html` (286×128 image in `assets/`, name under
-  the shot) — copy an existing one's markup exactly, just swap the `href`,
-  image, and name. Arcade cabinets go on `arcade/index.html` with
+- **Catalog card**: every new emulator must appear on the appropriate
+  public page in the same change. Computers and Homebrew get a
+  `.machine-card` `<a>` in `index.html` (286×128 image in `assets/`, name
+  under the shot) — copy an existing one's markup exactly, just swap the
+  `href`, image, and name. Arcade cabinets go on `arcade/index.html` with
   the same tile size plus sort metadata (`data-name`, `data-year`,
   `data-cpu`, `data-manufacturer`, plus `data-art` and `data-marquee`,
-  the libretro-thumbnails title and Arcade Database set name for the hub's opt-in thumbnails). Cabinets are listed on the hub only;
-  `index.html` has a full-width neon Enter the Arcade portal into
-  `/arcade/`. The public page shows the IBM PC/AT card and a coming-soon
+  the libretro-thumbnails title and Arcade Database set name for the hub's
+  opt-in thumbnails), and a marquee tile from `shared/marquee.py`. Cabinets
+  are hub-only; `index.html` has a full-width neon Enter the Arcade portal
+  into `/arcade/`. If it is unclear which page a machine belongs on (home,
+  arcade hub, `super_secret.html` only, coming-soon control, etc.), ask the
+  current developer before adding the card. A hub or home card's `href`
+  must resolve under `_site/` — `check_site.py` fails on a dangling path —
+  so the machine's `web/` stage (at least an `index.html`) lands in the
+  same change. The public page shows the IBM PC/AT card and a coming-soon
   486 card, which explains that the full PC is coming soon. `super_secret.html` is the
   unlinked full catalog; its 486 link goes to `/pc486/?full=…`. Without
   the token, `/pc486/` redirects to the landing page. The PCs ship
@@ -340,17 +349,19 @@ before calling it done.
   `8200` assembler6502, `8300`/`8310` ibmpc-at, `8400`/`8410` pc486,
   `8500`/`8510` pacman, `8600`/`8610` frogger, `8700`/`8710` scramble,
   `8800`/`8810` galaxian, `8900`/`8910` galaga, `9000`/`9010` asteroids,
-  `9100`/`9110` centipede, `9200`/`9210` missile, `9300`/`9310` invaders, `9400`/`9410` lunarrescue, `9500`/`9510` battlezone)
+  `9100`/`9110` centipede, `9200`/`9210` missile, `9300`/`9310` invaders, `9400`/`9410` lunarrescue, `9500`/`9510` battlezone,
+  `9600`/`9610` dkong)
   specifically so a hand-run `make serve` and an automated test run never
   collide.
 - **CI job naming**: `.github/workflows/deploy-emulator.yml` gives every
   machine a `<machine>-test` (native smoke) and, once its Playwright suite
   exists, a `<machine>-web-test` job (`needs: <machine>-test`) — e.g.
   `altair8800-test`/`altair8800-web-test`, …, `pc486-test`/`pc486-web-test`
-  (plus `z80-test` / `mos6502-test` / `i8080-test` for the shared CPUs).
-  Pac-Man, Frogger, Scramble, Galaxian, and Galaga native jobs `needs:
+  (plus `z80-test` / `mos6502-test` / `i8080-test` / `mcs48-test` for the
+  shared CPUs). Pac-Man, Frogger, Scramble, Galaxian, and Galaga native jobs `needs:
   z80-test`; Asteroids, Centipede, Missile Command and Battlezone `needs:
-  mos6502-test`; Altair 8800, Space Invaders and Lunar Rescue `needs: i8080-test`. `lint` covers
+  mos6502-test`; Altair 8800, Space Invaders and Lunar Rescue `needs: i8080-test`;
+  Donkey Kong `needs: [z80-test, mcs48-test]` (its sound MPU is MCS-48). `lint` covers
   the whole repo. `build` lists every one of these in its own `needs:`
   so a red smoke job blocks deploy. Add a new machine's pair the same way.
   Deploy CI runs **smoke only**; the full suites run in
@@ -814,6 +825,15 @@ separate suite.
   from-scratch self-test ROM with its own Math Box microcode; a real Atari
   `bzone` set is opt-in and browser-local — see `BATTLEZONE_REVIEW.md`. The
   AVG and Math Box live in `shared/atari/` beside the DVG and POKEY.
+- **Donkey Kong Arcade** (`dkong/`): `make -C dkong check`
+  (GoogleTest over the Z80, the MCS-48 sound MPU, the video and the
+  machine, including the board smoke), `make -C dkong/web wasm roms`,
+  `make -C dkong/web test-install test` (Playwright). Ships a
+  from-scratch self-test ROM; a real Nintendo `dkong` set is opt-in and
+  browser-local — see `DKONG_REVIEW.md` and `DKONG_PARITY.md`. The Z80
+  core is `shared/cpu/` (`z80-test`); the sound MPU is
+  `shared/cpu/cpu_mcs48` (`mcs48-test`), run by `dkong::Sound` with the
+  DAC and discrete walk/jump/boom circuits behind it.
 - **486 DX2-66 Gaming PC** (`pc486/`): `make -C pc486 check`
   (GoogleTest over the 80486 core, chipset, EGA/VGA+VBE, WD1003, ATAPI
   CD-ROM, Sound Blaster 16 and its OPL3, plus the `shared/pc/`
@@ -844,7 +864,8 @@ separate suite.
   `ibmpcat.js`/`.wasm`, `ibmpcat-perf.js`/`.wasm`, `pacman.js`/`.wasm`, `frogger.js`/`.wasm`,
   `scramble.js`/`.wasm`, `galaxian.js`/`.wasm`, `galaga.js`/`.wasm`,
   `asteroids.js`/`.wasm`, `centipede.js`/`.wasm`, `missile.js`/`.wasm`,
-  `invaders.js`/`.wasm`, `lunarrescue.js`/`.wasm`, `battlezone.js`/`.wasm`, disk/tape
+  `invaders.js`/`.wasm`, `lunarrescue.js`/`.wasm`, `battlezone.js`/`.wasm`,
+  `dkong.js`/`.wasm`, disk/tape
   images) are regenerated by CI, not committed — see each machine's `.gitignore`
   entries.
 - **Every control, device, terminal behaviour, and preset has an automated

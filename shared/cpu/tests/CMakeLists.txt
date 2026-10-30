@@ -31,7 +31,13 @@ if(COVERAGE)
   target_link_options(cpu_i8080_test PRIVATE -fprofile-instr-generate -fcoverage-mapping)
 endif()
 
+add_executable(cpu_mcs48_test mcs48_test.cpp ${CORE}/cpu_mcs48.cpp)
+target_include_directories(cpu_mcs48_test PRIVATE ${CORE})
+target_link_libraries(cpu_mcs48_test PRIVATE GTest::gtest_main)
+target_compile_options(cpu_mcs48_test PRIVATE -Wall -Wextra)
+
 include(GoogleTest)
 gtest_discover_tests(cpu_z80_test)
 gtest_discover_tests(cpu_mos6502_test)
 gtest_discover_tests(cpu_i8080_test)
+gtest_discover_tests(cpu_mcs48_test)

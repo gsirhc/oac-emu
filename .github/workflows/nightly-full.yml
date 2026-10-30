@@ -505,6 +505,13 @@ jobs:
 
       - run: make -C shared/cpu test dormann
 
+  # Shared Intel MCS-48 (8035/8048) ISA. Donkey Kong `needs:` this job.
+  mcs48-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C shared/cpu test
+
   # Asteroids arcade board (see asteroids/ASTEROIDS_REVIEW.md).
   asteroids-test:
     needs: mos6502-test
@@ -674,6 +681,23 @@ jobs:
     uses: ./.github/workflows/arcade-web.yml
     with:
       machine: battlezone
+      target: test
+      fail-on-flaky: true
+
+  # Donkey Kong arcade board (see dkong/DKONG_REVIEW.md). Shared ISA is
+  # z80-test and mcs48-test.
+  dkong-test:
+    needs: [z80-test, mcs48-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C dkong check
+
+  dkong-web-test:
+    needs: dkong-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: dkong
       target: test
       fail-on-flaky: true
 

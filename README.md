@@ -16,7 +16,7 @@ The monitors (CRTs / terminals) are realistic to the actual displays.  Though, I
 
 ## AI Statement
 
-AI is used to write the majority of the code.  I know that will trigger some of you.  This project started out as a way for me to learn how to properly and responsibly use AI to write software.  It has turned into a passion of reliving the old days of computing and gaming.  I will say AI is not what the Kool-Aid drinkers think it is.  It takes a considerable amount of passion and work to keep AI on the rails.  However, as you can see here, it does ultimately write code much faster.  If you would like more details on how I use AI, email me at chris @ oac-emu . com.  Please keep it professional.  
+AI is used to write the majority of the code.  I know that will trigger some of you.  This project started out as a way for me to learn how to properly and responsibly use AI to write software.  It has turned into a passion of reliving the old days of computing and gaming.  I will say AI is not what the Kool-Aid drinkers think it is.  It takes a considerable amount of passion and work to keep AI on the rails.  However, as you can see here, it does write code much faster.  If you would like more details on how I use AI, email me at chris @ oac-emu . com.  Please keep it professional.  
 
 Success is not measured by tools or methods, but rather passion, heart and ultimately the end result.
 

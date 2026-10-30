@@ -1,7 +1,7 @@
 # Arcade cabinets
 
 Requirements for arcade machines (Pac-Man, Frogger,
-Scramble, Galaxian, Galaga, Asteroids, Centipede, Missile Command, Space Invaders, Lunar Rescue, Battlezone, and any new cabinet). Repo-wide principles still live in
+Scramble, Galaxian, Galaga, Asteroids, Centipede, Missile Command, Space Invaders, Lunar Rescue, Battlezone, Donkey Kong, and any new cabinet). Repo-wide principles still live in
 [`CLAUDE.md`](../CLAUDE.md); this file does not override them.
 
 ## High scores
@@ -35,6 +35,7 @@ the ROM actually keeps:
 | Space Invaders | `$20F4–$20F5` (2 BCD HI-SCORE, low byte first). Factory is ROM `$1BF4–$1BF5` (init copies `$1B00` page to `$2000`); it shows from the next coin-up |
 | Lunar Rescue | `$20CF` (10, holder name), `$20DB` (1, name length), `$20F4–$20F5`. Factory is the ROM image at `$1AA3` (name `1B 1B 13 00 08 13 0E 1B 1B 1B`, score `00 05`); length is 0 until the first score-line draw stores `$0A` |
 | Battlezone | `$0300–$033B` (10 × 3-byte scores, then 10 × 3 initials). Factory is what the reset loop at `$7B5C` builds: each score's first byte 5, initials from ROM `$7B7F` |
+| Donkey Kong | `$60B8` (3 bytes HI) + `$6100`-`$61A9` (rank table); factory HI at `$01C0` (`$50,$76,$00`), rank table LDIR'd from `$3565` at `$025D` |
 
 Scramble’s parent set has **numeric** scores only — no initials in the Konami
 ROM. Real PCBs have no battery; persist is a labelled departure, Reset is
@@ -93,7 +94,8 @@ another emulator’s shortcuts as if they were hardware.
 ## Shared chips
 
 Z80 in `shared/cpu/`. NMOS MOS 6502 also in `shared/cpu/`
-(`cpu_mos6502`), and the Intel 8080 (`cpu_i8080`, shared with the Altair 8800). The Midway/Taito
+(`cpu_mos6502`), the Intel 8080 (`cpu_i8080`, shared with the Altair 8800),
+and the Intel MCS-48 (`cpu_mcs48`, Donkey Kong's sound MPU). The Midway/Taito
 8080 B&W board and its discrete sound board in `shared/mw8080/`. Galaxian-family video / AY-3-8910 / i8255 in
 `shared/galaxian/` when it is the same silicon. Atari DVG, AVG, Math Box and POKEY in
 `shared/atari/`. A new related game does not fork those cores.

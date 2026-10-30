@@ -58,3 +58,19 @@ make dormann              # Klaus Dormann 6502_functional_test.bin
 `zexdoc.com`, `zexall.com`, the SingleStepTests tarball, the Dormann
 `.bin` and the 8080 diagnostic `.COM`s are fetched, pinned, and checksummed.
 They are not committed.
+
+## Intel MCS-48 / 8035
+
+`cpu_mcs48.{h,cpp}` is the 8035 subset of the MCS-48 family (Donkey Kong's
+sound CPU): no internal program ROM, so every fetch goes through
+`Bus::read_program` (EA forced high on the real part). Internal data RAM is
+64 bytes; R0-R7 live at 0-7 or 24-31 depending on `SEL RB0`/`RB1`, and the
+8-level CALL/RETR stack lives in RAM 8-23. There is no Z flag register;
+`JZ`/`JNZ` test the accumulator directly, and only CY/AC are real flags.
+Sources: Grokking the MCS-48 System's instruction listing
+(`dkong/docs/mcs48-isa.txt`, which restates the Intel MCS-48 Users Manual)
+and the 8048/8035 datasheet.
+
+```sh
+make test-smoke-mcs48   # Mcs48.* GoogleTest (deploy CI mcs48-test)
+```

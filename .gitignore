@@ -258,3 +258,14 @@ ibmpc-at/disks/library/
 pc486/disks/library/
 *.profraw
 third_party_sources/
+dkong/tests/build/
+dkong/tests/build-cov/
+dkong/tests/coverage-cpp/
+dkong/web/dkong.js
+dkong/web/dkong.wasm
+dkong/web/hwtest_roms.h
+dkong/web/roms/
+dkong/roms/user/
+dkong/web/shared/
+dkong/web/tests/shared/
+dkong/docs/
