@@ -74,3 +74,33 @@ and the 8048/8035 datasheet.
 ```sh
 make test-smoke-mcs48   # Mcs48.* GoogleTest (deploy CI mcs48-test)
 ```
+
+## Motorola 6809
+
+`cpu_m6809.{h,cpp}` is the MC6809E used by Joust. It runs whole
+instructions and counts E cycles from the cycle columns in the MC6809
+Programming Manual (M6809PM/AD), Appendix F, with the indexed-mode extras
+from its Table F-2. Interrupt entry and the CWAI wait follow the MC6809E
+data sheet's timing figures (8, 9 and 17). IRQ, FIRQ and NMI follow the
+manual's stacking rules,
+NMI is edge-triggered and armed only after the first load of S, and CWAI
+and SYNC park the core until an interrupt. Undefined opcodes run as
+2-cycle no-ops and are counted in `illegal_ops`. The board-level notes
+and the values the manual leaves undefined are in
+[`JOUST_REVIEW.md`](../../joust/JOUST_REVIEW.md).
+
+```sh
+make test-smoke-m6809   # M6809.* GoogleTest (deploy CI m6809-test)
+```
+
+## Motorola 6800 / 6808
+
+`cpu_m6800.{h,cpp}` is the 6800 instruction set, which the MC6808 on the
+Williams sound board runs unchanged (the 6808 is a 6800 without internal
+RAM). Cycle counts and flags come from the M6800 Programming Reference
+Manual, M68PRM(D). IRQ is level-sensitive, NMI edge-triggered, and WAI
+stacks the registers up front so the wake costs only the vector fetch.
+
+```sh
+make test-smoke-m6800   # M6800.* GoogleTest (deploy CI m6800-test)
+```

@@ -32,6 +32,12 @@ constexpr int kVramFreeEnd = 376;
 
 constexpr int kSpritesPerLine = 16;  // 93419 at 7M is 64 × 9: 16 four-byte entries
 
+// Object scan: 7R/8R + 7P/8P add the Y byte, an offset and VF; LS20 7N hits
+// when the top nibble is all ones. Solved from the US ROM (DKONG_REVIEW.md §5.2.1).
+constexpr int kObjYOffset = 0xF9;
+// 7K/8K offset on the X byte into the line buffer counter, solved the same way.
+constexpr int kObjXOffset = -8;
+
 struct VideoRoms {
     std::array<uint8_t, 0x800> char_3p{};
     std::array<uint8_t, 0x800> char_3n{};

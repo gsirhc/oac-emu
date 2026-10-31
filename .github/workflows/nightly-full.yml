@@ -512,6 +512,19 @@ jobs:
       - uses: actions/checkout@v4
       - run: make -C shared/cpu test
 
+  # Shared Motorola 6809 and 6800/6808 ISAs. Joust `needs:` these jobs.
+  m6809-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C shared/cpu test-smoke-m6809
+
+  m6800-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C shared/cpu test-smoke-m6800
+
   # Asteroids arcade board (see asteroids/ASTEROIDS_REVIEW.md).
   asteroids-test:
     needs: mos6502-test
@@ -698,6 +711,23 @@ jobs:
     uses: ./.github/workflows/arcade-web.yml
     with:
       machine: dkong
+      target: test
+      fail-on-flaky: true
+
+  # Joust arcade board (see joust/JOUST_REVIEW.md), including Sean Riddle's
+  # real-board blitter dumps. Shared ISA is m6809-test and m6800-test.
+  joust-test:
+    needs: [m6809-test, m6800-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -C joust check
+
+  joust-web-test:
+    needs: joust-test
+    uses: ./.github/workflows/arcade-web.yml
+    with:
+      machine: joust
       target: test
       fail-on-flaky: true
 

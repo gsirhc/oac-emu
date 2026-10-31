@@ -166,6 +166,31 @@ free only at H 256…375 of every line, VBLANK included
 - Each line is composed when the beam reaches H 256, after the CPU and DMA
   have had their go at object RAM for that line.
 
+### 5.2.1 Offset constants
+
+The preset inputs on 7R/8R/7P/8P and 7K/8K aren't legible in the scan, so
+the `0xF9` V offset and `-8` H offset are solved from the US program's own
+object placements. `Play.ObjectOffsetsSolveFromAttract`
+(`tests/play_test.cpp`) does the solve against a local dump in
+`roms/user/` and skips without one:
+
+- Run the attract loop (title, the stage 1 demo, the rank screen) and
+  take object RAM and VRAM on the /VBLK edge every 5 frames from frame
+  300 to frame 1840, 309 snapshots.
+- Skip entries the program parks at Y byte 0.
+- For every candidate V offset `0x00`-`0xFF` and H offset `-32`…`+32`,
+  count the objects that rest on the character layer: at least two
+  visible object lines whose lowest opaque dot (screen-down) sits directly
+  on an opaque character dot, with no opaque dot overlapping one.
+- Only the constants are solved for. The hit test, the row and dot flips
+  and the plane order are the ones described above.
+
+The peak is unique at `0xF9` / `-8` (1795 resting objects). At H `-8`,
+the neighbouring V offsets score 1561 (`0xF8`) and 1629 (`0xFA`). The
+best score at any other H offset is 1022 (`+16`, one object width over).
+The sloped girders on stage 1 pin the V offset: an object's resting height
+there depends on where it stands along the girder.
+
 ### 5.3 Palette
 
 - Index `CREF << 6 | colour << 2 | pixel`; pixel 0 shows the character
@@ -248,5 +273,7 @@ graphics (no Nintendo code or art) into the five self-test files
 `make -C dkong check` runs `tests/machine_test.cpp` (decode, latches,
 DMA timing, VRAM waits, NMI, coin one-shot, 8035 bus, sound paths, tile
 and object rendering, palette, flip, self-test screens) and
-`tests/smoke_test.cpp` (`Smoke.*`). The Playwright suite in `web/tests/`
+`tests/smoke_test.cpp` (`Smoke.*`), plus `tests/play_test.cpp`
+(`Play.*`, §5.2.1), which skips unless `roms/user/` holds a dump. The
+Playwright suite in `web/tests/`
 covers every control on the page. `ctest -N` lists the native cases.

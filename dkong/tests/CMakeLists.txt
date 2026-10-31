@@ -43,7 +43,11 @@ add_unit_test(machine_test machine_test.cpp ${BOARD})
 add_dependencies(machine_test hwtest_roms)
 add_unit_test(smoke_test smoke_test.cpp ${BOARD})
 add_dependencies(smoke_test hwtest_roms)
+add_unit_test(play_test play_test.cpp ${BOARD})
+target_compile_definitions(play_test PRIVATE
+  CORE_USER_ROMS="${CORE}/roms/user")
 
 include(GoogleTest)
 gtest_discover_tests(machine_test)
 gtest_discover_tests(smoke_test)
+gtest_discover_tests(play_test PROPERTIES TIMEOUT 120)

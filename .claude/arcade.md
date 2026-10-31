@@ -1,7 +1,7 @@
 # Arcade cabinets
 
 Requirements for arcade machines (Pac-Man, Frogger,
-Scramble, Galaxian, Galaga, Asteroids, Centipede, Missile Command, Space Invaders, Lunar Rescue, Battlezone, Donkey Kong, and any new cabinet). Repo-wide principles still live in
+Scramble, Galaxian, Galaga, Asteroids, Centipede, Missile Command, Space Invaders, Lunar Rescue, Battlezone, Donkey Kong, Joust, and any new cabinet). Repo-wide principles still live in
 [`CLAUDE.md`](../CLAUDE.md); this file does not override them.
 
 ## High scores
@@ -36,10 +36,22 @@ the ROM actually keeps:
 | Lunar Rescue | `$20CF` (10, holder name), `$20DB` (1, name length), `$20F4–$20F5`. Factory is the ROM image at `$1AA3` (name `1B 1B 13 00 08 13 0E 1B 1B 1B`, score `00 05`); length is 0 until the first score-line draw stores `$0A` |
 | Battlezone | `$0300–$033B` (10 × 3-byte scores, then 10 × 3 initials). Factory is what the reset loop at `$7B5C` builds: each score's first byte 5, initials from ROM `$7B7F` |
 | Donkey Kong | `$60B8` (3 bytes HI) + `$6100`-`$61A9` (rank table); factory HI at `$01C0` (`$50,$76,$00`), rank table LDIR'd from `$3565` at `$025D` |
+| Joust | Whole 5114 CMOS, `$CC00–$CFFF` (1024 nibbles). See below |
+
+Joust is the one exception to "high-score bytes only". Its scores,
+bookkeeping and game adjustments all live in a battery-backed 1K×4 CMOS
+RAM, and the coin-door switches (not DIPs) set them. So the page saves the
+whole CMOS, the way the battery keeps it, and puts it back before the
+board powers up. A blank CMOS is never saved. When a set starts with a
+blank CMOS, the page runs a labelled factory setup: one power-up with the
+coin door open (the ROM restores factory settings), then the door shuts
+and the board powers up again. Reset HIGH SCORE clears the whole CMOS,
+like a dead battery, which repeats that setup.
 
 Scramble’s parent set has **numeric** scores only — no initials in the Konami
 ROM. Real PCBs have no battery; persist is a labelled departure, Reset is
-authentic zeros.
+authentic zeros. Joust's board has the battery, so its persist is not a
+departure.
 
 Playwright `web/tests/hiscore.spec.ts` on every cabinet: persist across
 reload, Cancel keeps the bytes, confirm clears them. CI uses a CRC-patched
@@ -95,7 +107,10 @@ another emulator’s shortcuts as if they were hardware.
 
 Z80 in `shared/cpu/`. NMOS MOS 6502 also in `shared/cpu/`
 (`cpu_mos6502`), the Intel 8080 (`cpu_i8080`, shared with the Altair 8800),
-and the Intel MCS-48 (`cpu_mcs48`, Donkey Kong's sound MPU). The Midway/Taito
+the Intel MCS-48 (`cpu_mcs48`, Donkey Kong's sound MPU), and the Motorola
+6809 (`cpu_m6809`) and 6800/6808 (`cpu_m6800`) for the Williams boards. The
+Williams Special Chip blitter, 6821 PIA and D-8224 sound board are in
+`shared/williams/`. The Midway/Taito
 8080 B&W board and its discrete sound board in `shared/mw8080/`. Galaxian-family video / AY-3-8910 / i8255 in
 `shared/galaxian/` when it is the same silicon. Atari DVG, AVG, Math Box and POKEY in
 `shared/atari/`. A new related game does not fork those cores.
@@ -105,7 +120,9 @@ and the Intel MCS-48 (`cpu_mcs48`, Donkey Kong's sound MPU). The Midway/Taito
 Coin door + 1P/2P start, keys legend, touch controls (`shared/arcade-touch.js`:
 the cabinet's real stick restrictor and buttons, shown only on touch-only
 devices, hidden after a real key press), shared theme stack, DIP panel persisted
-in `localStorage` (physical switches survive a power cycle). Cocktail P2
+in `localStorage` (physical switches survive a power cycle). Joust has no
+DIPs; its coin-door panel (door open, AUTO-UP, ADVANCE, HIGH SCORE RESET)
+takes that place. Cocktail P2
 stick is unmapped and labelled. Only `web/` is staged: copy `shared/`
 into each machine’s `web/shared/`, never `../` at runtime.
 

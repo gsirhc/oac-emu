@@ -1,9 +1,11 @@
 # Nintendo Donkey Kong (1981) arcade board emulator.
 #
 #   make test    GoogleTest suite (board + board smoke).
+#                Optional offset solve skips unless roms/user/ holds a dump:
+#                `Play.*` (the loose chips).
 #   make test-smoke  Smoke.* GoogleTest only (what deploy CI runs)
 #   make check   test (what nightly runs)
-#   make coverage  board-code llvm-cov report
+#   make coverage  board-code llvm-cov report (no user-ROM solve)
 #   make wasm    WebAssembly module
 #   make serve   wasm + test ROM + shared chrome, serve on :8000
 #   make clean

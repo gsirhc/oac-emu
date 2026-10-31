@@ -5,15 +5,14 @@ lands, write the current behaviour and its source into `DKONG_REVIEW.md`
 and delete it here.
 
 Rough parity today: **~90%**. The US set plays through attract, intro,
-all four stages and the sound program. What's left are values fitted to
-the game's own output where the scan isn't legible, plus a few sound
-wiring details.
+all four stages and the sound program. What's left are choices made where the
+scan isn't legible, plus a few sound wiring details.
 
 | Area | Parity | Biggest gap |
 |------|--------|-------------|
 | CPU core (Z80) | shared, high | — |
 | Memory decode / DMA | high | 8257 per-byte interleave with the CPU (M1) |
-| Video | high | Object adder constants calibrated (V1) |
+| Video | high | Character plane order chosen by eye (V2) |
 | Sound | medium-high | Parts of the discrete wiring assumed (S1-S4) |
 | Inputs / DIP | high | — |
 | High score | high | — |
@@ -23,10 +22,6 @@ page, a Playwright test, in the same commit.
 
 ## Video
 
-- **V1. Object adder constants.** The `0xF9` V offset and `-8` H offset
-  (DKONG_REVIEW.md §5.2) are fitted to the game: Mario's feet on the
-  girder and centred on a ladder. The 7R/8R/7P/8P and 7K/8K preset inputs
-  aren't legible in the scan.
 - **V2. Character plane order.** 3P as the high plane is chosen from the
   game's look (the bright BONUS box). The route from 3P/3N into the
   colour mux isn't legible.

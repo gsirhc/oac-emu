@@ -1,11 +1,14 @@
 # Shared CPU cores: Zilog Z80 (Pac-Man family), MOS NMOS 6502 (Asteroids),
-# Intel 8080 (Altair 8800, Space Invaders), Intel MCS-48/8035 (Donkey Kong sound CPU).
+# Intel 8080 (Altair 8800, Space Invaders), Intel MCS-48/8035 (Donkey Kong sound CPU),
+# Motorola MC6809E (Williams CPU board), MC6800/MC6808 (Williams sound board).
 #
-#   make test               GoogleTest for Z80 + MOS 6502 + 8080 + MCS-48
+#   make test               GoogleTest for Z80 + MOS 6502 + 8080 + MCS-48 + MC6800 + MC6809
 #   make test-smoke         Z80 ISA only (deploy CI z80-test)
 #   make test-smoke-mos6502 MOS 6502 ISA only (deploy CI mos6502-test)
 #   make test-smoke-i8080   8080 ISA only (deploy CI i8080-test)
 #   make test-smoke-mcs48   MCS-48 ISA only (deploy CI mcs48-test)
+#   make test-smoke-m6800   MC6800 ISA only (deploy CI m6800-test)
+#   make test-smoke-m6809   MC6809E ISA only (deploy CI m6809-test)
 #   make zexdoc             Frank Cringle's documented Z80 exerciser
 #   make zexall             Frank Cringle's full Z80 exerciser (undocumented flags)
 #   make sst                SingleStepTests/z80: every opcode, MEMPTR/Q, bus timing
@@ -18,7 +21,7 @@
 CXX      ?= c++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
 
-.PHONY: help test test-smoke test-smoke-mos6502 test-smoke-i8080 test-smoke-mcs48 zexdoc zexall sst dormann i8080diag coverage-i8080 check clean
+.PHONY: help test test-smoke test-smoke-mos6502 test-smoke-i8080 test-smoke-mcs48 test-smoke-m6800 test-smoke-m6809 zexdoc zexall sst dormann i8080diag coverage-i8080 check clean
 
 help:
 	@sed -n 's/^#   //p' $(MAKEFILE_LIST)
@@ -47,6 +50,16 @@ test-smoke-mcs48:
 	cmake -S tests -B tests/build
 	cmake --build tests/build -j
 	ctest --test-dir tests/build -R '^Mcs48\.' --output-on-failure
+
+test-smoke-m6800:
+	cmake -S tests -B tests/build
+	cmake --build tests/build -j
+	ctest --test-dir tests/build -R '^M6800\.' --output-on-failure
+
+test-smoke-m6809:
+	cmake -S tests -B tests/build
+	cmake --build tests/build -j
+	ctest --test-dir tests/build -R '^M6809\.' --output-on-failure
 
 # Frank Cringle's zexdoc, documented Z80 opcodes only. Pinned + checksummed.
 ZEXDOC_COMMIT = 1c418fa0d719abab9273131113defbe276101d95

@@ -6,12 +6,6 @@ namespace dkong {
 
 namespace {
 
-// Object scan: 7R/8R + 7P/8P add the Y byte, an offset and VF; LS20 7N hits
-// when the top nibble is all ones.
-constexpr int kObjYOffset = 0xF9;
-// 7K/8K offset added to the X byte before it loads the line buffer counter.
-constexpr int kObjXOffset = -8;
-
 // CPU board 2F/2E ladders: 220/470/1K per gun, open-collector lows pull
 // toward black, so a 0 bit adds light (TKG4-11-CPU R69-R79).
 constexpr double kG220 = 1.0 / 220.0;

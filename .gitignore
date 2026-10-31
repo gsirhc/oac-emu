@@ -269,3 +269,17 @@ dkong/roms/user/
 dkong/web/shared/
 dkong/web/tests/shared/
 dkong/docs/
+joust/build/
+joust/tests/build/
+joust/tests/build-cov/
+joust/tests/coverage-cpp/
+joust/web/joust.js
+joust/web/joust.wasm
+joust/web/joust.d
+joust/web/hwtest_roms.h
+joust/web/roms/
+joust/roms/user/
+joust/web/shared/
+joust/web/tests/shared/
+joust/docs/
+joust/riddle/
