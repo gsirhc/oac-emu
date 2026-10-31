@@ -16,9 +16,9 @@ The monitors (CRTs / terminals) are realistic to the actual displays.  Though, I
 
 ## AI Statement
 
-AI is used to write the majority of the code.  I know that will trigger some of you.  This project started out as a way for me to learn how to properly and responsibly use AI to write software.  It has turned into a passion of reliving the old days of computing and gaming.  I will say AI is not what the Kool-Aid drinkers think it is.  It takes a considerable amount of passion and work to keep AI on the rails.  However, as you can see here, it does write code much faster.  If you would like more details on how I use AI, email me at chris @ oac-emu . com.  Please keep it professional.  
+AI is scary.  As a professional software developer of over 25 years, its by far the biggest shift I've had to make.  So I started this project as a way to learn how to use AI properly and hopefully responsibly.  Yes, the majority of the code here was written by AI.  I know that will trigger some people, myself included.  However, it's not as easy as people make it sound.  AI tends to go off the rails and do its own thing without provication.  It took time and passion to get it to write good code where I had to constantly box it in and do heavy reviews.  How do I feel about myself using AI?  Not that great.  I understand how the code works but not intimately.  Dumb and dumber.  However, its really hard to overlook AI's benefits.  I was able to create 3 major system emulators and a bunch of arcades in a couple of months.  And they work well.  You no longer need a degree in software engineering.  You need a degree in project management.  So yeah developers are screwed, the haters will hate and you can't stop any of it.  You can only survive.  If you would like more details on how I use AI, email me at chris @ oac-emu . com.  Please keep it professional.  
 
-Success is not measured by tools or methods, but rather passion, heart and ultimately the end result.
+"First AI came for the software engineers and we didn't speak up.  So now it comes for the scientists and mathmeticians..."
 
 Earlier development history (before moving to the oac-emu repo): [https://github.com/gsirhc/retro](https://github.com/gsirhc/retro)
 
