@@ -1,7 +1,7 @@
 name: Arcade web test
 
-# One cabinet's Playwright suite. deploy-emulator.yml calls it with test-smoke,
-# nightly-full.yml with test.
+# One cabinet's Playwright suite. deploy-site.yml calls it with test-smoke,
+# full-test-suite.yml with test.
 
 on:
   workflow_call:

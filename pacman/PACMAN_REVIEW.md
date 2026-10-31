@@ -17,7 +17,7 @@ The Emscripten wrapper (`web/wasm_machine.cpp`) and canvas front end
 coin door, keyboard/joystick, theme chrome, and a size-checked ROM-set
 loader (failed loads open a shared `.site-dialog`). Landing-page card and
 CI jobs (`pacman-test` / `pacman-web-test`) are wired in
-`index.html` / `.github/workflows/deploy-emulator.yml`.
+`index.html` / `.github/workflows/deploy-site.yml`.
 
 Playwright (`web/tests/`, `web/package.json`, `playwright.config.ts`)
 covers boot of the self-test ROM (`smoke.spec.ts`, `help.spec.ts`),

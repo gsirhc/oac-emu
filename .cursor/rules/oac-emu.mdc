@@ -12,7 +12,7 @@ In particular:
 - **Fidelity first.** Match real hardware behavior, timing, port maps, and status polarity. Cite period sources for quirks. Do not copy another emulator’s shortcuts.
 - **Machine docs.** Every machine’s `README.md`, `*_REVIEW.md`, and `*_PARITY.md` stay current with the code in the same change (CLAUDE.md “Machine docs”).
 - **Real clocks.** The live page runs at the machine’s actual speed. No visitor-facing turbo. Test-only speed overrides follow the three rules in CLAUDE.md (default off, labelled, opt-in).
-- **New machines** are full browser WASM emulators (real CPU, real graphics, real storage), plus GoogleTest and Playwright, wired through `Makefile` and `.github/workflows/deploy-emulator.yml`.
+- **New machines** are full browser WASM emulators (real CPU, real graphics, real storage), plus GoogleTest and Playwright, wired through `Makefile` and `.github/workflows/deploy-site.yml`.
 - **Copyright.** Do not bundle or fetch ROMs still under active copyright. Ship a labelled free stand-in (test ROM, open BIOS, FreeDOS) and let the user supply originals locally.
 - **Arcade cabinets** follow [`.claude/arcade.md`](../../.claude/arcade.md) (high-score persist, hwtest ROMs, shared chips, cabinet chrome).
 - **`about.html`** follows [`.claude/about.md`](../../.claude/about.md): agents may touch nav / header / footer chrome only; the current developer owns the body copy.

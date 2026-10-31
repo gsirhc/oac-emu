@@ -1,7 +1,7 @@
 name: Deploy site
 
 # Deploy CI runs smoke only (`make test-smoke` / Playwright
-# tests/smoke.spec.ts). The full suites run in nightly-full.yml.
+# tests/smoke.spec.ts). The full suites run in full-test-suite.yml.
 # See CLAUDE.md "Smoke vs full".
 
 on:
@@ -28,7 +28,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Smoke: demo + GoogleTest. CP/M disk boot is nightly (nightly-full.yml).
+  # Smoke: demo + GoogleTest. CP/M disk boot is nightly (full-test-suite.yml).
   # Shared 8080 ISA is i8080-test. See CLAUDE.md "Smoke vs full".
   altair8800-test:
     needs: i8080-test

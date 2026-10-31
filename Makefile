@@ -279,4 +279,4 @@ site-down:
 
 site-up:
 	gh variable delete SITE_DOWN
-	gh workflow run deploy-emulator.yml --ref main
+	gh workflow run deploy-site.yml --ref main

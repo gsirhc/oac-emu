@@ -23,7 +23,7 @@ then run once from the repo root.
 Adding a machine means touching about a dozen lists (CLAUDE.md's wiring
 checklist). Two of them repeat whole build recipes rather than names:
 
-- `Makefile` `_stage` and `deploy-emulator.yml`'s `build` job
+- `Makefile` `_stage` and `deploy-site.yml`'s `build` job
   each spell out every machine's targets (`ibmpcat.js roms hdd-image
   library-images shared`, ...). They match today but are
   maintained separately.

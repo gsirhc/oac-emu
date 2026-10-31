@@ -255,8 +255,8 @@ change:
   target and make's `.d` files decide which actually rebuild, so the wasm
   rule must end with `$(call write_deps,…)` (`shared/web.mk`).
 - CI: `<machine>-test` / `<machine>-web-test` in
-  `.github/workflows/deploy-emulator.yml` (smoke, in `build`'s `needs:`)
-  and `nightly-full.yml` (full). A cabinet's `-web-test` calls
+  `.github/workflows/deploy-site.yml` (smoke, in `build`'s `needs:`)
+  and `full-test-suite.yml` (full). A cabinet's `-web-test` calls
   `.github/workflows/arcade-web.yml` with its name.
 - `.gitignore` (build dir, wasm/js, `hwtest_roms.h`, `web/roms/`,
   `web/shared/`, `web/tests/shared/`, user ROMs), `eslint.config.js` (generated JS
@@ -353,7 +353,7 @@ before calling it done.
   `9600`/`9610` dkong, `9700`/`9710` joust)
   specifically so a hand-run `make serve` and an automated test run never
   collide.
-- **CI job naming**: `.github/workflows/deploy-emulator.yml` gives every
+- **CI job naming**: `.github/workflows/deploy-site.yml` gives every
   machine a `<machine>-test` (native smoke) and, once its Playwright suite
   exists, a `<machine>-web-test` job (`needs: <machine>-test`) — e.g.
   `altair8800-test`/`altair8800-web-test`, …, `pc486-test`/`pc486-web-test`
@@ -366,19 +366,19 @@ before calling it done.
   the whole repo. `build` lists every one of these in its own `needs:`
   so a red smoke job blocks deploy. Add a new machine's pair the same way.
   Deploy CI runs **smoke only**; the full suites run in
-  `.github/workflows/nightly-full.yml` (see "Smoke vs full" below).
+  `.github/workflows/full-test-suite.yml` (see "Smoke vs full" below).
 - Full details: `README.md`.
 
 ## Smoke vs full
 
-Deploy CI (`deploy-emulator.yml`, on push/PR to `main`) must stay fast
+Deploy CI (`deploy-site.yml`, on push/PR to `main`) must stay fast
 enough to gate Pages deploys. The full fidelity suites are slower
 (FreeDOS boots, zexdoc, Dormann, every Playwright control). Split:
 
 | When | Workflow | What runs |
 |------|----------|-----------|
-| Push / PR | `deploy-emulator.yml` | **Smoke** (`make test-smoke`) + lint + site build/deploy |
-| Nightly 08:17 UTC + manual | `nightly-full.yml` | **Full** (`make check` / `make test`) — no deploy |
+| Push / PR | `deploy-site.yml` | **Smoke** (`make test-smoke`) + lint + site build/deploy |
+| After each green deploy of `main` + manual | `full-test-suite.yml` ("Full Test Suite") | **Full** (`make check` / `make test`) — no deploy |
 
 **What belongs in smoke** (keep this set small):
 
@@ -421,9 +421,9 @@ Altair/assembler/ibmpc-at/pc486/z80 omit the long exercisers listed above
 
 **Self-hosted runner** (`retro-mini`, a Mac mini): only nightly jobs
 whose specs need the host to hold real guest speed (today `pc486-web-test`
-and `ibmpcat-web-test`), routed through `nightly-full.yml`'s `pick-runner`
+and `ibmpcat-web-test`), routed through `full-test-suite.yml`'s `pick-runner`
 with an ubuntu fallback that sets `SLOW_HOST=1`. Never put smoke or any
-`deploy-emulator.yml` job on it: smoke must prove real-speed pacing on a
+`deploy-site.yml` job on it: smoke must prove real-speed pacing on a
 stock GitHub runner, and deploy CI runs on PRs (a public repo's fork PRs
 must never reach the Mini). Gate a wall-clock-sensitive spec with
 `test.skip(!!process.env.SLOW_HOST, "…")`, never smoke.
@@ -466,7 +466,7 @@ nightly's. Treat tests as part of every change, not a step at the end.
   behaviour a test depends on with a stub instead of trusting the local
   default.
 - **When the nightly is red, read it.** `gh run list --workflow
-  nightly-full.yml` and `gh run view --job <id> --log-failed`. Fix the
+  full-test-suite.yml` and `gh run view --job <id> --log-failed`. Fix the
   cause, including flakes marked "flaky", not just the hard failures.
 
 ## Machine docs (README, REVIEW, PARITY)
@@ -584,7 +584,7 @@ developer as if it were a fact you'd checked.
 What the project uses outside this repo. Never put account details,
 logins, or keys here or anywhere in the repo.
 
-- **Hosting:** GitHub Pages, deployed by `deploy-emulator.yml`.
+- **Hosting:** GitHub Pages, deployed by `deploy-site.yml`.
 - **Out of Order:** `make site-down` sets the `SITE_DOWN` repo variable and
   runs `out-of-order.yml`, which replaces the whole site with
   `maintenance.html` (as `index.html` and `404.html`, so every emulator path

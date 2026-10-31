@@ -81,7 +81,7 @@ cassette / floppy **load speed** to `Max` so a run isn't held up by a
 14-minute read. The CPU still runs at a real 2 MHz — `fidelity.spec.ts` checks
 that. See `../../CLAUDE.md`.
 
-CI (`deploy-emulator.yml`) runs this suite in a `web-test` job; the Pages deploy
+CI (`deploy-site.yml`) runs this suite in a `web-test` job; the Pages deploy
 is gated on it.
 
 ## Files

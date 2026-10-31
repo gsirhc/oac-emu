@@ -404,7 +404,7 @@ and boots with no floppy mounted to a live `C:\>`: `FDCONFIG.SYS`/
 welcome banner and prompt appear. Anyone building this project can
 regenerate it from a clean checkout.
 
-**CI caching:** `deploy-emulator.yml` and `nightly-full.yml` cache
+**CI caching:** `deploy-site.yml` and `full-test-suite.yml` cache
 `ibmpc-at/disks/freedos-hdd.img` and run `make -C ibmpc-at hdd-image` only
 on a miss. See §66.
 
@@ -3288,7 +3288,7 @@ counters on the hot paths. `?perf` probes for `ibmpcat-perf.js` and loads
 it when present (Tier 2 / "Instrumented build"); otherwise it keeps the
 shipped binary and shows Tier 1 host metrics only ("Shipped build"). The
 shipped page never links the perf binary. Deploy CI builds both;
-`nightly-full.yml` also re-runs `performance.spec.ts` with the perf
+`full-test-suite.yml` also re-runs `performance.spec.ts` with the perf
 binary hidden so the fallback stays covered. Four Playwright cases in
 `performance.spec.ts`.
 
@@ -3327,7 +3327,7 @@ sections.
   coverage, 2 on CI, 3 locally.
 - **Smoke vs full**: `make -C ibmpc-at test-smoke` and
   `make -C ibmpc-at/web test-smoke` (the latter is `smoke.spec.ts` only).
-  Deploy CI (`deploy-emulator.yml`) runs smoke; `nightly-full.yml` runs
+  Deploy CI (`deploy-site.yml`) runs smoke; `full-test-suite.yml` runs
   `make check` / `make test`. Nightly `ibmpcat-web-test` goes through
   `pick-runner` (self-hosted `retro-mini`, ubuntu fallback with
   `SLOW_HOST=1`); wall-clock-sensitive specs skip on `SLOW_HOST`.

@@ -1,32 +1,41 @@
-name: Nightly full tests
+name: Full Test Suite
 
 # Full native + Playwright suites for every machine (and shared Z80).
-# Deploy CI (deploy-emulator.yml) runs smoke only. See CLAUDE.md "Smoke vs full".
+# Deploy CI (deploy-site.yml) runs smoke only. See CLAUDE.md "Smoke vs full".
 
 on:
-  schedule:
-    # 08:17 UTC daily (~01:17 Pacific); :17 avoids top-of-hour schedule lag
-    - cron: "17 8 * * *"
+  workflow_run:
+    workflows: [Deploy site]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# A Playwright test that passes only on retry fails the nightly.
+# A Playwright test that passes only on retry fails the full suite.
 env:
   FAIL_ON_FLAKY: "1"
 
 concurrency:
-  group: nightly-full-${{ github.ref }}
+  group: full-test-suite-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
+  # Only a green deploy of a push to main; a fork PR must never reach the Mac mini.
+  gate:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event != 'pull_request')
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "testing ${{ github.sha }}"
+
   # Wall-clock-paced suites go to the self-hosted Mac mini (label retro-mini)
   # when it's online; otherwise ubuntu-latest with SLOW_HOST=1, which skips
   # the specs that need the host to hold real guest speed. Listing runners
   # needs RUNNER_STATUS_TOKEN (fine-grained, Administration: read); without
   # it this always falls back.
   pick-runner:
+    needs: gate
     runs-on: ubuntu-latest
     outputs:
       runner: ${{ steps.pick.outputs.runner }}
@@ -67,7 +76,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: altair8800/cpm/cpm22.dsk
-          key: test-images-${{ hashFiles('.github/workflows/nightly-full.yml') }}
+          key: test-images-${{ hashFiles('.github/workflows/full-test-suite.yml') }}
 
       # a real Altair CP/M 2.2 disk (kept out of the repo), pinned + checksummed
       - name: Fetch a CP/M diskette image
@@ -125,6 +134,7 @@ jobs:
   # test suites, plus building the real ROM from assembler6502/firmware/ source (cc65,
   # not fetched -- see CGOAC6502_REVIEW.md §8).
   assembler6502-test:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -172,6 +182,7 @@ jobs:
   # IBM PC/AT: GoogleTest suite over the 80286 core + AT chipset (see
   # IBM_PCAT_REVIEW.md).
   ibmpcat-test:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -308,6 +319,7 @@ jobs:
   # WD1003/ATAPI CD-ROM, floppy, VGA/VBE, PS/2 mouse and Sound Blaster 16
   # (see pc486/PC486_REVIEW.md).
   pc486-test:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -436,6 +448,7 @@ jobs:
   # bus traces). Pac-Man, Frogger, Scramble, Galaxian, and Galaga all `needs:`
   # this job; each board then only smokes that the CPU is wired.
   z80-test:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -469,6 +482,7 @@ jobs:
   # Shared Intel 8080 ISA + 8080PRE / TST8080 / CPUTEST / 8080EXM through the
   # CP/M host. Altair 8800 and Space Invaders `needs:` this job.
   i8080-test:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -488,6 +502,7 @@ jobs:
 
   # Shared NMOS 6502 ISA + Klaus Dormann. Asteroids `needs:` this job.
   mos6502-test:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -507,6 +522,7 @@ jobs:
 
   # Shared Intel MCS-48 (8035/8048) ISA. Donkey Kong `needs:` this job.
   mcs48-test:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -514,12 +530,14 @@ jobs:
 
   # Shared Motorola 6809 and 6800/6808 ISAs. Joust `needs:` these jobs.
   m6809-test:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: make -C shared/cpu test-smoke-m6809
 
   m6800-test:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -733,6 +751,7 @@ jobs:
 
   # HTML (HTMLHint), JavaScript (ESLint), and C++ (cppcheck) under .
   lint:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
